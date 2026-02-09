@@ -23,18 +23,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-    branch_protection:
-      pattern: main
-      required_approving_review_count: 2
-      require_code_owner_reviews: true
-      dismiss_stale_reviews: true
-      require_signed_commits: false
-      enforce_admins: false
-    teams:
-      - team: engineering
-        permission: push
-      - team: platform
-        permission: admin
     variables:
       ENVIRONMENT:
         value: production
@@ -61,18 +49,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-    branch_protection:
-      pattern: main
-      required_approving_review_count: 2
-      require_code_owner_reviews: true
-      dismiss_stale_reviews: true
-      require_signed_commits: true
-      enforce_admins: false
-    teams:
-      - team: engineering
-        permission: push
-      - team: platform
-        permission: maintain
     variables:
       NODE_ENV:
         value: production
@@ -100,16 +76,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-    branch_protection:
-      pattern: main
-      required_approving_review_count: 2
-      require_code_owner_reviews: true
-      dismiss_stale_reviews: true
-      require_signed_commits: false
-      enforce_admins: false
-    teams:
-      - team: engineering
-        permission: push
     variables:
       APP_VERSION:
         value: 1.0.0

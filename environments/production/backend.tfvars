@@ -1,8 +1,11 @@
 # HTTP Backend with GitHub Releases
-# Replace 'your-org' with your actual GitHub organization name
+# State storage: GitHub Releases
+# State locking: GitHub Issues
 
-address        = "https://github.com/your-org/mbb-iac/releases/download/state-production/terraform.tfstate"
-lock_address   = "https://api.github.com/repos/your-org/mbb-iac/git/refs/locks/production"
-unlock_address = "https://api.github.com/repos/your-org/mbb-iac/git/refs/locks/production"
+address        = "https://github.com/paloitmbb/mbb-iac/releases/download/state-production/terraform.tfstate"
+lock_address   = "https://api.github.com/repos/paloitmbb/mbb-iac/issues"
+unlock_address = "https://api.github.com/repos/paloitmbb/mbb-iac/issues"
+lock_method    = "POST"
+unlock_method  = "DELETE"
 username       = "terraform"
 # password set via TF_HTTP_PASSWORD environment variable (uses GITHUB_TOKEN)
