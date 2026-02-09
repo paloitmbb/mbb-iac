@@ -31,15 +31,13 @@ jobs:
 
       - name: Terraform Init
         run: |
-          cd environments/${{ matrix.environment }}
-          terraform init -backend-config=backend.tfvars
+          terraform init -backend-config=environments/${{ matrix.environment }}/backend.tfvars
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
           TF_HTTP_PASSWORD: ${{ secrets.GITHUB_PAT }}
 
       - name: Terraform Validate
         run: |
-          cd environments/${{ matrix.environment }}
           terraform validate
 
       - name: Terraform Format Check
@@ -59,8 +57,7 @@ jobs:
       - name: Terraform Plan
         id: plan
         run: |
-          cd environments/${{ matrix.environment }}
-          terraform plan -var-file=terraform.tfvars -no-color
+          terraform plan -var-file=environments/${{ matrix.environment }}/terraform.tfvars -no-color
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
           TF_HTTP_PASSWORD: ${{ secrets.GITHUB_PAT }}
