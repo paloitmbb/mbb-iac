@@ -8,12 +8,11 @@ terraform {
     }
   }
 
-  # Uncomment when repo is pushed to GitHub and releases are created
-  # backend "http" {
-  #   # Configuration loaded from backend.tfvars
-  #   # Uses GitHub Releases for state storage
-  #   # and GitHub Issues API for state locking
-  # }
+  backend "http" {
+    # Configuration loaded from backend.tfvars
+    # Uses GitHub Releases for state storage
+    # and GitHub Issues API for state locking
+  }
 }
 
 provider "github" {

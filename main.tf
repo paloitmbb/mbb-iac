@@ -3,9 +3,19 @@ locals {
   repositories_file = "${path.module}/data/repositories.yaml"
   repositories_data = fileexists(local.repositories_file) ? yamldecode(file(local.repositories_file)) : { repositories = [] }
   
+  # Normalize YAML repositories to ensure all optional attributes exist
+  yaml_repositories = [
+    for repo in local.repositories_data.repositories : merge(repo, {
+      secrets   = try(repo.secrets, null)
+      variables = try(repo.variables, null)
+      security  = try(repo.security, null)
+      branch_protection = try(repo.branch_protection, null)
+      teams = try(repo.teams, null)
+    })
+  ]
+  
   # Merge repositories from YAML file and tfvars (tfvars takes precedence if both exist)
-  yaml_repositories = local.repositories_data.repositories
-  all_repositories  = length(var.repositories) > 0 ? var.repositories : local.yaml_repositories
+  all_repositories = length(var.repositories) > 0 ? var.repositories : local.yaml_repositories
 }
 
 # Organization Management
@@ -37,26 +47,15 @@ module "github_repositories" {
   topics                  = each.value.topics
   branch_protection_rules = each.value.branch_protection
   teams                   = each.value.teams
-  repository_secrets      = each.value.secrets
-  repository_variables    = each.value.variables
+  repository_secrets      = try(each.value.secrets, {})
+  repository_variables    = try(each.value.variables, {})
+
+  # Security settings
+  enable_advanced_security               = try(each.value.security.enable_advanced_security, false)
+  enable_secret_scanning                 = try(each.value.security.enable_secret_scanning, false)
+  enable_secret_scanning_push_protection = try(each.value.security.enable_secret_scanning_push_protection, false)
 
   depends_on = [module.github_organization]
-}
-
-# Security Configuration
-module "github_security" {
-  source   = "./modules/github-security"
-  for_each = { for repo in local.all_repositories : repo.name => repo if repo.security != null }
-
-  repository_name                        = each.value.name
-  enable_vulnerability_alerts            = each.value.security.enable_vulnerability_alerts
-  enable_advanced_security               = each.value.security.enable_advanced_security
-  enable_secret_scanning                 = each.value.security.enable_secret_scanning
-  enable_secret_scanning_push_protection = each.value.security.enable_secret_scanning_push_protection
-  enable_dependabot_alerts               = each.value.security.enable_dependabot_alerts
-  enable_dependabot_security_updates     = each.value.security.enable_dependabot_security_updates
-
-  depends_on = [module.github_repositories]
 }
 
 # Copilot Configuration

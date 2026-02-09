@@ -153,8 +153,7 @@ variable "repository_secrets" {
   type = map(object({
     value = string
   }))
-  default   = {}
-  sensitive = true
+  default = {}
 }
 
 variable "repository_variables" {
@@ -197,4 +196,22 @@ variable "pages" {
     cname = optional(string)
   })
   default = null
+}
+
+variable "enable_advanced_security" {
+  description = "Enable GitHub Advanced Security"
+  type        = bool
+  default     = false
+}
+
+variable "enable_secret_scanning" {
+  description = "Enable secret scanning"
+  type        = bool
+  default     = false
+}
+
+variable "enable_secret_scanning_push_protection" {
+  description = "Enable secret scanning push protection"
+  type        = bool
+  default     = false
 }

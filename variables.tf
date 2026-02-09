@@ -18,8 +18,8 @@ variable "organization" {
 variable "organization_secrets" {
   description = "Organization-level secrets"
   type = map(object({
-    description = string
-    visibility  = string
+    value      = string
+    visibility = string
   }))
   default = {}
 }
@@ -67,7 +67,7 @@ variable "repositories" {
       permission = string
     })))
     secrets   = optional(map(object({
-      description = string
+      value = string
     })))
     variables = optional(map(object({
       value = string

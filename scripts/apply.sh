@@ -26,7 +26,12 @@ if [ "$ENVIRONMENT" == "production" ]; then
     fi
 fi
 
-terraform apply "environments/$ENVIRONMENT/tfplan"
+# Set HTTP backend password from GITHUB_TOKEN if not already set
+if [ -z "$TF_HTTP_PASSWORD" ] && [ -n "$GITHUB_TOKEN" ]; then
+    export TF_HTTP_PASSWORD="$GITHUB_TOKEN"
+fi
+
+terraform apply -lock=false "environments/$ENVIRONMENT/tfplan"
 
 rm -f "environments/$ENVIRONMENT/tfplan"
 

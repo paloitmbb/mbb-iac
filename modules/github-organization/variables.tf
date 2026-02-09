@@ -164,7 +164,6 @@ variable "organization_secrets" {
     value      = string
   }))
   default = {}
-  sensitive = true
 }
 
 variable "organization_variables" {

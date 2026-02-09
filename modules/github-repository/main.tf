@@ -23,6 +23,23 @@ resource "github_repository" "this" {
 
   vulnerability_alerts = var.vulnerability_alerts
 
+  # Only include security_and_analysis if advanced_security is enabled
+  # GitHub requires GHAS to be purchased to configure these settings
+  dynamic "security_and_analysis" {
+    for_each = var.enable_advanced_security ? [1] : []
+    content {
+      advanced_security {
+        status = "enabled"
+      }
+      secret_scanning {
+        status = var.enable_secret_scanning ? "enabled" : "disabled"
+      }
+      secret_scanning_push_protection {
+        status = var.enable_secret_scanning_push_protection ? "enabled" : "disabled"
+      }
+    }
+  }
+
   dynamic "template" {
     for_each = var.template != null ? [var.template] : []
     content {
