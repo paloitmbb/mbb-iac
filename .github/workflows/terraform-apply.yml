@@ -61,7 +61,19 @@ jobs:
 
       - name: Terraform Apply
         run: |
-          terraform apply -auto-approve environments/${{ matrix.environment }}/tfplan
+          if ! terraform apply -auto-approve environments/${{ matrix.environment }}/tfplan; then
+            if [ -f "errored.tfstate" ]; then
+              echo "⚠️  Error saving state detected. Attempting manual state upload..."
+              gh release upload state-${{ matrix.environment }} errored.tfstate --clobber && \
+              gh release download state-${{ matrix.environment }} -p "errored.tfstate" -O terraform.tfstate && \
+              gh release upload state-${{ matrix.environment }} terraform.tfstate --clobber && \
+              rm terraform.tfstate errored.tfstate
+              echo "✅ State manually uploaded to GitHub release"
+            else
+              echo "❌ Terraform apply failed"
+              exit 1
+            fi
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
           TF_HTTP_PASSWORD: ${{ secrets.TF_GITHUB_TOKEN }}
