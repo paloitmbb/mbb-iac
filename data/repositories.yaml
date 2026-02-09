@@ -1,0 +1,132 @@
+---
+# Repository configurations loaded dynamically by Terraform
+# This file allows easier management of repository definitions outside of tfvars
+
+repositories:
+  - name: mbb-web-portal
+    description: Customer-facing web portal for Paloitmbb services
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics:
+      - frontend
+      - react
+      - typescript
+      - customer-portal
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: true
+      enable_secret_scanning: true
+      enable_secret_scanning_push_protection: true
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: true
+    branch_protection:
+      pattern: main
+      required_approving_review_count: 2
+      require_code_owner_reviews: true
+      dismiss_stale_reviews: true
+      require_signed_commits: false
+      enforce_admins: false
+    teams:
+      - team: engineering
+        permission: push
+      - team: platform
+        permission: admin
+    secrets:
+      DEPLOY_TOKEN:
+        description: Deployment token for web portal
+      SENTRY_DSN:
+        description: Sentry error tracking DSN
+    variables:
+      ENVIRONMENT:
+        value: production
+      API_BASE_URL:
+        value: https://api.paloitmbb.com
+
+  - name: mbb-api-gateway
+    description: API Gateway for microservices orchestration
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: true
+    default_branch: main
+    topics:
+      - backend
+      - nodejs
+      - api-gateway
+      - microservices
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: true
+      enable_secret_scanning: true
+      enable_secret_scanning_push_protection: true
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: true
+    branch_protection:
+      pattern: main
+      required_approving_review_count: 2
+      require_code_owner_reviews: true
+      dismiss_stale_reviews: true
+      require_signed_commits: true
+      enforce_admins: false
+    teams:
+      - team: engineering
+        permission: push
+      - team: platform
+        permission: maintain
+    secrets:
+      AWS_ACCESS_KEY:
+        description: AWS credentials for deployment
+      DATABASE_URL:
+        description: Database connection string
+    variables:
+      NODE_ENV:
+        value: production
+      LOG_LEVEL:
+        value: info
+
+  - name: mbb-mobile-app
+    description: Mobile banking application (iOS & Android)
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics:
+      - mobile
+      - react-native
+      - ios
+      - android
+      - banking
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: true
+      enable_secret_scanning: true
+      enable_secret_scanning_push_protection: true
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: true
+    branch_protection:
+      pattern: main
+      required_approving_review_count: 2
+      require_code_owner_reviews: true
+      dismiss_stale_reviews: true
+      require_signed_commits: false
+      enforce_admins: false
+    teams:
+      - team: engineering
+        permission: push
+    secrets:
+      FIREBASE_CONFIG:
+        description: Firebase configuration for push notifications
+      APP_CENTER_TOKEN:
+        description: App Center deployment token
+    variables:
+      APP_VERSION:
+        value: 1.0.0
+      API_ENDPOINT:
+        value: https://mobile-api.paloitmbb.com

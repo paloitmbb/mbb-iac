@@ -1,0 +1,94 @@
+name: Terraform Plan
+
+on:
+  pull_request:
+    paths:
+      - "environments/**/*.tfvars"
+      - "data/**/*.yaml"
+      - "data/**/*.yml"
+      - "modules/**/*.tf"
+      - "*.tf"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  terraform-plan:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [dev, staging, production]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.7
+
+      - name: Terraform Init
+        run: |
+          cd environments/${{ matrix.environment }}
+          terraform init -backend-config=backend.tfvars
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
+          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_PAT }}
+
+      - name: Terraform Validate
+        run: |
+          cd environments/${{ matrix.environment }}
+          terraform validate
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Validate YAML Data Files
+        if: hashFiles('data/*.yaml') != '' || hashFiles('data/*.yml') != ''
+        run: |
+          echo "Validating YAML files..."
+          for file in data/*.yaml data/*.yml; do
+            if [ -f "$file" ]; then
+              echo "Checking $file"
+              python3 -c "import yaml; yaml.safe_load(open('$file'))" && echo "✓ $file is valid" || exit 1
+            fi
+          done
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          cd environments/${{ matrix.environment }}
+          terraform plan -var-file=terraform.tfvars -no-color
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
+          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_PAT }}
+        continue-on-error: true
+
+      - name: Comment Plan on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const output = `#### Terraform Plan for \`${{ matrix.environment }}\` 📖
+
+            <details><summary>Show Plan</summary>
+
+            \`\`\`terraform
+            ${{ steps.plan.outputs.stdout }}
+            \`\`\`
+
+            </details>
+
+            *Pushed by: @${{ github.actor }}*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+      - name: Terraform Plan Status
+        if: steps.plan.outcome == 'failure'
+        run: exit 1

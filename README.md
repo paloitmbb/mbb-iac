@@ -1,0 +1,265 @@
+# Paloitmbb GitHub Infrastructure as Code
+
+Terraform project for managing GitHub organization, repositories, GitHub Advanced Security (GHAS), and GitHub Copilot configurations.
+
+## Project Structure
+
+```
+mbb-iac/
+├── modules/                 # Reusable Terraform modules
+│   ├── github-organization/ # Organization settings
+│   ├── github-repository/   # Repository management
+│   ├── github-security/     # GHAS configuration
+│   └── github-copilot/      # Copilot settings
+├── environments/            # Environment-specific configs
+│   ├── dev/
+│   ├── staging/
+│   └── production/
+├── scripts/                 # Helper scripts
+└── .github/                 # GitHub workflows and templates
+```
+
+## Features
+
+- 🏢 **Organization Management**: Centralized organization settings and policies
+- 📦 **Repository Management**: Standardized repository creation and configuration
+- 🔒 **Security**: GitHub Advanced Security (GHAS) integration
+- 🤖 **Copilot**: GitHub Copilot seat and policy management
+- 🔄 **GitOps**: Automated repository creation via GitHub Issues
+- 🌍 **Multi-Environment**: Separate configurations for dev, staging, and production
+
+## Prerequisites
+
+- Terraform >= 1.6.0
+- GitHub organization with admin access
+- GitHub Personal Access Token or App with appropriate permissions:
+  - `repo` - Full control of repositories
+  - `admin:org` - Full control of organizations
+  - `workflow` - Update GitHub Actions workflows
+
+## Quick Start
+
+### 1. Clone the Repository
+
+```bash
+git clone <repository-url>
+cd mbb-iac
+```
+
+### 2. Configure Authentication
+
+```bash
+export GITHUB_TOKEN="your-github-token"
+# TF_HTTP_PASSWORD will be automatically set from GITHUB_TOKEN by init script
+```
+
+### 3. Configure Backend
+
+Edit `environments/dev/backend.tfvars` with your GitHub organization details:
+
+```hcl
+# Replace 'your-org' with your GitHub organization name
+address        = "https://github.com/your-org/mbb-iac/releases/download/state-dev/terraform.tfstate"
+lock_address   = "https://api.github.com/repos/your-org/mbb-iac/git/refs/locks/dev"
+unlock_address = "https://api.github.com/repos/your-org/mbb-iac/git/refs/locks/dev"
+username       = "terraform"
+# password set via TF_HTTP_PASSWORD environment variable (uses GITHUB_TOKEN)
+```
+
+**Note**: The HTTP backend uses GitHub Releases to store state files. The init script will automatically use your `GITHUB_TOKEN` for authentication.
+
+### 4. Initialize Terraform
+
+```bash
+./scripts/init.sh dev
+```
+
+### 5. Plan Changes
+
+```bash
+./scripts/plan.sh dev
+```
+
+### 6. Apply Changes
+
+```bash
+./scripts/apply.sh dev
+```
+
+## Usage
+
+### Managing Repositories
+
+You can manage repositories using either approach:
+
+#### Option 1: YAML Data File (Recommended for many repositories)
+
+Define repositories in `data/repositories.yaml`:
+
+```yaml
+repositories:
+  - name: my-service
+    description: My Service
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    security:
+      enable_advanced_security: true
+      enable_secret_scanning: true
+      # ...
+```
+
+Leave `repositories = []` in your environment tfvars file. Terraform will automatically load from the YAML file.
+
+See [data/README.md](data/README.md) for detailed documentation.
+
+#### Option 2: Tfvars File (Traditional approach)
+
+Edit `environments/<env>/terraform.tfvars` to add repositories:
+
+```hcl
+repositories = [
+  {
+    name        = "my-service"
+    description = "My Service"
+    visibility  = "private"
+    features = {
+      has_issues   = true
+      has_projects = true
+      has_wiki     = false
+    }
+    security = {
+      enable_advanced_security = true
+      enable_secret_scanning   = true
+      # ...
+    }
+  }
+]
+```
+
+**Note**: If repositories are defined in tfvars, the YAML file is ignored. Choose the approach that works best for your team.
+
+### GitOps Workflow
+
+Create repositories via GitHub Issues:
+
+1. Go to **Issues** → **New Issue**
+2. Select **New Repository Request** template
+3. Fill in repository details
+4. Submit issue
+5. Automated PR will be created
+6. Review and merge PR
+7. Repository is created automatically
+
+See [GitOps Workflow documentation](PROJECT_CREATION_PLAN.md#gitops-workflow-dynamic-repository-creation) for details.
+
+## Scripts
+
+| Script           | Description                             |
+| ---------------- | --------------------------------------- |
+| `init.sh [env]`  | Initialize Terraform for an environment |
+| `plan.sh [env]`  | Run Terraform plan                      |
+| `apply.sh [env]` | Apply Terraform changes                 |
+| `validate.sh`    | Validate all Terraform configurations   |
+
+## Modules
+
+### github-organization
+
+Manages organization-level settings, secrets, and variables.
+
+[Documentation](modules/github-organization/README.md)
+
+### github-repository
+
+Creates and configures repositories with branch protection, team access, and webhooks.
+
+[Documentation](modules/github-repository/README.md)
+
+### github-security
+
+Manages GHAS features including secret scanning, Dependabot, and code scanning.
+
+[Documentation](modules/github-security/README.md)
+
+### github-copilot
+
+Configures GitHub Copilot organization settings and seat assignments.
+
+[Documentation](modules/github-copilot/README.md)
+
+## Security Best Practices
+
+- ✅ Never commit secrets or tokens to version control
+- ✅ Use environment variables for sensitive data
+- ✅ Enable state encryption at rest
+- ✅ Use state locking to prevent concurrent modifications
+- ✅ Review all Terraform plans before applying
+- ✅ Require PR reviews for production changes
+- ✅ Enable GHAS for all repositories
+- ✅ Regularly audit security configurations
+
+## CI/CD
+
+This project includes GitHub Actions workflows for:
+
+- **Terraform Plan**: Runs on pull requests
+- **Terraform Apply**: Runs on merge to main
+- **Repository Requests**: Automates repository creation via issues
+
+## Troubleshooting
+
+### Authentication Errors
+
+Ensure your `GITHUB_TOKEN` has the required permissions:
+
+```bash
+export GITHUB_TOKEN="ghp_..."
+```
+
+### State Lock Errors
+
+If state is locked, identify the lock ID and force unlock:
+
+```bash
+terraform force-unlock <lock-id>
+```
+
+### Backend Configuration
+
+The project uses HTTP backend with GitHub Releases for state storage. See [HTTP_BACKEND_SETUP.md](HTTP_BACKEND_SETUP.md) for detailed setup instructions.
+
+Verify backend is properly configured:
+
+```bash
+terraform init -backend-config=backend.tfvars -reconfigure
+```
+
+## Contributing
+
+1. Create a feature branch
+2. Make changes
+3. Run `./scripts/validate.sh`
+4. Submit a pull request
+5. Ensure CI checks pass
+
+## Support
+
+For questions or issues:
+
+- Review [PROJECT_CREATION_PLAN.md](PROJECT_CREATION_PLAN.md) for detailed documentation
+- Check [HTTP_BACKEND_SETUP.md](HTTP_BACKEND_SETUP.md) for backend configuration
+- Check module README files
+- Contact the platform team
+
+## License
+
+Internal use only - Paloitmbb
+
+## References
+
+- [Terraform GitHub Provider](https://registry.terraform.io/providers/integrations/github/latest/docs)
+- [GitHub Advanced Security](https://docs.github.com/en/enterprise-cloud@latest/get-started/learning-about-github/about-github-advanced-security)
+- [GitHub Copilot Documentation](https://docs.github.com/en/copilot)

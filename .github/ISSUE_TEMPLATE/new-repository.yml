@@ -1,0 +1,100 @@
+name: New Repository Request
+description: Request creation of a new GitHub repository
+title: "[REPO REQUEST] "
+labels: ["repo-request", "pending-review"]
+body:
+  - type: input
+    id: repo-name
+    attributes:
+      label: Repository Name
+      description: Name of the new repository (lowercase, hyphens only)
+      placeholder: "my-new-service"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Brief description of the repository purpose
+    validations:
+      required: true
+
+  - type: dropdown
+    id: visibility
+    attributes:
+      label: Visibility
+      options:
+        - private
+        - internal
+        - public
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      description: Which environment to create this in
+      options:
+        - dev
+        - staging
+        - production
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: features
+    attributes:
+      label: Repository Features
+      options:
+        - label: Enable Issues
+        - label: Enable Projects
+        - label: Enable Wiki
+
+  - type: checkboxes
+    id: security
+    attributes:
+      label: Security Features (GHAS)
+      options:
+        - label: Enable Advanced Security
+        - label: Enable Secret Scanning
+        - label: Enable Secret Scanning Push Protection
+        - label: Enable Dependabot Alerts
+        - label: Enable Dependabot Security Updates
+
+  - type: input
+    id: topics
+    attributes:
+      label: Topics
+      description: Comma-separated list of topics
+      placeholder: "frontend, react, typescript"
+
+  - type: dropdown
+    id: default-branch
+    attributes:
+      label: Default Branch
+      options:
+        - main
+        - master
+      default: 0
+
+  - type: textarea
+    id: teams
+    attributes:
+      label: Team Access
+      description: |
+        List teams and their permissions (one per line)
+        Format: team-name:permission (push, pull, admin, maintain)
+      placeholder: |
+        engineering:push
+        platform:admin
+
+  - type: textarea
+    id: branch-protection
+    attributes:
+      label: Branch Protection Rules
+      description: Customize if needed (optional)
+      placeholder: |
+        Required reviewers: 2
+        Require code owner reviews: yes

@@ -1,0 +1,69 @@
+name: Terraform Apply
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "environments/**/*.tfvars"
+      - "data/**/*.yaml"
+      - "data/**/*.yml"
+      - "modules/**/*.tf"
+      - "*.tf"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to apply"
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - production
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  terraform-apply:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.environment)) || fromJSON('["dev"]') }}
+
+    environment:
+      name: ${{ matrix.environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.7
+
+      - name: Terraform Init
+        run: |
+          cd environments/${{ matrix.environment }}
+          terraform init -backend-config=backend.tfvars
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
+          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_PAT }}
+
+      - name: Terraform Plan
+        run: |
+          cd environments/${{ matrix.environment }}
+          terraform plan -var-file=terraform.tfvars -out=tfplan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
+          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_PAT }}
+
+      - name: Terraform Apply
+        run: |
+          cd environments/${{ matrix.environment }}
+          terraform apply -auto-approve tfplan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
+          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_PAT }}
