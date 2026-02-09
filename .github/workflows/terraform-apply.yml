@@ -22,8 +22,9 @@ on:
           - production
 
 permissions:
-  contents: read
+  contents: write
   issues: write
+  actions: write
 
 jobs:
   terraform-apply:
@@ -48,19 +49,19 @@ jobs:
         run: |
           terraform init -backend-config=environments/${{ matrix.environment }}/backend.tfvars
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
-          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Terraform Plan
         run: |
           terraform plan -var-file=environments/${{ matrix.environment }}/terraform.tfvars -out=environments/${{ matrix.environment }}/tfplan
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
-          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Terraform Apply
         run: |
           terraform apply -auto-approve environments/${{ matrix.environment }}/tfplan
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
-          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
