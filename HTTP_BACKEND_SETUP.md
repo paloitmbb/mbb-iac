@@ -26,13 +26,11 @@ Edit the backend configuration files for each environment to use your GitHub org
 **environments/dev/backend.tfvars**
 
 ```hcl
-address        = "https://github.com/YOUR-ORG/mbb-iac/releases/download/state-dev/terraform.tfstate"
-lock_address   = "https://api.github.com/repos/YOUR-ORG/mbb-iac/git/refs/locks/dev"
-unlock_address = "https://api.github.com/repos/YOUR-ORG/mbb-iac/git/refs/locks/dev"
+address        = "https://github.com/paloitmbb/mbb-iac/releases/download/state-dev/terraform.tfstate"
 username       = "terraform"
 ```
 
-Replace `YOUR-ORG` with your actual GitHub organization name.
+Replace `paloitmbb` with your actual GitHub organization name.
 
 ### 2. Create Initial State Releases
 
@@ -97,7 +95,7 @@ Your GitHub token needs the following permissions:
 ```bash
 # Download state file
 curl -L -H "Authorization: token $GITHUB_TOKEN" \
-  "https://github.com/YOUR-ORG/mbb-iac/releases/download/state-dev/terraform.tfstate" \
+  "https://github.com/paloitmbb/mbb-iac/releases/download/state-dev/terraform.tfstate" \
   -o terraform.tfstate
 
 # View state
@@ -157,7 +155,7 @@ gh auth status
 # Via API
 curl -X DELETE \
   -H "Authorization: token $GITHUB_TOKEN" \
-  "https://api.github.com/repos/YOUR-ORG/mbb-iac/git/refs/locks/dev"
+  "https://api.github.com/repos/paloitmbb/mbb-iac/git/refs/locks/dev"
 
 # Or via Terraform
 terraform force-unlock <lock-id>
