@@ -8,7 +8,7 @@ repositories:
     visibility: private
     features:
       has_issues: true
-      has_projects: false
+      has_projects: true
       has_wiki: false
     default_branch: main
     topics:
