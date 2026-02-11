@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        environment: [dev, staging, production]
+        environment: [dev]
 
     steps:
       - name: Checkout
@@ -33,17 +33,17 @@ jobs:
         run: |
           terraform init -backend-config=environments/${{ matrix.environment }}/backend.tfvars
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
+          GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
           TF_HTTP_USERNAME: terraform
-          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_PAT }}
+          TF_HTTP_PASSWORD: ${{ secrets.TF_GITHUB_TOKEN }}
 
       - name: Terraform Validate
         run: |
           terraform validate
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
+          GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
           TF_HTTP_USERNAME: terraform
-          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_PAT }}
+          TF_HTTP_PASSWORD: ${{ secrets.TF_GITHUB_TOKEN }}
 
       - name: Terraform Format Check
         run: terraform fmt -check -recursive
@@ -64,9 +64,9 @@ jobs:
         run: |
           terraform plan -var-file=environments/${{ matrix.environment }}/terraform.tfvars -no-color
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
+          GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
           TF_HTTP_USERNAME: terraform
-          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_PAT }}
+          TF_HTTP_PASSWORD: ${{ secrets.TF_GITHUB_TOKEN }}
         continue-on-error: true
 
       - name: Comment Plan on PR
