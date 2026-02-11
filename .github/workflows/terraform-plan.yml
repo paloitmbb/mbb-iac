@@ -34,11 +34,16 @@ jobs:
           terraform init -backend-config=environments/${{ matrix.environment }}/backend.tfvars
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
+          TF_HTTP_USERNAME: terraform
           TF_HTTP_PASSWORD: ${{ secrets.GITHUB_PAT }}
 
       - name: Terraform Validate
         run: |
           terraform validate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
+          TF_HTTP_USERNAME: terraform
+          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_PAT }}
 
       - name: Terraform Format Check
         run: terraform fmt -check -recursive
@@ -60,6 +65,7 @@ jobs:
           terraform plan -var-file=environments/${{ matrix.environment }}/terraform.tfvars -no-color
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
+          TF_HTTP_USERNAME: terraform
           TF_HTTP_PASSWORD: ${{ secrets.GITHUB_PAT }}
         continue-on-error: true
 
