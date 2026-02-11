@@ -165,11 +165,11 @@ After approval, the workflow will:
 
 Three teams are automatically created:
 
-| Team Name         | Permission | Who Should Join          |
-| ----------------- | ---------- | ------------------------ |
-| `{repo-name}-dev` | Write      | Developers               |
-| `{repo-name}-test`  | Write      | QA engineers, testers    |
-| `{repo-name}-prod`  | Maintain   | DevOps, release managers |
+| Team Name          | Permission | Who Should Join          |
+| ------------------ | ---------- | ------------------------ |
+| `{repo-name}-dev`  | Write      | Developers               |
+| `{repo-name}-test` | Write      | QA engineers, testers    |
+| `{repo-name}-prod` | Maintain   | DevOps, release managers |
 
 **Team Maintainers:** The specified team maintainers (or the issue requestor if none specified) are assigned as maintainers for all 3 teams. Maintainers can add/remove team members via GitHub UI.
 

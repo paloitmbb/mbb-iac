@@ -20,6 +20,9 @@ jobs:
       matrix:
         environment: [dev]
 
+    environment:
+      name: ${{ matrix.environment }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,7 +37,6 @@ jobs:
           terraform init -backend-config=environments/${{ matrix.environment }}/backend.tfvars
         env:
           GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
-          TF_HTTP_USERNAME: terraform
           TF_HTTP_PASSWORD: ${{ secrets.TF_GITHUB_TOKEN }}
 
       - name: Terraform Validate
@@ -42,7 +44,6 @@ jobs:
           terraform validate
         env:
           GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
-          TF_HTTP_USERNAME: terraform
           TF_HTTP_PASSWORD: ${{ secrets.TF_GITHUB_TOKEN }}
 
       - name: Terraform Format Check
@@ -65,7 +66,6 @@ jobs:
           terraform plan -var-file=environments/${{ matrix.environment }}/terraform.tfvars -no-color
         env:
           GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
-          TF_HTTP_USERNAME: terraform
           TF_HTTP_PASSWORD: ${{ secrets.TF_GITHUB_TOKEN }}
         continue-on-error: true
 

@@ -8,12 +8,13 @@
 
 > **⚠️ IMPORTANT UPDATE (Current Implementation):**  
 > The implementation has been modified from the original plan:
+>
 > - **3 teams** are created per repository (dev, test, prod) instead of 4
 > - **No separate admin team** - removed from the design
 > - **Team Maintainers** specified in the issue become maintainers of all 3 teams
 > - If **no maintainers specified**, the issue creator becomes the team maintainer
 > - Team maintainers can manage team membership via GitHub UI
-> 
+>
 > This document retains the original plan for reference. See [02-IMPLEMENTATION_SUMMARY.md](./02-IMPLEMENTATION_SUMMARY.md) for the current architecture.
 
 ---

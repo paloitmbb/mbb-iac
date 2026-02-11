@@ -14,11 +14,11 @@ All teams follow this naming pattern:
 
 ### Roles and Permissions
 
-| Role               | Suffix  | Permission | Description                                             |
-| ------------------ | ------- | ---------- | ------------------------------------------------------- |
-| Developer          | `-dev`  | `push`     | Write access for development activities                 |
-| Test Manager       | `-test` | `push`     | Write access for testing activities                     |
-| Production Manager | `-prod` | `maintain` | Maintain access for production releases and management  |
+| Role               | Suffix  | Permission | Description                                            |
+| ------------------ | ------- | ---------- | ------------------------------------------------------ |
+| Developer          | `-dev`  | `push`     | Write access for development activities                |
+| Test Manager       | `-test` | `push`     | Write access for testing activities                    |
+| Production Manager | `-prod` | `maintain` | Maintain access for production releases and management |
 
 **Team Maintainers:** Users specified in the repository request (or the issue creator if none specified) are assigned as team maintainers for all 3 teams. Team maintainers can add/remove members and manage team settings.
 

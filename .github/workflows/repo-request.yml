@@ -419,12 +419,12 @@ jobs:
           script: |
             const adminsString = '${{ needs.validate-request.outputs.admins }}';
             let maintainerList = adminsString.split(',').map(u => u.trim()).filter(u => u);
-            
+
             // If no admins specified, use issue creator
             if (maintainerList.length === 0) {
               maintainerList = [context.payload.issue.user.login];
             }
-            
+
             const repoName = '${{ needs.validate-request.outputs.repo-name }}';
             const teams = ['dev', 'test', 'prod'];
             const results = [];

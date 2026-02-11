@@ -16,7 +16,7 @@ body:
         - `{repo-name}-dev` - Developer write access
         - `{repo-name}-test` - Test manager write access
         - `{repo-name}-prod` - Production manager maintain access
-        
+
         **Team Maintainers:** The admins you specify will become team maintainers with the ability to manage team membership. If no admins are specified, you (the issue creator) will become the team maintainer.
 
   - type: input

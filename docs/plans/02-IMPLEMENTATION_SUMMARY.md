@@ -215,6 +215,7 @@ Security: ✓ Dependabot, ✓ GHAS
 ### Resulting Teams
 
 All teams with john-doe and jane-smith as maintainers:
+
 - `mbb-payment-api-dev`
 - `mbb-payment-api-test`
 - `mbb-payment-api-prod`
