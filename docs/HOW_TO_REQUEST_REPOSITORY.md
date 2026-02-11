@@ -25,20 +25,24 @@ Select the **"New Repository Request"** template.
 #### Basic Information
 
 **Repository Name** (required)
+
 - Must be lowercase
 - Use hyphens for spaces (e.g., `mbb-payment-service`)
 - No special characters except hyphens
 - Example: `mbb-web-portal`, `mbb-api-gateway`
 
 **Repository Description** (required)
+
 - Brief, clear description of purpose
 - Example: "Payment processing API service for mobile banking"
 
 **Tech Stack** (required)
+
 - Select from dropdown: React, Java Springboot, NodeJS, Python, Others
 - If "Others", specify in next field
 
 **Business Justification** (required)
+
 - Explain why this repository is needed
 - Expected usage and business impact
 - Example:
@@ -48,32 +52,39 @@ Select the **"New Repository Request"** template.
   - Impact: Enables new revenue stream, serves 100k+ users
   ```
 
-**Repository Admins** (required)
+**Team Maintainers** (optional)
+
 - Comma-separated GitHub usernames
 - Must be valid GitHub users in the organization
-- These users will have admin access
+- These users will be team maintainers for all 3 teams
+- Can manage team membership
+- If not specified, the issue requestor becomes the team maintainer
 - Example: `john-doe, jane-smith, bob-wilson`
 
 #### Configuration Options
 
 **Visibility** (required)
+
 - `private` - Only organization members (default, recommended)
 - `internal` - All organization members can see
 - `public` - Publicly visible (use with caution)
 
 **Target Environment** (required)
+
 - `dev` - Development environment (recommended for new repos)
 - `staging` - Staging environment
 - `production` - Production environment
 
 **Repository Features**
 Select features you want enabled:
+
 - ☑️ Enable Issues - For bug tracking and feature requests
 - ☑️ Enable Projects - For project management boards
 - ☑️ Enable Wiki - For documentation
 
 **Security Features**
 Select security features (GHAS requires license):
+
 - ☑️ Enable Vulnerability Alerts - Free, recommended
 - ☑️ Enable Dependabot Alerts - Free, recommended
 - ☑️ Enable Dependabot Security Updates - Free, recommended
@@ -82,10 +93,12 @@ Select security features (GHAS requires license):
 - ☑️ Enable Secret Scanning Push Protection - Requires GHAS
 
 **Repository Topics**
+
 - Comma-separated tags for discovery
 - Example: `backend, api, microservices, nodejs`
 
 **Default Branch Name**
+
 - `main` - Recommended, modern default
 - `master` - Legacy default
 - `develop` - Development workflow
@@ -93,9 +106,10 @@ Select security features (GHAS requires license):
 ### Step 3: Acknowledgment
 
 You must check all boxes to confirm:
-- ☑️ I understand that this repository will be created with 4 default teams
-- ☑️ I have listed all required admin users and verified their usernames
-- ☑️ I will manage additional team memberships after repository creation
+
+- ☑️ I understand that this repository will be created with 3 default teams
+- ☑️ I understand that team maintainers can manage team membership
+- ☑️ If no maintainers are specified, I (the issue creator) will be the team maintainer
 
 ### Step 4: Submit the Issue
 
@@ -106,16 +120,19 @@ Click **"Submit new issue"**
 ### Automatic Validation (30 seconds)
 
 The workflow will automatically:
+
 1. ✅ Validate repository name format
 2. ✅ Check admin usernames exist
 3. ✅ Verify repository doesn't already exist
 4. 📝 Post validation results as comment
 
 **If validation passes:**
+
 - Issue labeled as `validation-passed`
 - Workflow waits for DevSecOps approval
 
 **If validation fails:**
+
 - Issue labeled as `validation-failed`
 - Issue automatically closed
 - Comment explains what needs fixing
@@ -124,6 +141,7 @@ The workflow will automatically:
 ### Manual Approval (varies)
 
 DevSecOps team will:
+
 1. Review your request and justification
 2. Verify business need
 3. Approve or request changes
@@ -133,9 +151,10 @@ DevSecOps team will:
 ### Automatic Creation (3-5 minutes)
 
 After approval, the workflow will:
+
 1. ✅ Create repository with your configuration
-2. ✅ Create 4 teams with proper permissions
-3. ✅ Add specified admins to admin team
+2. ✅ Create 3 teams with proper permissions
+3. ✅ Assign team maintainers to all teams
 4. ✅ Update infrastructure as code
 5. 📝 Post success message with links
 6. ✅ Close the issue
@@ -144,16 +163,15 @@ After approval, the workflow will:
 
 ### Included Teams
 
-Four teams are automatically created:
+Three teams are automatically created:
 
-| Team Name | Permission | Who Should Join |
-|-----------|------------|-----------------|
-| `{repo-name}-admin` | Admin | Tech leads, project managers |
-| `{repo-name}-dev` | Write | Developers |
-| `{repo-name}-test` | Write | QA engineers, testers |
-| `{repo-name}-prod` | Maintain | DevOps, release managers |
+| Team Name         | Permission | Who Should Join          |
+| ----------------- | ---------- | ------------------------ |
+| `{repo-name}-dev` | Write      | Developers               |
+| `{repo-name}-test`  | Write      | QA engineers, testers    |
+| `{repo-name}-prod`  | Maintain   | DevOps, release managers |
 
-**Note:** Only admin team is populated automatically. Add members to other teams via GitHub UI.
+**Team Maintainers:** The specified team maintainers (or the issue requestor if none specified) are assigned as maintainers for all 3 teams. Maintainers can add/remove team members via GitHub UI.
 
 ### Next Steps After Creation
 
@@ -182,11 +200,11 @@ Four teams are automatically created:
 Repository Name: mbb-payment-api
 Description: Payment processing API for mobile banking app
 Tech Stack: Java Springboot
-Justification: 
+Justification:
   - Business need: New payment feature for Q2 2026
   - Expected usage: Backend API for mobile integration
   - Impact: Critical path for new revenue stream
-Admins: john-doe, jane-smith
+Team Maintainers: john-doe, jane-smith
 Visibility: private
 Environment: dev
 Features: ✓ Issues, ✓ Projects
@@ -205,7 +223,7 @@ Justification:
   - Business need: Replace legacy customer portal
   - Expected usage: Public-facing web application
   - Impact: Improved customer experience, 50k+ daily users
-Admins: alice-dev, bob-ux
+Team Maintainers: alice-dev, bob-ux
 Visibility: private
 Environment: dev
 Features: ✓ Issues, ✓ Projects, ✓ Wiki
@@ -221,6 +239,7 @@ Default Branch: main
 **Error:** "Repository name must be lowercase with hyphens only"
 
 **Solution:**
+
 - Use only lowercase letters (a-z)
 - Use numbers (0-9)
 - Use hyphens (-) to separate words
@@ -228,16 +247,18 @@ Default Branch: main
 - ✅ Good: `mbb-payment-service`
 - ❌ Bad: `MBB_Payment_Service`, `mbb payment service`
 
-### Validation Failed: Admin Users
+### Validation Failed: Team Maintainers
 
 **Error:** "Invalid usernames: xyz-user"
 
 **Solution:**
+
 - Verify username exists on GitHub
 - Check spelling and case (usernames are case-sensitive)
 - Ensure user is part of the organization
 - Separate multiple usernames with commas
-- ✅ Good: `john-doe, jane-smith`
+- This field is optional - if empty, you become the maintainer
+- ✅ Good: `john-doe, jane-smith` or leave empty
 - ❌ Bad: `john doe`, `@john-doe`
 
 ### Validation Failed: Repository Exists
@@ -245,6 +266,7 @@ Default Branch: main
 **Error:** "Repository {name} already exists"
 
 **Solution:**
+
 - Choose a different, unique name
 - Check existing repositories: [Organization Repos](../../repositories)
 - Add more specific suffix: `mbb-payment-api-v2`
@@ -252,11 +274,13 @@ Default Branch: main
 ## Need Help?
 
 ### For Repository Requests
+
 - **Slack:** #devsecops-support
 - **Email:** devsecops@maybank.com
 - **Issue:** Tag `@paloitmbb-devsecops` in your issue
 
 ### For Technical Issues
+
 - **Documentation:** See [Technical Guidelines](../../.github/instructions/tech.instructions.md)
 - **Terraform Issues:** See [Project Structure](../../.github/instructions/structure.instructions.md)
 - **Workflow Issues:** Check [GitHub Actions](../../actions)

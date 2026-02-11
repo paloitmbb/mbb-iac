@@ -25,14 +25,14 @@ module "admin_team" {
 
 ## Inputs
 
-| Name           | Description                                      | Type         | Default  | Required |
-| -------------- | ------------------------------------------------ | ------------ | -------- | -------- |
-| team_name      | Name of the GitHub team                          | string       | n/a      | yes      |
-| description    | Description of the team                          | string       | ""       | no       |
-| privacy        | Privacy level (secret/closed)                    | string       | "closed" | no       |
-| repositories   | List of repository names this team has access to | list(string) | []       | no       |
+| Name           | Description                                        | Type         | Default  | Required |
+| -------------- | -------------------------------------------------- | ------------ | -------- | -------- |
+| team_name      | Name of the GitHub team                            | string       | n/a      | yes      |
+| description    | Description of the team                            | string       | ""       | no       |
+| privacy        | Privacy level (secret/closed)                      | string       | "closed" | no       |
+| repositories   | List of repository names this team has access to   | list(string) | []       | no       |
 | permission     | Permission level (pull/triage/push/maintain/admin) | string       | "pull"   | no       |
-| parent_team_id | Parent team ID for hierarchical structure        | number       | null     | no       |
+| parent_team_id | Parent team ID for hierarchical structure          | number       | null     | no       |
 
 ## Outputs
 

@@ -126,9 +126,10 @@ jobs:
             const adminsString = '${{ steps.parse.outputs.admins }}';
             const adminList = adminsString.split(',').map(u => u.trim()).filter(u => u);
 
+            // Allow empty admin list (requestor will become maintainer)
             if (adminList.length === 0) {
-              core.setOutput('error', 'At least one admin user must be specified');
-              core.setOutput('valid', 'false');
+              core.setOutput('valid', 'true');
+              core.setOutput('admin-list', JSON.stringify([]));
               return;
             }
 
@@ -205,11 +206,11 @@ jobs:
               commentBody += `- **Tech Stack:** ${{ steps.parse.outputs.tech-stack }}\n`;
               commentBody += `- **Visibility:** ${{ steps.parse.outputs.visibility }}\n`;
               commentBody += `- **Environment:** \`${{ steps.parse.outputs.environment }}\`\n`;
-              commentBody += `- **Admins:** ${{ steps.parse.outputs.admins }}\n`;
+              const maintainersText = '${{ steps.parse.outputs.admins }}' || 'Issue requestor';
+              commentBody += `- **Team Maintainers:** ${maintainersText}\n`;
               commentBody += `- **Default Branch:** ${{ steps.parse.outputs.default-branch }}\n\n`;
               
               commentBody += '### Teams to be Created\n';
-              commentBody += `- \`${{ steps.parse.outputs.repo-name }}-admin\` (Admin permission)\n`;
               commentBody += `- \`${{ steps.parse.outputs.repo-name }}-dev\` (Write permission)\n`;
               commentBody += `- \`${{ steps.parse.outputs.repo-name }}-test\` (Write permission)\n`;
               commentBody += `- \`${{ steps.parse.outputs.repo-name }}-prod\` (Maintain permission)\n\n`;
@@ -305,7 +306,7 @@ jobs:
           # Parse topics
           TOPICS_STRING="${{ needs.validate-request.outputs.topics }}"
           TECH_STACK="${{ needs.validate-request.outputs.tech-stack }}"
-          
+
           # Build topics array
           TOPICS_ARRAY="[]"
           if [ -n "$TOPICS_STRING" ]; then
@@ -353,15 +354,9 @@ jobs:
           REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
           TEAMS_FILE="data/teams.yaml"
 
-          # Append 4 teams for the new repository
+          # Append 3 teams for the new repository
           cat >> "$TEAMS_FILE" << EOF
 
-            - name: ${REPO_NAME}-admin
-              repository: ${REPO_NAME}
-              permission: admin
-              privacy: closed
-              description: "Admin team for ${REPO_NAME} repository - full administrative access"
-            
             - name: ${REPO_NAME}-dev
               repository: ${REPO_NAME}
               permission: push
@@ -393,7 +388,7 @@ jobs:
           - Repository: ${{ needs.validate-request.outputs.repo-name }}
           - Tech Stack: ${{ needs.validate-request.outputs.tech-stack }}
           - Environment: ${{ needs.validate-request.outputs.environment }}
-          - Created 4 teams: admin, dev, test, prod
+          - Created 3 teams: dev, test, prod
 
           Closes #${{ github.event.issue.number }}"
 
@@ -417,28 +412,38 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Populate Admin Team Membership
-        id: populate-admins
+      - name: Assign Team Maintainers
+        id: assign-maintainers
         uses: actions/github-script@v7
         with:
           script: |
             const adminsString = '${{ needs.validate-request.outputs.admins }}';
-            const adminList = adminsString.split(',').map(u => u.trim()).filter(u => u);
-            const teamSlug = '${{ needs.validate-request.outputs.repo-name }}-admin';
-
+            let maintainerList = adminsString.split(',').map(u => u.trim()).filter(u => u);
+            
+            // If no admins specified, use issue creator
+            if (maintainerList.length === 0) {
+              maintainerList = [context.payload.issue.user.login];
+            }
+            
+            const repoName = '${{ needs.validate-request.outputs.repo-name }}';
+            const teams = ['dev', 'test', 'prod'];
             const results = [];
 
-            for (const username of adminList) {
-              try {
-                await github.rest.teams.addOrUpdateMembershipForUserInOrg({
-                  org: context.repo.owner,
-                  team_slug: teamSlug,
-                  username: username,
-                  role: 'member'
-                });
-                results.push(`✅ Added ${username} to ${teamSlug}`);
-              } catch (error) {
-                results.push(`❌ Failed to add ${username}: ${error.message}`);
+            for (const teamSuffix of teams) {
+              const teamSlug = `${repoName}-${teamSuffix}`;
+              
+              for (const username of maintainerList) {
+                try {
+                  await github.rest.teams.addOrUpdateMembershipForUserInOrg({
+                    org: context.repo.owner,
+                    team_slug: teamSlug,
+                    username: username,
+                    role: 'maintainer'
+                  });
+                  results.push(`✅ Added ${username} as maintainer of ${teamSlug}`);
+                } catch (error) {
+                  results.push(`❌ Failed to add ${username} to ${teamSlug}: ${error.message}`);
+                }
               }
             }
 
@@ -464,17 +469,16 @@ jobs:
             - **Environment:** ${{ needs.validate-request.outputs.environment }}
 
             ### 👥 Teams Created
-            - [\`${repoName}-admin\`](https://github.com/orgs/${org}/teams/${repoName}-admin) - Admin access
             - [\`${repoName}-dev\`](https://github.com/orgs/${org}/teams/${repoName}-dev) - Write access
             - [\`${repoName}-test\`](https://github.com/orgs/${org}/teams/${repoName}-test) - Write access
             - [\`${repoName}-prod\`](https://github.com/orgs/${org}/teams/${repoName}-prod) - Maintain access
 
-            ### 👤 Admin Team Members
-            ${{ steps.populate-admins.outputs.results }}
+            ### 👤 Team Maintainers
+            ${{ steps.assign-maintainers.outputs.results }}
 
             ### 📋 Next Steps
             1. Visit your repository: https://github.com/${org}/${repoName}
-            2. Add team members to dev, test, and prod teams via GitHub UI
+            2. Team maintainers can add members to teams via GitHub UI
             3. Configure branch protection rules if needed
             4. Start developing! 🚀
 

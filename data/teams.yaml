@@ -8,24 +8,33 @@ teams: []
 # Team Structure Convention:
 # {repository-name}-{role}
 #
-# Roles:
-# - admin: Full administrative access (admin permission)
+# Roles (3 teams per repository):
 # - dev: Developer access (push permission)
 # - test: Test manager access (push permission)
 # - prod: Production manager access (maintain permission)
 #
-# Example team definitions:
-# - name: mbb-web-portal-admin
-#   repository: mbb-web-portal
-#   permission: admin
-#   privacy: closed
-#   description: "Admin team for mbb-web-portal repository - full administrative access"
+# Team Maintainers:
+# Specified maintainers (or issue creator if none) are assigned as team
+# maintainers for all 3 teams, allowing them to manage team membership.
 #
+# Example team definitions:
 # - name: mbb-web-portal-dev
 #   repository: mbb-web-portal
 #   permission: push
 #   privacy: closed
 #   description: "Developer team for mbb-web-portal repository - write access for development"
+#
+# - name: mbb-web-portal-test
+#   repository: mbb-web-portal
+#   permission: push
+#   privacy: closed
+#   description: "Test team for mbb-web-portal repository - write access for testing"
+#
+# - name: mbb-web-portal-prod
+#   repository: mbb-web-portal
+#   permission: maintain
+#   privacy: closed
+#   description: "Production team for mbb-web-portal repository - maintain access for releases"
 #
 # Note: Team membership is managed separately via GitHub API
 # This file only defines team creation and repository permissions

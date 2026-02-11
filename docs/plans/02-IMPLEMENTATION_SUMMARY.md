@@ -10,6 +10,7 @@ This implementation creates an issue-driven automated workflow for repository cr
 ## Files Created
 
 ### 1. GitHub Teams Terraform Module
+
 **Location:** `modules/github-teams/`
 
 - ✅ `main.tf` - Team and repository access resources
@@ -19,18 +20,21 @@ This implementation creates an issue-driven automated workflow for repository cr
 - ✅ `README.md` - Module documentation
 
 **Features:**
+
 - Creates GitHub teams with configurable settings
 - Manages team repository access permissions
 - Supports hierarchical team structures
 - Validates team names and permission levels
 
 ### 2. Teams Data Files
+
 **Location:** `data/`
 
 - ✅ `teams.yaml` - YAML configuration for team definitions
 - ✅ `TEAMS.md` - Teams data management documentation
 
 **Structure:**
+
 ```yaml
 teams:
   - name: {repo-name}-admin
@@ -43,11 +47,13 @@ teams:
 ### 3. Root Module Updates
 
 **File:** `main.tf`
+
 - ✅ Added teams configuration loading from YAML
 - ✅ Integrated DevSecOps team module (admin access to all repos)
 - ✅ Integrated repository-specific teams module
 
 **File:** `outputs.tf`
+
 - ✅ Added DevSecOps team output
 - ✅ Added repository teams output map
 - ✅ Added team count output
@@ -57,13 +63,14 @@ teams:
 **File:** `.github/ISSUE_TEMPLATE/new-repository.yml`
 
 Enhanced with:
+
 - ✅ Tech stack dropdown with "Others" option
 - ✅ Business justification field
-- ✅ Repository admins input (comma-separated)
+- ✅ Team maintainers input (comma-separated, optional)
 - ✅ Security features checkboxes (GHAS)
 - ✅ Comprehensive feature selection
 - ✅ Acknowledgment checkboxes for understanding
-- ✅ Markdown instructions about 4 auto-created teams
+- ✅ Markdown instructions about 3 auto-created teams
 
 ### 5. GitHub Actions Workflow
 
@@ -72,6 +79,7 @@ Enhanced with:
 Implemented two-job workflow:
 
 **Job 1: Validation (validate-request)**
+
 - ✅ Parse issue body to extract all fields
 - ✅ Validate repository name format (lowercase, hyphens only)
 - ✅ Validate admin usernames exist in GitHub
@@ -81,12 +89,13 @@ Implemented two-job workflow:
 - ✅ Close issue if validation fails
 
 **Job 2: Creation (create-repository)**
+
 - ✅ Requires approval via GitHub Environment
 - ✅ Update `repositories.yaml` with new repository
-- ✅ Update `teams.yaml` with 4 new teams
+- ✅ Update `teams.yaml` with 3 new teams
 - ✅ Commit changes to main branch
 - ✅ Run Terraform init and apply
-- ✅ Populate admin team with specified users via GitHub API
+- ✅ Assign team maintainers to all teams (defaults to issue creator)
 - ✅ Post success/failure comments
 - ✅ Close issue on completion
 
@@ -104,14 +113,15 @@ Success! The configuration is valid.
 
 ## Team Structure
 
-For each repository created, 4 teams are automatically provisioned:
+For each repository created, 3 teams are automatically provisioned:
 
-| Team Suffix | Permission | Description |
-|-------------|------------|-------------|
-| `-admin` | `admin` | Full administrative access |
-| `-dev` | `push` | Developer write access |
-| `-test` | `push` | Test manager write access |
-| `-prod` | `maintain` | Production manager maintain access |
+| Team Suffix | Permission | Description                        |
+| ----------- | ---------- | ---------------------------------- |
+| `-dev`      | `push`     | Developer write access             |
+| `-test`     | `push`     | Test manager write access          |
+| `-prod`     | `maintain` | Production manager maintain access |
+
+**Team Maintainers:** The admins specified in the repository request become team maintainers for all 3 teams, with the ability to manage team membership. If no admins are specified, the issue requestor becomes the team maintainer.
 
 ## What Still Needs to Be Done
 
@@ -131,11 +141,13 @@ For each repository created, 4 teams are automatically provisioned:
 Two options:
 
 **Option A: Manual (Quick)**
+
 1. Go to Organization → Teams
 2. Create team: `paloitmbb-devsecops`
 3. Add team members who should approve requests
 
 **Option B: Via Terraform (Recommended)**
+
 1. First create the team manually without repository access
 2. Run `terraform apply` to grant admin access to all repos
 
@@ -154,6 +166,7 @@ After environment setup:
 ### 4. Documentation Updates
 
 Consider updating:
+
 - Main README.md with workflow usage instructions
 - CONTRIBUTING.md with repository request process
 - Add troubleshooting section for common issues
@@ -165,7 +178,7 @@ User Creates Issue
        ↓
 Validation Job (automatic)
    ✅ Validate name
-   ✅ Validate admins
+   ✅ Validate maintainers
    ✅ Check existence
    ✅ Post results
        ↓
@@ -177,7 +190,7 @@ Creation Job (automatic)
    ✅ Update YAML files
    ✅ Commit to main
    ✅ Terraform apply
-   ✅ Populate admin team
+   ✅ Assign team maintainers
    ✅ Post success
    ✅ Close issue
        ↓
@@ -187,11 +200,12 @@ Repository Ready! 🎉
 ## Configuration Examples
 
 ### Example Repository Request
+
 ```markdown
 Repository Name: mbb-payment-api
 Description: Payment processing API service
 Tech Stack: Java Springboot
-Admins: john-doe, jane-smith
+Team Maintainers: john-doe, jane-smith
 Visibility: private
 Environment: dev
 Features: ✓ Issues, ✓ Projects
@@ -199,7 +213,8 @@ Security: ✓ Dependabot, ✓ GHAS
 ```
 
 ### Resulting Teams
-- `mbb-payment-api-admin` (john-doe, jane-smith)
+
+All teams with john-doe and jane-smith as maintainers:
 - `mbb-payment-api-dev`
 - `mbb-payment-api-test`
 - `mbb-payment-api-prod`
@@ -230,7 +245,7 @@ If a repository needs to be removed after creation:
 ```bash
 # 1. Remove from YAML files
 vim data/repositories.yaml  # Remove entry
-vim data/teams.yaml         # Remove 4 team entries
+vim data/teams.yaml         # Remove 3 team entries
 
 # 2. Commit changes
 git add data/repositories.yaml data/teams.yaml
@@ -239,7 +254,6 @@ git push origin main
 
 # 3. Run Terraform destroy for specific resources
 terraform destroy -target='module.github_repositories["{name}"]'
-terraform destroy -target='module.repository_teams["{name}-admin"]'
 terraform destroy -target='module.repository_teams["{name}-dev"]'
 terraform destroy -target='module.repository_teams["{name}-test"]'
 terraform destroy -target='module.repository_teams["{name}-prod"]'
@@ -258,6 +272,7 @@ terraform destroy -target='module.repository_teams["{name}-prod"]'
 ## Success Metrics
 
 Track these metrics after deployment:
+
 - Time from request to repository creation
 - Number of validation failures
 - Approval turnaround time

@@ -12,11 +12,12 @@ body:
         ## Repository Request Form
         Please fill out this form to request a new repository. Your request will be reviewed by the DevSecOps team.
 
-        **Note:** The repository will be created with 4 teams:
-        - `{repo-name}-admin` - Full administrative access
+        **Note:** The repository will be created with 3 teams:
         - `{repo-name}-dev` - Developer write access
         - `{repo-name}-test` - Test manager write access
         - `{repo-name}-prod` - Production manager maintain access
+        
+        **Team Maintainers:** The admins you specify will become team maintainers with the ability to manage team membership. If no admins are specified, you (the issue creator) will become the team maintainer.
 
   - type: input
     id: repo-name
@@ -72,11 +73,11 @@ body:
   - type: input
     id: admins
     attributes:
-      label: Repository Admins
-      description: Comma-separated GitHub usernames who will have admin access (will be validated)
+      label: Team Maintainers
+      description: Comma-separated GitHub usernames who will become team maintainers (can manage team membership). Leave empty to make yourself the maintainer. (Usernames will be validated)
       placeholder: "john-doe, jane-smith, bob-jones"
     validations:
-      required: true
+      required: false
 
   - type: dropdown
     id: visibility
@@ -178,9 +179,9 @@ body:
       label: Acknowledgment
       description: Please confirm you understand the following
       options:
-        - label: I understand that this repository will be created with 4 default teams
+        - label: I understand that this repository will be created with 3 default teams (dev, test, prod)
           required: true
-        - label: I have listed all required admin users and verified their usernames
+        - label: I understand that team maintainers manage team membership and can add/remove members
           required: true
-        - label: I will manage additional team memberships after repository creation
+        - label: I have verified the usernames of team maintainers (if specified)
           required: true

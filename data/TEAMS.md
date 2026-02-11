@@ -14,20 +14,21 @@ All teams follow this naming pattern:
 
 ### Roles and Permissions
 
-| Role               | Suffix   | Permission | Description                                                      |
-| ------------------ | -------- | ---------- | ---------------------------------------------------------------- |
-| Admin              | `-admin` | `admin`    | Full administrative access including settings and team management |
-| Developer          | `-dev`   | `push`     | Write access for development activities                          |
-| Test Manager       | `-test`  | `push`     | Write access for testing activities                              |
-| Production Manager | `-prod`  | `maintain` | Maintain access for production releases and management           |
+| Role               | Suffix  | Permission | Description                                             |
+| ------------------ | ------- | ---------- | ------------------------------------------------------- |
+| Developer          | `-dev`  | `push`     | Write access for development activities                 |
+| Test Manager       | `-test` | `push`     | Write access for testing activities                     |
+| Production Manager | `-prod` | `maintain` | Maintain access for production releases and management  |
+
+**Team Maintainers:** Users specified in the repository request (or the issue creator if none specified) are assigned as team maintainers for all 3 teams. Team maintainers can add/remove members and manage team settings.
 
 ## Automatic Team Creation
 
 When a new repository is created via the automated workflow, the system automatically:
 
-1. Creates 4 teams for the repository following the naming convention
+1. Creates 3 teams for the repository following the naming convention
 2. Assigns appropriate permissions to each team
-3. Populates the admin team with users specified in the repository request
+3. Assigns team maintainers to all 3 teams (defaults to issue creator if none specified)
 4. Updates this YAML file with the new team definitions
 
 ## Manual Team Management
@@ -52,10 +53,10 @@ To manually add teams:
 Team memberships are **NOT** managed in this file or via Terraform. Use GitHub UI or API to:
 
 - Add/remove team members
-- Assign team maintainers
+- Assign additional team maintainers
 - Configure team settings
 
-The automated workflow handles admin team membership population during repository creation.
+The automated workflow handles team maintainer assignment during repository creation. Team maintainers are assigned to all 3 teams.
 
 ## Example Team Structure
 
@@ -63,12 +64,6 @@ For a repository named `mbb-web-portal`, the following teams would be created:
 
 ```yaml
 teams:
-  - name: mbb-web-portal-admin
-    repository: mbb-web-portal
-    permission: admin
-    privacy: closed
-    description: "Admin team for mbb-web-portal repository - full administrative access"
-
   - name: mbb-web-portal-dev
     repository: mbb-web-portal
     permission: push
@@ -87,6 +82,8 @@ teams:
     privacy: closed
     description: "Production team for mbb-web-portal repository - maintain access for production releases"
 ```
+
+**Team Maintainers:** Specified maintainers (or issue creator) are assigned to all 3 teams with maintainer role, allowing them to manage membership.
 
 ## Troubleshooting
 
@@ -112,4 +109,4 @@ Team membership is managed separately from this file:
 
 - Use GitHub UI: Organization → Teams → [Team Name] → Members
 - Use GitHub API: `gh api /orgs/{org}/teams/{team}/memberships/{username}`
-- Or use the automated workflow when creating repositories
+- The automated workflow assigns team maintainers when creating repositories
