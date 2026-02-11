@@ -1,8 +1,4 @@
-# Note: This is a simplified version of the repository request workflow
-# For the full implementation with issue parsing and PR creation,
-# see PROJECT_CREATION_PLAN.md
-
-name: Process Repository Request
+name: Automated Repository Creation Workflow
 
 on:
   issues:
@@ -14,25 +10,531 @@ permissions:
   pull-requests: write
 
 jobs:
-  process-request:
+  # ============================================================================
+  # Job 1: Validate and Parse Issue
+  # ============================================================================
+  validate-request:
+    name: Validate Repository Request
     runs-on: ubuntu-latest
     if: contains(github.event.issue.labels.*.name, 'repo-request')
+    outputs:
+      repo-name: ${{ steps.parse.outputs.repo-name }}
+      description: ${{ steps.parse.outputs.description }}
+      tech-stack: ${{ steps.parse.outputs.tech-stack }}
+      justification: ${{ steps.parse.outputs.justification }}
+      admins: ${{ steps.parse.outputs.admins }}
+      visibility: ${{ steps.parse.outputs.visibility }}
+      environment: ${{ steps.parse.outputs.environment }}
+      topics: ${{ steps.parse.outputs.topics }}
+      default-branch: ${{ steps.parse.outputs.default-branch }}
+      has-issues: ${{ steps.parse.outputs.has-issues }}
+      has-projects: ${{ steps.parse.outputs.has-projects }}
+      has-wiki: ${{ steps.parse.outputs.has-wiki }}
+      enable-vuln-alerts: ${{ steps.parse.outputs.enable-vuln-alerts }}
+      enable-dependabot-alerts: ${{ steps.parse.outputs.enable-dependabot-alerts }}
+      enable-dependabot-updates: ${{ steps.parse.outputs.enable-dependabot-updates }}
+      enable-advanced-security: ${{ steps.parse.outputs.enable-advanced-security }}
+      enable-secret-scanning: ${{ steps.parse.outputs.enable-secret-scanning }}
+      enable-secret-push-protection: ${{ steps.parse.outputs.enable-secret-push-protection }}
+      validation-passed: ${{ steps.validate.outputs.passed }}
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Comment on issue
+      - name: Parse issue body
+        id: parse
         uses: actions/github-script@v7
         with:
           script: |
-            github.rest.issues.createComment({
+            const issueBody = context.payload.issue.body;
+
+            // Helper function to extract field value
+            function extractField(body, fieldLabel) {
+              const regex = new RegExp(`### ${fieldLabel}\\s*\\n\\s*([^\\n#]+)`, 'i');
+              const match = body.match(regex);
+              return match ? match[1].trim() : '';
+            }
+
+            // Extract all fields
+            const repoName = extractField(issueBody, 'Repository Name');
+            const description = extractField(issueBody, 'Repository Description');
+            const techStack = extractField(issueBody, 'Tech Stack');
+            const techStackOther = extractField(issueBody, 'Other Tech Stack');
+            const justification = extractField(issueBody, 'Business Justification');
+            const admins = extractField(issueBody, 'Repository Admins');
+            const visibility = extractField(issueBody, 'Repository Visibility');
+            const environment = extractField(issueBody, 'Target Environment');
+            const topics = extractField(issueBody, 'Repository Topics');
+            const defaultBranch = extractField(issueBody, 'Default Branch Name');
+
+            // Extract checkboxes
+            const issuesEnabled = issueBody.includes('[x] Enable Issues') || issueBody.includes('[X] Enable Issues');
+            const projectsEnabled = issueBody.includes('[x] Enable Projects') || issueBody.includes('[X] Enable Projects');
+            const wikiEnabled = issueBody.includes('[x] Enable Wiki') || issueBody.includes('[X] Enable Wiki');
+
+            // Security features
+            const vulnAlerts = issueBody.includes('[x] Enable Vulnerability Alerts') || issueBody.includes('[X] Enable Vulnerability Alerts');
+            const dependabotAlerts = issueBody.includes('[x] Enable Dependabot Alerts') || issueBody.includes('[X] Enable Dependabot Alerts');
+            const dependabotUpdates = issueBody.includes('[x] Enable Dependabot Security Updates') || issueBody.includes('[X] Enable Dependabot Security Updates');
+            const advancedSecurity = issueBody.includes('[x] Enable Advanced Security') || issueBody.includes('[X] Enable Advanced Security');
+            const secretScanning = issueBody.includes('[x] Enable Secret Scanning') || issueBody.includes('[X] Enable Secret Scanning');
+            const secretPushProtection = issueBody.includes('[x] Enable Secret Scanning Push Protection') || issueBody.includes('[X] Enable Secret Scanning Push Protection');
+
+            // Determine final tech stack
+            const finalTechStack = techStack === 'Others (specify below)' ? techStackOther : techStack;
+
+            // Set outputs
+            core.setOutput('repo-name', repoName);
+            core.setOutput('description', description);
+            core.setOutput('tech-stack', finalTechStack);
+            core.setOutput('justification', justification);
+            core.setOutput('admins', admins);
+            core.setOutput('visibility', visibility);
+            core.setOutput('environment', environment);
+            core.setOutput('topics', topics);
+            core.setOutput('default-branch', defaultBranch || 'main');
+            core.setOutput('has-issues', issuesEnabled);
+            core.setOutput('has-projects', projectsEnabled);
+            core.setOutput('has-wiki', wikiEnabled);
+            core.setOutput('enable-vuln-alerts', vulnAlerts);
+            core.setOutput('enable-dependabot-alerts', dependabotAlerts);
+            core.setOutput('enable-dependabot-updates', dependabotUpdates);
+            core.setOutput('enable-advanced-security', advancedSecurity);
+            core.setOutput('enable-secret-scanning', secretScanning);
+            core.setOutput('enable-secret-push-protection', secretPushProtection);
+
+      - name: Validate repository name
+        id: validate-name
+        run: |
+          REPO_NAME="${{ steps.parse.outputs.repo-name }}"
+
+          # Check if repo name matches pattern (lowercase, hyphens, no spaces)
+          if [[ ! "$REPO_NAME" =~ ^[a-z0-9-]+$ ]]; then
+            echo "error=Repository name must be lowercase with hyphens only" >> $GITHUB_OUTPUT
+            echo "valid=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "valid=true" >> $GITHUB_OUTPUT
+
+      - name: Validate admin usernames
+        id: validate-admins
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const adminsString = '${{ steps.parse.outputs.admins }}';
+            const adminList = adminsString.split(',').map(u => u.trim()).filter(u => u);
+
+            if (adminList.length === 0) {
+              core.setOutput('error', 'At least one admin user must be specified');
+              core.setOutput('valid', 'false');
+              return;
+            }
+
+            const invalidUsers = [];
+
+            // Validate each username exists
+            for (const username of adminList) {
+              try {
+                await github.rest.users.getByUsername({ username });
+              } catch (error) {
+                invalidUsers.push(username);
+              }
+            }
+
+            if (invalidUsers.length > 0) {
+              core.setOutput('error', `Invalid usernames: ${invalidUsers.join(', ')}`);
+              core.setOutput('valid', 'false');
+              return;
+            }
+
+            core.setOutput('valid', 'true');
+            core.setOutput('admin-list', JSON.stringify(adminList));
+
+      - name: Check repository existence
+        id: check-repo
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const repoName = '${{ steps.parse.outputs.repo-name }}';
+            try {
+              await github.rest.repos.get({
+                owner: context.repo.owner,
+                repo: repoName
+              });
+              core.setOutput('exists', 'true');
+              core.setOutput('error', `Repository ${repoName} already exists`);
+            } catch (error) {
+              if (error.status === 404) {
+                core.setOutput('exists', 'false');
+              } else {
+                throw error;
+              }
+            }
+
+      - name: Consolidate validation
+        id: validate
+        run: |
+          NAME_VALID="${{ steps.validate-name.outputs.valid }}"
+          ADMINS_VALID="${{ steps.validate-admins.outputs.valid }}"
+          REPO_EXISTS="${{ steps.check-repo.outputs.exists }}"
+
+          if [[ "$NAME_VALID" == "true" && "$ADMINS_VALID" == "true" && "$REPO_EXISTS" != "true" ]]; then
+            echo "passed=true" >> $GITHUB_OUTPUT
+          else
+            echo "passed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Post validation results
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const passed = '${{ steps.validate.outputs.passed }}' === 'true';
+            const nameValid = '${{ steps.validate-name.outputs.valid }}' === 'true';
+            const adminsValid = '${{ steps.validate-admins.outputs.valid }}' === 'true';
+            const repoExists = '${{ steps.check-repo.outputs.exists }}' === 'true';
+
+            let commentBody = '## 🔍 Repository Request Validation\n\n';
+
+            if (passed) {
+              commentBody += '✅ **All validations passed!**\n\n';
+              commentBody += '### Request Summary\n';
+              commentBody += `- **Repository Name:** \`${{ steps.parse.outputs.repo-name }}\`\n`;
+              commentBody += `- **Description:** ${{ steps.parse.outputs.description }}\n`;
+              commentBody += `- **Tech Stack:** ${{ steps.parse.outputs.tech-stack }}\n`;
+              commentBody += `- **Visibility:** ${{ steps.parse.outputs.visibility }}\n`;
+              commentBody += `- **Environment:** \`${{ steps.parse.outputs.environment }}\`\n`;
+              commentBody += `- **Admins:** ${{ steps.parse.outputs.admins }}\n`;
+              commentBody += `- **Default Branch:** ${{ steps.parse.outputs.default-branch }}\n\n`;
+              
+              commentBody += '### Teams to be Created\n';
+              commentBody += `- \`${{ steps.parse.outputs.repo-name }}-admin\` (Admin permission)\n`;
+              commentBody += `- \`${{ steps.parse.outputs.repo-name }}-dev\` (Write permission)\n`;
+              commentBody += `- \`${{ steps.parse.outputs.repo-name }}-test\` (Write permission)\n`;
+              commentBody += `- \`${{ steps.parse.outputs.repo-name }}-prod\` (Maintain permission)\n\n`;
+              
+              commentBody += '### Features Enabled\n';
+              commentBody += `- Issues: ${{ steps.parse.outputs.has-issues }}\n`;
+              commentBody += `- Projects: ${{ steps.parse.outputs.has-projects }}\n`;
+              commentBody += `- Wiki: ${{ steps.parse.outputs.has-wiki }}\n\n`;
+              
+              commentBody += '### Security Features\n';
+              commentBody += `- Vulnerability Alerts: ${{ steps.parse.outputs.enable-vuln-alerts }}\n`;
+              commentBody += `- Dependabot Alerts: ${{ steps.parse.outputs.enable-dependabot-alerts }}\n`;
+              commentBody += `- Dependabot Updates: ${{ steps.parse.outputs.enable-dependabot-updates }}\n`;
+              commentBody += `- Advanced Security: ${{ steps.parse.outputs.enable-advanced-security }}\n\n`;
+              
+              commentBody += '---\n\n';
+              commentBody += '⏳ **Awaiting approval from DevSecOps team...**\n';
+              commentBody += 'Once approved, the repository and teams will be created automatically.';
+            } else {
+              commentBody += '❌ **Validation Failed**\n\n';
+              commentBody += '### Errors Found:\n';
+              
+              if (!nameValid) {
+                commentBody += `- ❌ Repository Name: ${{ steps.validate-name.outputs.error }}\n`;
+              }
+              if (!adminsValid) {
+                commentBody += `- ❌ Admin Users: ${{ steps.validate-admins.outputs.error }}\n`;
+              }
+              if (repoExists) {
+                commentBody += `- ❌ Repository Already Exists: ${{ steps.check-repo.outputs.error }}\n`;
+              }
+              
+              commentBody += '\n---\n\n';
+              commentBody += '⚠️ **Please fix the above errors and create a new issue.**';
+            }
+
+            await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `✅ Repository request received!
+              body: commentBody
+            });
+
+            // Add label based on validation
+            if (passed) {
+              await github.rest.issues.addLabels({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                labels: ['validation-passed']
+              });
+            } else {
+              await github.rest.issues.addLabels({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                labels: ['validation-failed']
+              });
               
-              A team member will review your request and create a pull request with the Terraform configuration.
-              
-              For automated processing, implement the full workflow from PROJECT_CREATION_PLAN.md`
-            })
+              // Close issue if validation failed
+              await github.rest.issues.update({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'closed'
+              });
+            }
+
+  # ============================================================================
+  # Job 2: Create Repository (Requires Approval)
+  # ============================================================================
+  create-repository:
+    name: Create Repository and Teams
+    runs-on: ubuntu-latest
+    needs: validate-request
+    if: needs.validate-request.outputs.validation-passed == 'true'
+    environment: repo-creation-approval # Requires approval from paloitmbb-devsecops
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Update repositories.yaml
+        id: update-repos
+        run: |
+          # Parse topics
+          TOPICS_STRING="${{ needs.validate-request.outputs.topics }}"
+          TECH_STACK="${{ needs.validate-request.outputs.tech-stack }}"
+          
+          # Build topics array
+          TOPICS_ARRAY="[]"
+          if [ -n "$TOPICS_STRING" ]; then
+            # Convert comma-separated topics to YAML array
+            IFS=',' read -ra TOPIC_ITEMS <<< "$TOPICS_STRING"
+            TOPICS_ARRAY="["
+            for topic in "${TOPIC_ITEMS[@]}"; do
+              topic=$(echo "$topic" | xargs)  # trim whitespace
+              TOPICS_ARRAY="${TOPICS_ARRAY}\"${topic}\", "
+            done
+            # Add tech stack
+            if [ -n "$TECH_STACK" ]; then
+              tech_topic=$(echo "$TECH_STACK" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+              TOPICS_ARRAY="${TOPICS_ARRAY}\"${tech_topic}\""
+            fi
+            TOPICS_ARRAY="${TOPICS_ARRAY}]"
+          fi
+
+          # Append to repositories.yaml
+          cat >> data/repositories.yaml << EOF
+
+            - name: ${{ needs.validate-request.outputs.repo-name }}
+              description: "${{ needs.validate-request.outputs.description }}"
+              visibility: ${{ needs.validate-request.outputs.visibility }}
+              features:
+                has_issues: ${{ needs.validate-request.outputs.has-issues }}
+                has_projects: ${{ needs.validate-request.outputs.has-projects }}
+                has_wiki: ${{ needs.validate-request.outputs.has-wiki }}
+              default_branch: ${{ needs.validate-request.outputs.default-branch }}
+              topics: ${TOPICS_ARRAY}
+              security:
+                enable_vulnerability_alerts: ${{ needs.validate-request.outputs.enable-vuln-alerts }}
+                enable_advanced_security: ${{ needs.validate-request.outputs.enable-advanced-security }}
+                enable_secret_scanning: ${{ needs.validate-request.outputs.enable-secret-scanning }}
+                enable_secret_scanning_push_protection: ${{ needs.validate-request.outputs.enable-secret-push-protection }}
+                enable_dependabot_alerts: ${{ needs.validate-request.outputs.enable-dependabot-alerts }}
+                enable_dependabot_security_updates: ${{ needs.validate-request.outputs.enable-dependabot-updates }}
+          EOF
+
+          echo "Successfully updated repositories.yaml"
+
+      - name: Update teams.yaml
+        id: update-teams
+        run: |
+          REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
+          TEAMS_FILE="data/teams.yaml"
+
+          # Append 4 teams for the new repository
+          cat >> "$TEAMS_FILE" << EOF
+
+            - name: ${REPO_NAME}-admin
+              repository: ${REPO_NAME}
+              permission: admin
+              privacy: closed
+              description: "Admin team for ${REPO_NAME} repository - full administrative access"
+            
+            - name: ${REPO_NAME}-dev
+              repository: ${REPO_NAME}
+              permission: push
+              privacy: closed
+              description: "Developer team for ${REPO_NAME} repository - write access for development"
+            
+            - name: ${REPO_NAME}-test
+              repository: ${REPO_NAME}
+              permission: push
+              privacy: closed
+              description: "Test team for ${REPO_NAME} repository - write access for testing activities"
+            
+            - name: ${REPO_NAME}-prod
+              repository: ${REPO_NAME}
+              permission: maintain
+              privacy: closed
+              description: "Production team for ${REPO_NAME} repository - maintain access for production releases"
+          EOF
+
+          echo "Successfully updated teams.yaml"
+
+      - name: Commit changes to main
+        run: |
+          git add data/repositories.yaml data/teams.yaml
+          git commit -m "feat: ✨ add repository ${{ needs.validate-request.outputs.repo-name }} and associated teams
+
+          Repository request from issue #${{ github.event.issue.number }}
+
+          - Repository: ${{ needs.validate-request.outputs.repo-name }}
+          - Tech Stack: ${{ needs.validate-request.outputs.tech-stack }}
+          - Environment: ${{ needs.validate-request.outputs.environment }}
+          - Created 4 teams: admin, dev, test, prod
+
+          Closes #${{ github.event.issue.number }}"
+
+          git push origin main
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.7
+
+      - name: Terraform Init
+        run: |
+          ./scripts/init.sh ${{ needs.validate-request.outputs.environment }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Terraform Apply
+        id: terraform-apply
+        run: |
+          ./scripts/apply.sh ${{ needs.validate-request.outputs.environment }} -auto-approve
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Populate Admin Team Membership
+        id: populate-admins
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const adminsString = '${{ needs.validate-request.outputs.admins }}';
+            const adminList = adminsString.split(',').map(u => u.trim()).filter(u => u);
+            const teamSlug = '${{ needs.validate-request.outputs.repo-name }}-admin';
+
+            const results = [];
+
+            for (const username of adminList) {
+              try {
+                await github.rest.teams.addOrUpdateMembershipForUserInOrg({
+                  org: context.repo.owner,
+                  team_slug: teamSlug,
+                  username: username,
+                  role: 'member'
+                });
+                results.push(`✅ Added ${username} to ${teamSlug}`);
+              } catch (error) {
+                results.push(`❌ Failed to add ${username}: ${error.message}`);
+              }
+            }
+
+            core.setOutput('results', results.join('\n'));
+            return results;
+
+      - name: Post success comment
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const repoName = '${{ needs.validate-request.outputs.repo-name }}';
+            const org = context.repo.owner;
+
+            const commentBody = `## ✅ Repository Created Successfully!
+
+            Your repository has been created and configured.
+
+            ### 🎉 Repository Details
+            - **Repository:** [${org}/${repoName}](https://github.com/${org}/${repoName})
+            - **Visibility:** ${{ needs.validate-request.outputs.visibility }}
+            - **Default Branch:** ${{ needs.validate-request.outputs.default-branch }}
+            - **Environment:** ${{ needs.validate-request.outputs.environment }}
+
+            ### 👥 Teams Created
+            - [\`${repoName}-admin\`](https://github.com/orgs/${org}/teams/${repoName}-admin) - Admin access
+            - [\`${repoName}-dev\`](https://github.com/orgs/${org}/teams/${repoName}-dev) - Write access
+            - [\`${repoName}-test\`](https://github.com/orgs/${org}/teams/${repoName}-test) - Write access
+            - [\`${repoName}-prod\`](https://github.com/orgs/${org}/teams/${repoName}-prod) - Maintain access
+
+            ### 👤 Admin Team Members
+            ${{ steps.populate-admins.outputs.results }}
+
+            ### 📋 Next Steps
+            1. Visit your repository: https://github.com/${org}/${repoName}
+            2. Add team members to dev, test, and prod teams via GitHub UI
+            3. Configure branch protection rules if needed
+            4. Start developing! 🚀
+
+            ---
+            *Automated by GitHub Actions workflow*`;
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: commentBody
+            });
+
+            // Close issue
+            await github.rest.issues.update({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'closed',
+              state_reason: 'completed'
+            });
+
+            // Add completion label
+            await github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['completed']
+            });
+
+      - name: Post failure comment
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const commentBody = `## ❌ Repository Creation Failed
+
+            There was an error creating the repository. Please check the workflow logs for details.
+
+            ### Error Details
+            - **Workflow Run:** [View Logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
+            - **Step Failed:** Check the logs above
+
+            ### 🔧 Troubleshooting
+            A member of the DevSecOps team will investigate and follow up.
+
+            ---
+            *Automated by GitHub Actions workflow*`;
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: commentBody
+            });
+
+            // Add failure label
+            await github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['creation-failed']
+            });

@@ -2,18 +2,18 @@
 locals {
   repositories_file = "${path.module}/data/repositories.yaml"
   repositories_data = fileexists(local.repositories_file) ? yamldecode(file(local.repositories_file)) : { repositories = [] }
-  
+
   # Normalize YAML repositories to ensure all optional attributes exist
   yaml_repositories = [
     for repo in local.repositories_data.repositories : merge(repo, {
-      secrets   = try(repo.secrets, null)
-      variables = try(repo.variables, null)
-      security  = try(repo.security, null)
+      secrets           = try(repo.secrets, null)
+      variables         = try(repo.variables, null)
+      security          = try(repo.security, null)
       branch_protection = try(repo.branch_protection, null)
-      teams = try(repo.teams, null)
+      teams             = try(repo.teams, null)
     })
   ]
-  
+
   # Merge repositories from YAML file and tfvars (tfvars takes precedence if both exist)
   all_repositories = length(var.repositories) > 0 ? var.repositories : local.yaml_repositories
 }
@@ -56,6 +56,48 @@ module "github_repositories" {
   enable_secret_scanning_push_protection = try(each.value.security.enable_secret_scanning_push_protection, false)
 
   depends_on = [module.github_organization]
+}
+
+# ============================================================================
+# Team Management
+# ============================================================================
+
+# Load teams configuration
+locals {
+  teams_file = "${path.module}/data/teams.yaml"
+  teams_data = fileexists(local.teams_file) ? yamldecode(file(local.teams_file)) : { teams = [] }
+
+  # Normalize teams data
+  all_teams = try(local.teams_data.teams, [])
+}
+
+# Create DevSecOps team with admin access to all repositories
+module "devsecops_team" {
+  source = "./modules/github-teams"
+
+  team_name   = "paloitmbb-devsecops"
+  description = "DevSecOps team with organization-level permissions to view and approve all repositories and pipelines"
+  privacy     = "closed"
+
+  # Grant admin access to all managed repositories
+  repositories = [for repo in local.all_repositories : repo.name]
+  permission   = "admin"
+
+  depends_on = [module.github_repositories]
+}
+
+# Create repository-specific teams
+module "repository_teams" {
+  source   = "./modules/github-teams"
+  for_each = { for team in local.all_teams : team.name => team }
+
+  team_name    = each.value.name
+  description  = each.value.description
+  privacy      = try(each.value.privacy, "closed")
+  repositories = [each.value.repository]
+  permission   = each.value.permission
+
+  depends_on = [module.github_repositories]
 }
 
 # Copilot Configuration

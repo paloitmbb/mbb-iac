@@ -1,0 +1,31 @@
+---
+# GitHub Teams Configuration
+# This file defines teams and their repository access permissions
+# Teams are created via Terraform; membership is managed via GitHub API
+
+teams: []
+
+# Team Structure Convention:
+# {repository-name}-{role}
+#
+# Roles:
+# - admin: Full administrative access (admin permission)
+# - dev: Developer access (push permission)
+# - test: Test manager access (push permission)
+# - prod: Production manager access (maintain permission)
+#
+# Example team definitions:
+# - name: mbb-web-portal-admin
+#   repository: mbb-web-portal
+#   permission: admin
+#   privacy: closed
+#   description: "Admin team for mbb-web-portal repository - full administrative access"
+#
+# - name: mbb-web-portal-dev
+#   repository: mbb-web-portal
+#   permission: push
+#   privacy: closed
+#   description: "Developer team for mbb-web-portal repository - write access for development"
+#
+# Note: Team membership is managed separately via GitHub API
+# This file only defines team creation and repository permissions

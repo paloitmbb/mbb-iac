@@ -11,7 +11,7 @@ organization = {
   members_can_create_repositories = false
 }
 
-organization_secrets = {}
+organization_secrets   = {}
 organization_variables = {}
 
 repositories = []
