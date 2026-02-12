@@ -469,43 +469,43 @@ jobs:
             
             const prBody = `## 🎉 New Repository Request
 
-### Repository Details
+            ### Repository Details
 
-| Field | Value |
-|-------|-------|
-| **Repository Name** | \`${repoName}\` |
-| **Tech Stack** | ${techStack} |
-| **Default Branch** | \`${defaultBranch}\` |
-| **Admin Users** | ${adminsList} |
-| **Requested By** | @${context.payload.issue.user.login} |
+            | Field | Value |
+            |-------|-------|
+            | **Repository Name** | \`${repoName}\` |
+            | **Tech Stack** | ${techStack} |
+            | **Default Branch** | \`${defaultBranch}\` |
+            | **Admin Users** | ${adminsList} |
+            | **Requested By** | @${context.payload.issue.user.login} |
 
-### Teams Created
+            ### Teams Created
 
-- \`${repoName}-dev\` - Developer write access
-- \`${repoName}-test\` - Test manager write access
-- \`${repoName}-prod\` - Production manager maintain access
+            - \`${repoName}-dev\` - Developer write access
+            - \`${repoName}-test\` - Test manager write access
+            - \`${repoName}-prod\` - Production manager maintain access
 
-### Configuration
+            ### Configuration
 
-This PR adds the repository definition and team configurations to:
-- \`data/repositories.yaml\`
-- \`data/teams.yaml\`
+            This PR adds the repository definition and team configurations to:
+            - \`data/repositories.yaml\`
+            - \`data/teams.yaml\`
 
-**Default settings** from \`data/defaults.yaml\` will be applied:
-- Visibility: private
-- Features: Issues, Projects (Wiki disabled)
-- Security: Vulnerability alerts, Dependabot enabled
-- Topics: maybank, mbb, ${techStack.toLowerCase().replace(/ /g, '-')}
+            **Default settings** from \`data/defaults.yaml\` will be applied:
+            - Visibility: private
+            - Features: Issues, Projects (Wiki disabled)
+            - Security: Vulnerability alerts, Dependabot enabled
+            - Topics: maybank, mbb, ${techStack.toLowerCase().replace(/ /g, '-')}
 
-### Next Steps
+            ### Next Steps
 
-1. ✅ Review the YAML changes
-2. ✅ Merge this PR to apply changes
-3. 🚀 Run Terraform to create the repository and teams
+            1. ✅ Review the YAML changes
+            2. ✅ Merge this PR to apply changes
+            3. 🚀 Run Terraform to create the repository and teams
 
----
+            ---
 
-Closes #${issueNumber}`;
+            Closes #${issueNumber}`;
             
             const pr = await github.rest.pulls.create({
               owner: context.repo.owner,
