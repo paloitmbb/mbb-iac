@@ -317,7 +317,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.TF_GITHUB_TOKEN }}
 
       - name: Configure Git
         run: |
