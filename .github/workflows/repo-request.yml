@@ -21,7 +21,7 @@ jobs:
       repo-name: ${{ steps.parse.outputs.repo-name }}
       tech-stack: ${{ steps.parse.outputs.tech-stack }}
       justification: ${{ steps.parse.outputs.justification }}
-      admins: ${{ steps.parse.outputs.admins }}
+      teams: ${{ steps.parse.outputs.teams }}
       default-branch: ${{ steps.parse.outputs.default-branch }}
       defaults: ${{ steps.load-defaults.outputs.defaults }}
       validation-passed: ${{ steps.validate.outputs.passed }}
@@ -49,7 +49,7 @@ jobs:
             const techStack = extractField(issueBody, 'Tech Stack');
             const techStackOther = extractField(issueBody, 'Other Tech Stack');
             const justification = extractField(issueBody, 'Business Justification');
-            const admins = extractField(issueBody, 'Team Maintainers');
+            const teams = extractField(issueBody, 'Team Access');
             const defaultBranch = extractField(issueBody, 'Default Branch Name');
 
             // Determine final tech stack
@@ -59,7 +59,7 @@ jobs:
             core.setOutput('repo-name', repoName);
             core.setOutput('tech-stack', finalTechStack);
             core.setOutput('justification', justification);
-            core.setOutput('admins', admins || context.payload.issue.user.login);
+            core.setOutput('teams', teams);
             core.setOutput('default-branch', defaultBranch || 'main');
 
       - name: Load default values from defaults.yaml
@@ -91,46 +91,47 @@ jobs:
 
           echo "valid=true" >> $GITHUB_OUTPUT
 
-      - name: Validate admin usernames
-        id: validate-admins
+      - name: Validate team existence
+        id: validate-teams
         uses: actions/github-script@v7
         with:
           script: |
-            const adminsString = '${{ steps.parse.outputs.admins }}';
+            const teamsString = '${{ steps.parse.outputs.teams }}';
             // Filter out empty strings and GitHub's "_No response_" placeholder
-            const adminList = adminsString
+            const teamList = teamsString
               .split(',')
-              .map(u => u.trim())
-              .filter(u => u && u !== '_No response_');
+              .map(t => t.trim())
+              .filter(t => t && t !== '_No response_');
 
-            // Allow empty admin list (requestor will become maintainer)
-            if (adminList.length === 0) {
-              core.setOutput('valid', 'true');
-              core.setOutput('admin-list', JSON.stringify([]));
-              core.setOutput('admins-display', context.payload.issue.user.login);
+            if (teamList.length === 0) {
+              core.setOutput('error', 'At least one team must be specified');
+              core.setOutput('valid', 'false');
               return;
             }
 
-            const invalidUsers = [];
+            const invalidTeams = [];
 
-            // Validate each username exists
-            for (const username of adminList) {
+            // Validate each team exists in organization
+            for (const teamSlug of teamList) {
               try {
-                await github.rest.users.getByUsername({ username });
+                await github.rest.teams.getByName({
+                  org: context.repo.owner,
+                  team_slug: teamSlug
+                });
               } catch (error) {
-                invalidUsers.push(username);
+                invalidTeams.push(teamSlug);
               }
             }
 
-            if (invalidUsers.length > 0) {
-              core.setOutput('error', `Invalid usernames: ${invalidUsers.join(', ')}`);
+            if (invalidTeams.length > 0) {
+              core.setOutput('error', `Teams do not exist in organization: ${invalidTeams.join(', ')}`);
               core.setOutput('valid', 'false');
               return;
             }
 
             core.setOutput('valid', 'true');
-            core.setOutput('admin-list', JSON.stringify(adminList));
-            core.setOutput('admins-display', adminList.join(', '));
+            core.setOutput('team-list', JSON.stringify(teamList));
+            core.setOutput('teams-display', teamList.join(', '));
 
       - name: Check repository existence
         id: check-repo
@@ -157,10 +158,10 @@ jobs:
         id: validate
         run: |
           NAME_VALID="${{ steps.validate-name.outputs.valid }}"
-          ADMINS_VALID="${{ steps.validate-admins.outputs.valid }}"
+          TEAMS_VALID="${{ steps.validate-teams.outputs.valid }}"
           REPO_EXISTS="${{ steps.check-repo.outputs.exists }}"
 
-          if [[ "$NAME_VALID" == "true" && "$ADMINS_VALID" == "true" && "$REPO_EXISTS" != "true" ]]; then
+          if [[ "$NAME_VALID" == "true" && "$TEAMS_VALID" == "true" && "$REPO_EXISTS" != "true" ]]; then
             echo "passed=true" >> $GITHUB_OUTPUT
           else
             echo "passed=false" >> $GITHUB_OUTPUT
@@ -172,7 +173,7 @@ jobs:
           script: |
             const passed = '${{ steps.validate.outputs.passed }}' === 'true';
             const nameValid = '${{ steps.validate-name.outputs.valid }}' === 'true';
-            const adminsValid = '${{ steps.validate-admins.outputs.valid }}' === 'true';
+            const teamsValid = '${{ steps.validate-teams.outputs.valid }}' === 'true';
             const repoExists = '${{ steps.check-repo.outputs.exists }}' === 'true';
 
             let summary = '# 🔍 Repository Request Validation\n\n';
@@ -183,23 +184,25 @@ jobs:
               summary += '|-------|-------|\n';
               summary += `| **Repository Name** | \`${{ steps.parse.outputs.repo-name }}\` |\n`;
               summary += `| **Tech Stack** | ${{ steps.parse.outputs.tech-stack }} |\n`;
-              summary += `| **Team Maintainers** | ${{ steps.validate-admins.outputs.admins-display }} |\n`;
+              summary += `| **Teams with Access** | ${{ steps.validate-teams.outputs.teams-display }} |\n`;
               summary += `| **Default Branch** | ${{ steps.parse.outputs.default-branch }} |\n`;
               summary += `| **Business Justification** | ${{ steps.parse.outputs.justification }} |\n\n`;
               
-              summary += '### 👥 Teams to be Created\n\n';
-              summary += '| Team Name | Permission | Description |\n';
-              summary += '|-----------|------------|-------------|\n';
-              summary += `| \`${{ steps.parse.outputs.repo-name }}-dev\` | push | Developer write access |\n`;
-              summary += `| \`${{ steps.parse.outputs.repo-name }}-test\` | push | Test manager write access |\n`;
-              summary += `| \`${{ steps.parse.outputs.repo-name }}-prod\` | maintain | Production manager maintain access |\n\n`;
+              summary += '### 👥 Teams with Access\n\n';
+              summary += '| Team Name | Status |\n';
+              summary += '|-----------|--------|\n';
+              const teams = '${{ steps.parse.outputs.teams }}'.split(',').map(t => t.trim());
+              for (const team of teams) {
+                summary += `| \`${team}\` | ✅ Exists in organization |\n`;
+              }
+              summary += '\n';
               
               summary += '### ⚙️ Default Configuration\n\n';
               summary += '> 📋 All other settings (visibility, features, security, topics, variables) will use organizational defaults from `defaults.yaml`\n\n';
               summary += '---\n\n';
               summary += '### ⏳ Next Steps\n\n';
               summary += '- Awaiting approval from **DevSecOps team**\n';
-              summary += '- Once approved, repository and teams will be created automatically\n';
+              summary += '- Once approved, repository will be created with access granted to specified teams\n';
             } else {
               summary += '## ❌ Validation Failed\n\n';
               summary += '### Errors Found:\n\n';
@@ -207,8 +210,8 @@ jobs:
               if (!nameValid) {
                 summary += `- ❌ **Repository Name:** ${{ steps.validate-name.outputs.error }}\n`;
               }
-              if (!adminsValid) {
-                summary += `- ❌ **Admin Users:** ${{ steps.validate-admins.outputs.error }}\n`;
+              if (!teamsValid) {
+                summary += `- ❌ **Teams:** ${{ steps.validate-teams.outputs.error }}\n`;
               }
               if (repoExists) {
                 summary += `- ❌ **Repository Already Exists:** ${{ steps.check-repo.outputs.error }}\n`;
@@ -228,7 +231,7 @@ jobs:
           script: |
             const passed = '${{ steps.validate.outputs.passed }}' === 'true';
             const nameValid = '${{ steps.validate-name.outputs.valid }}' === 'true';
-            const adminsValid = '${{ steps.validate-admins.outputs.valid }}' === 'true';
+            const teamsValid = '${{ steps.validate-teams.outputs.valid }}' === 'true';
             const repoExists = '${{ steps.check-repo.outputs.exists }}' === 'true';
 
             let commentBody = '## 🔍 Repository Request Validation\n\n';
@@ -238,21 +241,23 @@ jobs:
               commentBody += '### Request Summary\n';
               commentBody += `- **Repository Name:** \`${{ steps.parse.outputs.repo-name }}\`\n`;
               commentBody += `- **Tech Stack:** ${{ steps.parse.outputs.tech-stack }}\n`;
-              const maintainersText = '${{ steps.validate-admins.outputs.admins-display }}';
-              commentBody += `- **Team Maintainers:** ${maintainersText}\n`;
+              const teamsText = '${{ steps.validate-teams.outputs.teams-display }}';
+              commentBody += `- **Teams with Access:** ${teamsText}\n`;
               commentBody += `- **Default Branch:** ${{ steps.parse.outputs.default-branch }}\n\n`;
               
-              commentBody += '### Teams to be Created\n';
-              commentBody += `- \`${{ steps.parse.outputs.repo-name }}-dev\` (Write permission)\n`;
-              commentBody += `- \`${{ steps.parse.outputs.repo-name }}-test\` (Write permission)\n`;
-              commentBody += `- \`${{ steps.parse.outputs.repo-name }}-prod\` (Maintain permission)\n\n`;
+              commentBody += '### Teams with Access\n';
+              const teams = '${{ steps.parse.outputs.teams }}'.split(',').map(t => t.trim());
+              for (const team of teams) {
+                commentBody += `- \`${team}\` ✅ (Existing organization team)\n`;
+              }
+              commentBody += '\n';
               
               commentBody += '### Default Configuration\n';
               commentBody += '📋 All other settings (visibility, features, security, topics, variables) will use organizational defaults from the repository template.\n\n';
               
               commentBody += '---\n\n';
               commentBody += '⏳ **Awaiting approval from DevSecOps team...**\n';
-              commentBody += 'Once approved, the repository and teams will be created automatically.';
+              commentBody += 'Once approved, the repository will be created with access granted to the specified teams.';
             } else {
               commentBody += '❌ **Validation Failed**\n\n';
               commentBody += '### Errors Found:\n';
@@ -260,8 +265,8 @@ jobs:
               if (!nameValid) {
                 commentBody += `- ❌ Repository Name: ${{ steps.validate-name.outputs.error }}\n`;
               }
-              if (!adminsValid) {
-                commentBody += `- ❌ Admin Users: ${{ steps.validate-admins.outputs.error }}\n`;
+              if (!teamsValid) {
+                commentBody += `- ❌ Teams: ${{ steps.validate-teams.outputs.error }}\n`;
               }
               if (repoExists) {
                 commentBody += `- ❌ Repository Already Exists: ${{ steps.check-repo.outputs.error }}\n`;
@@ -307,7 +312,7 @@ jobs:
   # Job 2: Create Repository (Requires Approval)
   # ============================================================================
   create-repository:
-    name: Create Repository and Teams
+    name: Create Repository Configuration
     runs-on: ubuntu-latest
     needs: validate-request
     if: needs.validate-request.outputs.validation-passed == 'true'
@@ -376,6 +381,23 @@ jobs:
           DESCRIPTION=$(echo "$REPO_NAME" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2));}1')
           DESCRIPTION="${DESCRIPTION} using ${TECH_STACK}"
 
+          # Parse teams from validated input (comma-separated)
+          TEAMS_INPUT="${{ needs.validate-request.outputs.teams }}"
+
+          # Build teams array in YAML format
+          TEAMS_YAML=""
+          if [ -n "$TEAMS_INPUT" ]; then
+            IFS=',' read -ra TEAM_ARRAY <<< "$TEAMS_INPUT"
+            for team in "${TEAM_ARRAY[@]}"; do
+              team=$(echo "$team" | xargs)  # trim whitespace
+              if [ -n "$team" ]; then
+                TEAMS_YAML="${TEAMS_YAML}"
+                TEAMS_YAML="${TEAMS_YAML}      - team: ${team}\n"
+                TEAMS_YAML="${TEAMS_YAML}        permission: push\n"
+              fi
+            done
+          fi
+
           # Append to repositories.yaml with proper indentation (2 spaces for array items)
           {
             echo ""
@@ -395,70 +417,48 @@ jobs:
             echo "      enable_secret_scanning_push_protection: ${SECRET_PUSH}"
             echo "      enable_dependabot_alerts: ${DEPENDABOT_ALERTS}"
             echo "      enable_dependabot_security_updates: ${DEPENDABOT_UPDATES}"
+            # Add teams if any were specified
+            if [ -n "$TEAMS_YAML" ]; then
+              echo "    teams:"
+              echo -e "$TEAMS_YAML" | sed 's/^/    /'
+            fi
           } >> data/repositories.yaml
 
-          echo "Successfully updated repositories.yaml with defaults"
-
-      - name: Update teams.yaml
-        id: update-teams
-        run: |
-          REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
-          TEAMS_FILE="data/teams.yaml"
-
-          # Replace empty teams array if needed, then append 3 teams
-          if grep -q "^teams: \[\]" "$TEAMS_FILE"; then
-            # Replace 'teams: []' with 'teams:' to prepare for array items
-            sed -i.bak 's/^teams: \[\]/teams:/' "$TEAMS_FILE"
-            rm "${TEAMS_FILE}.bak" 2>/dev/null || true
-          fi
-
-          # Append 3 teams with proper indentation (2 spaces for array items)
-          {
-            echo ""
-            echo "  - name: ${REPO_NAME}-dev"
-            echo "    repository: ${REPO_NAME}"
-            echo "    permission: push"
-            echo "    privacy: closed"
-            echo "    description: \"Developer team for ${REPO_NAME} repository - write access for development\""
-            echo "  "
-            echo "  - name: ${REPO_NAME}-test"
-            echo "    repository: ${REPO_NAME}"
-            echo "    permission: push"
-            echo "    privacy: closed"
-            echo "    description: \"Test team for ${REPO_NAME} repository - write access for testing activities\""
-            echo "  "
-            echo "  - name: ${REPO_NAME}-prod"
-            echo "    repository: ${REPO_NAME}"
-            echo "    permission: maintain"
-            echo "    privacy: closed"
-            echo "    description: \"Production team for ${REPO_NAME} repository - maintain access for production releases\""
-          } >> "$TEAMS_FILE"
-
-          echo "Successfully updated teams.yaml"
+          echo "Successfully updated repositories.yaml with team access configuration"
 
       - name: Create branch and commit changes
         id: create-branch
         run: |
           REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
           BRANCH_NAME="repo-request/${REPO_NAME}"
+          TEAMS="${{ needs.validate-request.outputs.teams }}"
 
           # Delete remote branch if it exists (ignore errors)
           git push origin --delete "${BRANCH_NAME}" 2>/dev/null || true
 
           git checkout -b "${BRANCH_NAME}"
-          git add data/repositories.yaml data/teams.yaml
-          git commit -m "feat: ✨ add repository ${REPO_NAME} and associated teams
+          git add data/repositories.yaml
+
+          # Build commit message with team access info
+          COMMIT_MSG="feat: ✨ add repository ${REPO_NAME} with team access
 
           Repository request from issue #${{ github.event.issue.number }}
 
           - Repository: ${REPO_NAME}
           - Tech Stack: ${{ needs.validate-request.outputs.tech-stack }}
           - Default Branch: ${{ needs.validate-request.outputs.default-branch }}
-          - Configuration: Using organizational defaults
-          - Created 3 teams: dev, test, prod
+          - Configuration: Using organizational defaults"
+
+          if [ -n "$TEAMS" ]; then
+            COMMIT_MSG="${COMMIT_MSG}
+          - Teams with Access: ${TEAMS}"
+          fi
+
+          COMMIT_MSG="${COMMIT_MSG}
 
           Related to #${{ github.event.issue.number }}"
 
+          git commit -m "$COMMIT_MSG"
           git push origin "${BRANCH_NAME}"
 
           echo "branch=${BRANCH_NAME}" >> $GITHUB_OUTPUT
@@ -474,8 +474,8 @@ jobs:
             const branchName = '${{ steps.create-branch.outputs.branch }}';
             const issueNumber = context.issue.number;
 
-            const admins = '${{ needs.validate-request.outputs.admins }}';
-            const adminsList = admins || context.payload.issue.user.login;
+            const teams = '${{ needs.validate-request.outputs.teams }}';
+            const teamsList = teams ? teams.split(',').map(t => t.trim()).join(', ') : 'None';
 
             const prBody = `## 🎉 New Repository Request
 
@@ -486,20 +486,17 @@ jobs:
             | **Repository Name** | \`${repoName}\` |
             | **Tech Stack** | ${techStack} |
             | **Default Branch** | \`${defaultBranch}\` |
-            | **Admin Users** | ${adminsList} |
+            | **Teams with Access** | ${teamsList} |
             | **Requested By** | @${context.payload.issue.user.login} |
 
-            ### Teams Created
+            ### Team Access
 
-            - \`${repoName}-dev\` - Developer write access
-            - \`${repoName}-test\` - Test manager write access
-            - \`${repoName}-prod\` - Production manager maintain access
+            ${teams ? teams.split(',').map(t => `- \`${t.trim()}\` - Write access (existing organization team)`).join('\n') : '- No teams specified'}
 
             ### Configuration
 
-            This PR adds the repository definition and team configurations to:
+            This PR adds the repository definition to:
             - \`data/repositories.yaml\`
-            - \`data/teams.yaml\`
 
             **Default settings** from \`data/defaults.yaml\` will be applied:
             - Visibility: private
@@ -511,7 +508,7 @@ jobs:
 
             1. ✅ Review the YAML changes
             2. ✅ Merge this PR to apply changes
-            3. 🚀 Run Terraform to create the repository and teams
+            3. 🚀 Run Terraform to create the repository and grant team access
 
             ---
 
@@ -541,34 +538,6 @@ jobs:
               labels: ['repo-request', 'automated']
             });
 
-      - name: Prepare team maintainers info
-        id: prepare-maintainers
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const adminsString = '${{ needs.validate-request.outputs.admins }}';
-            let maintainerList = adminsString.split(',').map(u => u.trim()).filter(u => u);
-
-            // If no admins specified, use issue creator
-            if (maintainerList.length === 0) {
-              maintainerList = [context.payload.issue.user.login];
-            }
-
-            const repoName = '${{ needs.validate-request.outputs.repo-name }}';
-            const teams = ['dev', 'test', 'prod'];
-            const results = [];
-
-            for (const teamSuffix of teams) {
-              const teamSlug = `${repoName}-${teamSuffix}`;
-              for (const username of maintainerList) {
-                results.push(`📋 ${username} will be maintainer of ${teamSlug}`);
-              }
-            }
-
-            core.setOutput('results', results.join('\n'));
-            core.setOutput('maintainers', maintainerList.join(', '));
-            return results;
-
       - name: Generate PR creation summary
         if: success()
         uses: actions/github-script@v7
@@ -577,7 +546,8 @@ jobs:
             const repoName = '${{ needs.validate-request.outputs.repo-name }}';
             const techStack = '${{ needs.validate-request.outputs.tech-stack }}';
             const defaultBranch = '${{ needs.validate-request.outputs.default-branch }}';
-            const maintainers = '${{ steps.prepare-maintainers.outputs.maintainers }}';
+            const teams = '${{ needs.validate-request.outputs.teams }}';
+            const teamsList = teams ? teams.split(',').map(t => t.trim()) : [];
             const prUrl = '${{ steps.create-pr.outputs.pr-url }}';
             const prNumber = '${{ steps.create-pr.outputs.pr-number }}';
 
@@ -588,21 +558,23 @@ jobs:
             summary += `| **Repository Name** | \`${repoName}\` |\n`;
             summary += `| **Tech Stack** | ${techStack} |\n`;
             summary += `| **Default Branch** | \`${defaultBranch}\` |\n`;
-            summary += `| **Team Maintainers** | ${maintainers} |\n`;
+            summary += `| **Teams with Access** | ${teamsList.join(', ') || 'None'} |\n`;
             summary += `| **Pull Request** | [#${prNumber}](${prUrl}) |\n\n`;
 
-            summary += '## 👥 Teams to be Created\n\n';
-            summary += '| Team | Permission | Description |\n';
-            summary += '|------|------------|-------------|\n';
-            summary += `| \`${repoName}-dev\` | push | Developer write access |\n`;
-            summary += `| \`${repoName}-test\` | push | Test manager write access |\n`;
-            summary += `| \`${repoName}-prod\` | maintain | Production manager maintain access |\n\n`;
+            if (teamsList.length > 0) {
+              summary += '## 👥 Teams with Access\n\n';
+              summary += '| Team | Permission | Status |\n';
+              summary += '|------|------------|--------|\n';
+              for (const team of teamsList) {
+                summary += `| \`${team}\` | push | Existing team |\n`;
+              }
+              summary += '\n';
+            }
 
             summary += '## 📋 Next Steps\n\n';
             summary += `1. 📝 Review the PR: [#${prNumber}](${prUrl})\n`;
             summary += `2. ✅ Approve and merge the PR\n`;
-            summary += `3. 🚀 Run Terraform apply to create repository and teams\n`;
-            summary += `4. 👥 Assign team maintainers via GitHub UI\n\n`;
+            summary += `3. 🚀 Run Terraform apply to create repository and grant team access\n\n`;
 
             summary += '---\n\n';
             summary += `*PR created for issue #${context.issue.number}*\n`;
@@ -619,8 +591,10 @@ jobs:
             const repoName = '${{ needs.validate-request.outputs.repo-name }}';
             const prUrl = '${{ steps.create-pr.outputs.pr-url }}';
             const prNumber = '${{ steps.create-pr.outputs.pr-number }}';
+            const teams = '${{ needs.validate-request.outputs.teams }}';
+            const teamsList = teams ? teams.split(',').map(t => t.trim()) : [];
 
-            const commentBody = `## ✅ Pull Request Created!
+            let commentBody = `## ✅ Pull Request Created!
 
             A pull request has been created to add your repository configuration.
 
@@ -630,19 +604,20 @@ jobs:
             - **Default Branch:** ${{ needs.validate-request.outputs.default-branch }}
             - **Pull Request:** [#${prNumber}](${prUrl})
 
-            ### 👥 Teams to be Created
-            - \`${repoName}-dev\` - Developer write access
-            - \`${repoName}-test\` - Test manager write access
-            - \`${repoName}-prod\` - Production manager maintain access
+            `;
 
-            ### 👤 Team Maintainers
-            ${{ steps.prepare-maintainers.outputs.results }}
+            if (teamsList.length > 0) {
+              commentBody += '### 👥 Teams with Access\n';
+              for (const team of teamsList) {
+                commentBody += `- \`${team}\` - Write access (existing organization team)\n`;
+              }
+              commentBody += '\n';
+            }
 
-            ### 📋 Next Steps
+            commentBody += `### 📋 Next Steps
             1. 📝 Review the pull request: [#${prNumber}](${prUrl})
             2. ✅ Approve and merge the PR
-            3. 🚀 Run \`terraform apply\` to create the repository and teams
-            4. 👥 Assign team maintainers via GitHub UI
+            3. 🚀 Run \`terraform apply\` to create the repository and grant team access
 
             ---
             *Automated by GitHub Actions workflow*`;

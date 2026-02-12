@@ -52,14 +52,13 @@ Select the **"New Repository Request"** template.
   - Impact: Enables new revenue stream, serves 100k+ users
   ```
 
-**Team Maintainers** (optional)
+**Team Access** (required)
 
-- Comma-separated GitHub usernames
-- Must be valid GitHub users in the organization
-- These users will be team maintainers for all 3 teams
-- Can manage team membership
-- If not specified, the issue requestor becomes the team maintainer
-- Example: `john-doe, jane-smith, bob-wilson`
+- Comma-separated existing team slugs
+- Teams must already exist in the organization
+- Teams will be granted write access to the repository
+- You can find available teams in the organization's Teams page
+- Example: `platform-team, backend-developers, qa-team`
 
 #### Configuration Options
 
@@ -107,9 +106,9 @@ Select security features (GHAS requires license):
 
 You must check all boxes to confirm:
 
-- ☑️ I understand that this repository will be created with 3 default teams
-- ☑️ I understand that team maintainers can manage team membership
-- ☑️ If no maintainers are specified, I (the issue creator) will be the team maintainer
+- ☑️ I understand that specified teams must exist in the organization
+- ☑️ I understand that only existing teams can be granted access
+- ☑️ I will verify team slugs are correct before submitting
 
 ### Step 4: Submit the Issue
 
@@ -122,7 +121,7 @@ Click **"Submit new issue"**
 The workflow will automatically:
 
 1. ✅ Validate repository name format
-2. ✅ Check admin usernames exist
+2. ✅ Check specified teams exist in organization
 3. ✅ Verify repository doesn't already exist
 4. 📝 Post validation results as comment
 
@@ -152,26 +151,22 @@ DevSecOps team will:
 
 After approval, the workflow will:
 
-1. ✅ Create repository with your configuration
-2. ✅ Create 3 teams with proper permissions
-3. ✅ Assign team maintainers to all teams
-4. ✅ Update infrastructure as code
-5. 📝 Post success message with links
-6. ✅ Close the issue
+1. ✅ Create pull request with repository configuration
+2. ✅ Include team access specifications
+3. ✅ Update infrastructure as code
+4. 📝 Post PR link to issue
+5. ⏳ Wait for PR review and merge
+6. 🚀 Run Terraform to create repository and grant team access
 
 ## Your New Repository
 
-### Included Teams
+### Team Access
 
-Three teams are automatically created:
+The teams you specified will be granted access:
 
-| Team Name          | Permission | Who Should Join          |
-| ------------------ | ---------- | ------------------------ |
-| `{repo-name}-dev`  | Write      | Developers               |
-| `{repo-name}-test` | Write      | QA engineers, testers    |
-| `{repo-name}-prod` | Maintain   | DevOps, release managers |
+**Default Permission:** `push` (write access)
 
-**Team Maintainers:** The specified team maintainers (or the issue requestor if none specified) are assigned as maintainers for all 3 teams. Maintainers can add/remove team members via GitHub UI.
+**Note:** Teams must be created and managed separately through GitHub's organization settings. The workflow only grants access to existing teams.
 
 ### Next Steps After Creation
 
@@ -179,9 +174,9 @@ Three teams are automatically created:
    - Check the success comment for direct link
    - URL format: `https://github.com/{org}/{repo-name}`
 
-2. **Add team members**
+2. **Verify team access**
    - Go to repository Settings → Collaborators and teams
-   - Or go to Organization → Teams → {team-name} → Members
+   - Confirm specified teams have access
 
 3. **Configure branch protection** (optional)
    - Settings → Branches → Add rule
@@ -204,7 +199,7 @@ Justification:
   - Business need: New payment feature for Q2 2026
   - Expected usage: Backend API for mobile integration
   - Impact: Critical path for new revenue stream
-Team Maintainers: john-doe, jane-smith
+Team Access: platform-team, backend-developers
 Visibility: private
 Environment: dev
 Features: ✓ Issues, ✓ Projects
@@ -223,7 +218,7 @@ Justification:
   - Business need: Replace legacy customer portal
   - Expected usage: Public-facing web application
   - Impact: Improved customer experience, 50k+ daily users
-Team Maintainers: alice-dev, bob-ux
+Team Access: frontend-team, qa-team
 Visibility: private
 Environment: dev
 Features: ✓ Issues, ✓ Projects, ✓ Wiki
@@ -247,19 +242,19 @@ Default Branch: main
 - ✅ Good: `mbb-payment-service`
 - ❌ Bad: `MBB_Payment_Service`, `mbb payment service`
 
-### Validation Failed: Team Maintainers
+### Validation Failed: Team Access
 
-**Error:** "Invalid usernames: xyz-user"
+**Error:** "Team 'xyz-team' does not exist in organization"
 
 **Solution:**
 
-- Verify username exists on GitHub
-- Check spelling and case (usernames are case-sensitive)
-- Ensure user is part of the organization
-- Separate multiple usernames with commas
-- This field is optional - if empty, you become the maintainer
-- ✅ Good: `john-doe, jane-smith` or leave empty
-- ❌ Bad: `john doe`, `@john-doe`
+- Verify team exists in the organization
+- Check spelling and case (team slugs are case-sensitive)
+- Find available teams: Organization → Teams
+- Separate multiple team slugs with commas
+- Team slugs use hyphens, not spaces
+- ✅ Good: `platform-team, backend-developers`
+- ❌ Bad: `Platform Team`, `@platform-team`, `nonexistent-team`
 
 ### Validation Failed: Repository Exists
 
@@ -300,7 +295,13 @@ A: Any organization member can request. All requests require DevSecOps approval.
 A: Yes, but some changes require updating Terraform configuration. Contact DevSecOps team.
 
 **Q: What if I need different team permissions?**
-A: Request in "Additional Notes" field. Custom permissions can be configured during approval.
+A: Default permission is 'push' (write access). Custom permissions can be configured after repository creation by updating the YAML configuration.
+
+**Q: How do I create a new team for my repository?**
+A: Teams must be created separately through GitHub's organization settings. Once created, you can request access in a new repository request or update existing repository configuration.
+
+**Q: Can I specify team permissions in the request?**
+A: Currently, all teams are granted 'push' (write) permission by default. For custom permissions (pull, maintain, admin), contact DevSecOps team after creation.
 
 **Q: Can I delete a repository?**
 A: Contact DevSecOps team. Repository deletion requires approval and cleanup.

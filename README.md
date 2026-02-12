@@ -147,13 +147,15 @@ Create repositories via GitHub Issues:
 
 1. Go to **Issues** → **New Issue**
 2. Select **New Repository Request** template
-3. Fill in repository details
+3. Fill in repository details and specify existing teams
 4. Submit issue
-5. Automated PR will be created
-6. Review and merge PR
-7. Repository is created automatically
+5. Validation runs automatically (checks team existence)
+6. DevSecOps team approves request
+7. Automated PR is created with configuration
+8. Review and merge PR
+9. Run Terraform to create repository and grant team access
 
-See [GitOps Workflow documentation](PROJECT_CREATION_PLAN.md#gitops-workflow-dynamic-repository-creation) for details.
+See [How to Request a Repository](docs/HOW_TO_REQUEST_REPOSITORY.md) for detailed instructions.
 
 ## Scripts
 
