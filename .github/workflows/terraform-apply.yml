@@ -61,11 +61,9 @@ jobs:
 
       - name: Terraform Apply
         run: |
-          # Run terraform apply and capture exit code without failing the step
-          set +e
-          terraform apply -auto-approve environments/${{ matrix.environment }}/tfplan
-          APPLY_EXIT_CODE=$?
-          set -e
+          # Run terraform apply and capture exit code, always succeed to prevent wrapper annotations
+          terraform apply -auto-approve environments/${{ matrix.environment }}/tfplan || APPLY_EXIT_CODE=$?
+          APPLY_EXIT_CODE=${APPLY_EXIT_CODE:-0}
 
           if [ $APPLY_EXIT_CODE -ne 0 ]; then
             if [ -f "errored.tfstate" ]; then
