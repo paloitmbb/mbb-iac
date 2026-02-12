@@ -110,28 +110,42 @@ jobs:
             }
 
             const invalidTeams = [];
+            const validTeams = [];
 
             // Validate each team exists in organization
             for (const teamSlug of teamList) {
               try {
-                await github.rest.teams.getByName({
+                const team = await github.rest.teams.getByName({
                   org: context.repo.owner,
                   team_slug: teamSlug
                 });
+                validTeams.push(teamSlug);
+                console.log(`✅ Team found: ${teamSlug} (ID: ${team.data.id}, Name: ${team.data.name})`);
               } catch (error) {
+                console.log(`❌ Team not found: ${teamSlug} (Error: ${error.message})`);
                 invalidTeams.push(teamSlug);
               }
             }
 
             if (invalidTeams.length > 0) {
-              core.setOutput('error', `Teams do not exist in organization: ${invalidTeams.join(', ')}`);
+              // Try to list available teams to help with debugging
+              try {
+                const { data: orgTeams } = await github.rest.teams.list({
+                  org: context.repo.owner,
+                  per_page: 100
+                });
+                const teamSlugs = orgTeams.map(t => t.slug).join(', ');
+                core.setOutput('error', `Teams do not exist in organization: ${invalidTeams.join(', ')}. Available teams: ${teamSlugs}`);
+              } catch (listError) {
+                core.setOutput('error', `Teams do not exist in organization: ${invalidTeams.join(', ')}. Unable to list available teams (check permissions).`);
+              }
               core.setOutput('valid', 'false');
               return;
             }
 
             core.setOutput('valid', 'true');
-            core.setOutput('team-list', JSON.stringify(teamList));
-            core.setOutput('teams-display', teamList.join(', '));
+            core.setOutput('team-list', JSON.stringify(validTeams));
+            core.setOutput('teams-display', validTeams.join(', '));
 
       - name: Check repository existence
         id: check-repo
