@@ -90,16 +90,16 @@ jobs:
         run: |
           ./scripts/init.sh dev
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
 
       - name: Terraform Plan
         id: terraform-plan
         run: |
           terraform plan -var-file=environments/dev/terraform.tfvars -out=tfplan
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
 
       - name: Terraform Apply
         id: terraform-apply

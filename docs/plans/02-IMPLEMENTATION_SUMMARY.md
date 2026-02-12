@@ -232,6 +232,20 @@ Success! The configuration is valid.
 2. Examples: `platform-team`, `backend-developers`, `qa-team`, etc.
 3. Users will reference these team slugs in repository requests
 
+### 4. Configure GitHub Token (Manual)
+
+⚠️ **Required for all workflows:**
+
+1. Create a GitHub Personal Access Token (classic) with scopes:
+   - `repo` - Full control of private repositories
+   - `read:org` - Read org and team membership
+   - `admin:org` - Full control of orgs and teams
+2. Add as repository secret: `ORG_GITHUB_TOKEN`
+3. This token is used for:
+   - Team existence validation in repo-request workflow
+   - Terraform operations (provider authentication)
+   - HTTP backend state management
+
 ### 4. Test the Workflow
 
 After environment and team setup:
@@ -248,7 +262,7 @@ After environment and team setup:
 10. **Verify team permissions** are correct
 11. **Verify issue closed** after successful creation
 
-### 5. Documentation Updates
+### 6. Documentation Updates
 
 Consider updating:
 
