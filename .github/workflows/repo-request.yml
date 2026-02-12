@@ -317,7 +317,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.TF_GITHUB_TOKEN }}
 
       - name: Configure Git
         run: |
@@ -434,6 +434,9 @@ jobs:
         run: |
           REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
           BRANCH_NAME="repo-request/${REPO_NAME}"
+
+          # Delete remote branch if it exists (ignore errors)
+          git push origin --delete "${BRANCH_NAME}" 2>/dev/null || true
 
           git checkout -b "${BRANCH_NAME}"
           git add data/repositories.yaml data/teams.yaml
