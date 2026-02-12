@@ -1,11 +1,13 @@
 # Automated Repository Workflow - Implementation Summary
 
-**Date:** 11 February 2026  
-**Status:** ✅ Implementation Complete
+**Date:** 12 February 2026  
+**Status:** ✅ Implementation Complete (Updated with Simplified Form)
 
 ## What Was Implemented
 
 This implementation creates an issue-driven automated workflow for repository creation with team management, following the plan in [02-AUTOMATED_REPO_WORKFLOW_PLAN.md](./02-AUTOMATED_REPO_WORKFLOW_PLAN.md).
+
+**Key Design Decision:** The form has been simplified to only request essential information. All other repository settings use default values from existing repositories in `data/repositories.yaml`, ensuring consistency and reducing complexity.
 
 ## Files Created
 
@@ -26,22 +28,47 @@ This implementation creates an issue-driven automated workflow for repository cr
 - Supports hierarchical team structures
 - Validates team names and permission levels
 
-### 2. Teams Data Files
+### 2. Data Files
 
 **Location:** `data/`
 
 - ✅ `teams.yaml` - YAML configuration for team definitions
 - ✅ `TEAMS.md` - Teams data management documentation
+### 2. Data Files
 
-**Structure:**
+**Location:** `data/`
+
+- ✅ `teams.yaml` - YAML configuration for team definitions
+- ✅ `TEAMS.md` - Teams data management documentation
+- ✅ `defaults.yaml` - Default repository configuration for automated workflow
+
+**Teams Structure:**
 
 ```yaml
 teams:
-  - name: {repo-name}-admin
+  - name: {repo-name}-dev
     repository: {repo-name}
-    permission: admin
+    permission: push
     privacy: closed
-    description: "Admin team for {repo-name} repository"
+    description: "Developer team for {repo-name} repository"
+```
+
+**Defaults Structure:**
+
+```yaml
+repository_defaults:
+  visibility: private
+  features:
+    has_issues: true
+    has_projects: true
+    has_wiki: false
+  security:
+    enable_vulnerability_alerts: true
+    enable_dependabot_alerts: true
+    enable_dependabot_security_updates: true
+  topics:
+    - maybank
+    - mbb
 ```
 
 ### 3. Root Module Updates
@@ -62,15 +89,33 @@ teams:
 
 **File:** `.github/ISSUE_TEMPLATE/new-repository.yml`
 
-Enhanced with:
+**Simplified form with essential fields only:**
 
-- ✅ Tech stack dropdown with "Others" option
-- ✅ Business justification field
-- ✅ Team maintainers input (comma-separated, optional)
-- ✅ Security features checkboxes (GHAS)
-- ✅ Comprehensive feature selection
-- ✅ Acknowledgment checkboxes for understanding
-- ✅ Markdown instructions about 3 auto-created teams
+- ✅ Repository name (required)
+- ✅ Team maintainers/admins (optional - defaults to issue creator)
+- ✅ Tech stack dropdown with "Others" option (required)
+- ✅ Business justification field (required)
+- ✅ Default branch selection (required)
+- ✅ Acknowledgment checkboxes (required)
+
+**Default Values Strategy:**
+All repository settings not requested in the form (visibility, features, security, topics, variables) use default values from `data/defaults.yaml`. This provides:
+- Explicit and centralized default configuration
+- Simplified user experience
+- Consistency across repositories
+- Reduced form complexity
+- Easy maintenance of organizational defaults
+- No dependency on existing repositories
+
+**Removed fields (now use defaults):**
+- ❌ Repository description (auto-generated)
+- ❌ Visibility selection (uses default: private)
+- ❌ Target environment selection (uses default)
+- ❌ Feature checkboxes (uses defaults)
+- ❌ Security feature checkboxes (uses defaults)
+- ❌ Topics input (uses defaults + tech stack)
+- ❌ Branch protection settings (uses defaults)
+- ❌ Additional notes (not needed)
 
 ### 5. GitHub Actions Workflow
 
@@ -80,7 +125,8 @@ Implemented two-job workflow:
 
 **Job 1: Validation (validate-request)**
 
-- ✅ Parse issue body to extract all fields
+- ✅ Parse issue body to extract simplified fields (name, admins, tech stack, justification, default branch)
+- ✅ Load default values from `defaults.yaml`
 - ✅ Validate repository name format (lowercase, hyphens only)
 - ✅ Validate admin usernames exist in GitHub
 - ✅ Check repository doesn't already exist
@@ -91,7 +137,9 @@ Implemented two-job workflow:
 **Job 2: Creation (create-repository)**
 
 - ✅ Requires approval via GitHub Environment
-- ✅ Update `repositories.yaml` with new repository
+- ✅ Merge issue form data with default values from template
+- ✅ Generate description from repository name and tech stack
+- ✅ Update `repositories.yaml` with new repository (using defaults + form overrides)
 - ✅ Update `teams.yaml` with 3 new teams
 - ✅ Commit changes to main branch
 - ✅ Run Terraform init and apply
@@ -174,9 +222,91 @@ Consider updating:
 ## Architecture Flow
 
 ```
-User Creates Issue
+User Creates Issue (Simplified Form)
+   - Repository name
+   - Team maintainers
+   - Tech stack
+   - Justification
+   - Default branch
        ↓
 Validation Job (automatic)
+   ✅ Validate name
+   ✅ Validate maintainers
+   ✅ Check existence
+   ✅ Load defaults from defaults.yaml
+   ✅ Post results
+       ↓
+Awaiting Approval (manual)
+   ⏳ DevSecOps reviews
+   ✅ Approves deployment
+       ↓
+Creation Job (automatic)
+   ✅ Merge form data with defaults
+   ✅ Generate description
+   ✅ Update YAML files
+   ✅ Commit to main
+   ✅ Terraform apply
+   ✅ Assign team maintainers
+   ✅ Post success
+   ✅ Close issue
+       ↓
+Repository Ready! 🎉
+```
+
+## Default Values Mechanism
+
+**Default Configuration:** All default values are defined in `data/defaults.yaml` for centralized management.
+
+**Current Defaults:**
+```yaml
+repository_defaults:
+  visibility: private
+  
+  features:
+    has_issues: true
+    has_projects: true
+    has_wiki: false
+  
+  security:
+    enable_vulnerability_alerts: true
+    enable_advanced_security: false
+    enable_secret_scanning: false
+    enable_secret_scanning_push_protection: false
+    enable_dependabot_alerts: true
+    enable_dependabot_security_updates: true
+  
+  topics:
+    - maybank
+    - mbb
+  
+  variables:
+    ENVIRONMENT:
+      value: production
+```
+
+**Field Merge Strategy:**
+1. **From Defaults (defaults.yaml):** visibility, features, security, base topics, variables
+2. **From Issue Form (overrides):** name, default_branch, tech stack
+3. **Auto-generated:** description (from name + tech stack), topics (defaults + tech stack)
+4. **Example:** New repo "mbb-payment-api" with "Java Springboot" gets:
+   - Name: `mbb-payment-api`
+   - Description: `Mbb Payment Api using Java Springboot`
+   - Visibility: `private` (from defaults)
+   - Features: Same as defaults
+   - Security: Same as defaults
+   - Topics: `[maybank, mbb, java-springboot]`
+   - Default Branch: `main` (from form)
+
+**Benefits:**
+- ✅ Explicit and centralized default configuration
+- ✅ Consistent security policies across all repos
+- ✅ Standardized feature settings
+- ✅ Minimal user input required
+- ✅ Easy to update defaults (edit defaults.yaml)
+- ✅ No dependency on existing repositories
+- ✅ Can still override manually after creation
+
+## Configuration Examples
    ✅ Validate name
    ✅ Validate maintainers
    ✅ Check existence

@@ -12,12 +12,13 @@ body:
         ## Repository Request Form
         Please fill out this form to request a new repository. Your request will be reviewed by the DevSecOps team.
 
-        **Note:** The repository will be created with 3 teams:
-        - `{repo-name}-dev` - Developer write access
-        - `{repo-name}-test` - Test manager write access
-        - `{repo-name}-prod` - Production manager maintain access
+        **Note:** The repository will be created with:
+        - 3 teams: `{repo-name}-dev`, `{repo-name}-test`, `{repo-name}-prod`
+        - Default settings based on existing repository configurations
+        - Team maintainers (admins) will manage team membership
 
-        **Team Maintainers:** The admins you specify will become team maintainers with the ability to manage team membership. If no admins are specified, you (the issue creator) will become the team maintainer.
+        **Default Configuration:**
+        All settings not specified in this form (visibility, features, security, topics, etc.) will use default values from existing repository configurations in the organization.
 
   - type: input
     id: repo-name
@@ -28,14 +29,14 @@ body:
     validations:
       required: true
 
-  - type: textarea
-    id: description
+  - type: input
+    id: admins
     attributes:
-      label: Repository Description
-      description: Brief description of the repository purpose and what it will contain
-      placeholder: "This repository will contain..."
+      label: Team Maintainers
+      description: Comma-separated GitHub usernames who will become team maintainers (can manage team membership). Leave empty to make yourself the maintainer. (Usernames will be validated)
+      placeholder: "john-doe, jane-smith, bob-jones"
     validations:
-      required: true
+      required: false
 
   - type: dropdown
     id: tech-stack
@@ -70,79 +71,6 @@ body:
     validations:
       required: true
 
-  - type: input
-    id: admins
-    attributes:
-      label: Team Maintainers
-      description: Comma-separated GitHub usernames who will become team maintainers (can manage team membership). Leave empty to make yourself the maintainer. (Usernames will be validated)
-      placeholder: "john-doe, jane-smith, bob-jones"
-    validations:
-      required: false
-
-  - type: dropdown
-    id: visibility
-    attributes:
-      label: Repository Visibility
-      options:
-        - private
-        - internal
-        - public
-      default: 0
-    validations:
-      required: true
-
-  - type: dropdown
-    id: environment
-    attributes:
-      label: Target Environment
-      description: Which environment should this repository be created in
-      options:
-        - dev
-        - staging
-        - production
-      default: 0
-    validations:
-      required: true
-
-  - type: checkboxes
-    id: features
-    attributes:
-      label: Repository Features
-      description: Select the features you want enabled
-      options:
-        - label: Enable Issues
-          required: false
-        - label: Enable Projects
-          required: false
-        - label: Enable Wiki
-          required: false
-
-  - type: checkboxes
-    id: security
-    attributes:
-      label: Security Features
-      description: Select security features (GHAS features require license)
-      options:
-        - label: Enable Vulnerability Alerts
-          required: false
-        - label: Enable Dependabot Alerts
-          required: false
-        - label: Enable Dependabot Security Updates
-          required: false
-        - label: Enable Advanced Security (GHAS)
-          required: false
-        - label: Enable Secret Scanning
-          required: false
-        - label: Enable Secret Scanning Push Protection
-          required: false
-
-  - type: input
-    id: topics
-    attributes:
-      label: Repository Topics
-      description: Comma-separated list of topics/tags for the repository
-      placeholder: "backend, api, microservices, nodejs"
-
   - type: dropdown
     id: default-branch
     attributes:
@@ -155,24 +83,6 @@ body:
     validations:
       required: true
 
-  - type: textarea
-    id: branch-protection
-    attributes:
-      label: Branch Protection Requirements (Optional)
-      description: Specify branch protection rules if different from defaults
-      placeholder: |
-        Required approving reviews: 2
-        Require code owner reviews: yes
-        Dismiss stale reviews: no
-        Require signed commits: no
-
-  - type: textarea
-    id: additional-notes
-    attributes:
-      label: Additional Notes
-      description: Any additional information or special requirements
-      placeholder: "Please add any special configuration needs or notes here..."
-
   - type: checkboxes
     id: terms
     attributes:
@@ -183,5 +93,5 @@ body:
           required: true
         - label: I understand that team maintainers manage team membership and can add/remove members
           required: true
-        - label: I have verified the usernames of team maintainers (if specified)
+        - label: I understand that repository settings will use organization defaults unless otherwise specified
           required: true
