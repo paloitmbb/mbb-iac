@@ -435,6 +435,9 @@ jobs:
           REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
           BRANCH_NAME="repo-request/${REPO_NAME}"
 
+          # Delete remote branch if it exists (ignore errors)
+          git push origin --delete "${BRANCH_NAME}" 2>/dev/null || true
+
           git checkout -b "${BRANCH_NAME}"
           git add data/repositories.yaml data/teams.yaml
           git commit -m "feat: ✨ add repository ${REPO_NAME} and associated teams
