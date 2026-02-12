@@ -102,9 +102,11 @@ jobs:
       - name: Terraform Apply
         id: terraform-apply
         run: |
-          # Run terraform apply and capture exit code without failing immediately
+          # Run terraform apply and capture exit code without failing the step
+          set +e
           terraform apply -auto-approve tfplan
           APPLY_EXIT_CODE=$?
+          set -e
 
           if [ $APPLY_EXIT_CODE -ne 0 ]; then
             if [ -f "errored.tfstate" ]; then
