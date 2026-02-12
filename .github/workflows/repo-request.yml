@@ -95,6 +95,7 @@ jobs:
         id: validate-teams
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.ORG_ACCESS_TOKEN }}
           script: |
             const teamsString = '${{ steps.parse.outputs.teams }}';
             // Filter out empty strings and GitHub's "_No response_" placeholder
