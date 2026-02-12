@@ -102,8 +102,8 @@ jobs:
       - name: Terraform Apply
         id: terraform-apply
         run: |
-          # Run terraform apply and capture exit code, always succeed to prevent wrapper annotations
-          terraform apply -auto-approve tfplan || APPLY_EXIT_CODE=$?
+          # Run terraform apply and capture exit code, suppress wrapper output to prevent annotations
+          terraform apply -auto-approve tfplan 2>&1 || APPLY_EXIT_CODE=$?
           APPLY_EXIT_CODE=${APPLY_EXIT_CODE:-0}
 
           if [ $APPLY_EXIT_CODE -ne 0 ]; then
