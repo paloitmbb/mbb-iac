@@ -105,11 +105,13 @@ jobs:
               .filter(t => t && t !== '_No response_');
 
             console.log(`🔍 Validating teams in organization: ${context.repo.owner}`);
-            console.log(`📋 Teams to validate: ${teamList.join(', ')}`);
+            console.log(`📋 Teams to validate: ${teamList.length > 0 ? teamList.join(', ') : 'None (team access is optional)'}`);
 
             if (teamList.length === 0) {
-              core.setOutput('error', 'At least one team must be specified');
-              core.setOutput('valid', 'false');
+              console.log('ℹ️  No teams specified - repository will be created without team access');
+              core.setOutput('valid', 'true');
+              core.setOutput('team-list', JSON.stringify([]));
+              core.setOutput('teams-display', 'None');
               return;
             }
 

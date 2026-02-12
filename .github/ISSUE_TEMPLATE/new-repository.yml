@@ -32,10 +32,10 @@ body:
     id: teams
     attributes:
       label: Team Access
-      description: Comma-separated list of existing team slugs that should have access to this repository. Teams must already exist in the organization. (Team existence will be validated)
+      description: (Optional) Comma-separated list of existing team slugs that should have access to this repository. Teams must already exist in the organization. (Team existence will be validated)
       placeholder: "platform-team, backend-developers, qa-team"
     validations:
-      required: true
+      required: false
 
   - type: dropdown
     id: tech-stack
@@ -88,9 +88,9 @@ body:
       label: Acknowledgment
       description: Please confirm you understand the following
       options:
-        - label: I understand that this repository will be created with access granted to the teams I specified
+        - label: I understand that this repository will be created with access granted to the teams I specified (if any)
           required: true
-        - label: I understand that the teams I specify must already exist in the organization
+        - label: I understand that any teams I specify must already exist in the organization
           required: true
         - label: I understand that repository settings will use organization defaults unless otherwise specified
           required: true
