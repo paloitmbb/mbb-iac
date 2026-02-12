@@ -51,15 +51,15 @@ jobs:
         run: |
           terraform init -backend-config=environments/${{ matrix.environment }}/backend.tfvars
         env:
-          GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
-          TF_HTTP_PASSWORD: ${{ secrets.TF_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
 
       - name: Terraform Plan
         run: |
           terraform plan -var-file=environments/${{ matrix.environment }}/terraform.tfvars -out=environments/${{ matrix.environment }}/tfplan
         env:
-          GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
-          TF_HTTP_PASSWORD: ${{ secrets.TF_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
 
       - name: Terraform Apply
         run: |
@@ -77,5 +77,5 @@ jobs:
             fi
           fi
         env:
-          GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
-          TF_HTTP_PASSWORD: ${{ secrets.TF_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}

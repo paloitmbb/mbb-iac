@@ -754,14 +754,14 @@ jobs:
         run: |
           ./scripts/init.sh ${{ needs.validate-request.outputs.environment }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
 
       - name: Terraform Apply
         id: terraform-apply
         run: |
           ./scripts/apply.sh ${{ needs.validate-request.outputs.environment }} -auto-approve
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
 
       - name: Post success comment
         if: success()
@@ -858,7 +858,8 @@ jobs:
 ### 5.1 Pre-Implementation Tasks
 
 - [ ] Review and approve implementation plan
-- [ ] Ensure GitHub token has required permissions (`repo`, `admin:org`, `workflow`)
+- [ ] Create GitHub PAT with required scopes and add as ORG_GITHUB_TOKEN secret
+- [ ] Ensure token has required permissions (`repo`, `read:org`, `admin:org`)
 - [ ] Verify Terraform backend is properly configured
 - [ ] Backup existing data files (`repositories.yaml`)
 
@@ -1064,15 +1065,26 @@ If workflow fails after repository creation:
 
 ## Appendices
 
-### Appendix A: Required GitHub Permissions
+### Appendix A: Required GitHub Token
 
+**Secret Name:** `ORG_GITHUB_TOKEN`
+
+**Token Scopes:**
 ```yaml
-Token Scopes:
+Required Scopes:
   - repo (Full control of private repositories)
-  - admin:org (Full control of organizations)
-  - workflow (Update GitHub Action workflows)
   - read:org (Read org and team membership)
+  - admin:org (Full control of orgs and teams)
 ```
+
+**Setup:**
+1. Create GitHub Personal Access Token (classic)
+2. Select required scopes listed above
+3. Add as repository secret: `ORG_GITHUB_TOKEN`
+4. Token is used for:
+   - Team validation (read:org)
+   - Terraform provider authentication (repo, admin:org)
+   - HTTP backend state management (repo)
 
 ### Appendix B: Example Workflow Run
 

@@ -36,8 +36,8 @@ jobs:
         run: |
           terraform init -backend-config=environments/${{ matrix.environment }}/backend.tfvars
         env:
-          GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
-          TF_HTTP_PASSWORD: ${{ secrets.TF_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
 
       - name: Terraform Validate
         run: |
@@ -65,8 +65,8 @@ jobs:
         run: |
           terraform plan -var-file=environments/${{ matrix.environment }}/terraform.tfvars -no-color
         env:
-          GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
-          TF_HTTP_PASSWORD: ${{ secrets.TF_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
         continue-on-error: true
 
       - name: Comment Plan on PR
