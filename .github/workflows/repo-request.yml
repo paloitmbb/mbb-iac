@@ -103,6 +103,9 @@ jobs:
               .map(t => t.trim())
               .filter(t => t && t !== '_No response_');
 
+            console.log(`🔍 Validating teams in organization: ${context.repo.owner}`);
+            console.log(`📋 Teams to validate: ${teamList.join(', ')}`);
+
             if (teamList.length === 0) {
               core.setOutput('error', 'At least one team must be specified');
               core.setOutput('valid', 'false');
@@ -110,28 +113,48 @@ jobs:
             }
 
             const invalidTeams = [];
+            const validTeams = [];
 
             // Validate each team exists in organization
             for (const teamSlug of teamList) {
+              console.log(`Checking team: "${teamSlug}"`);
               try {
-                await github.rest.teams.getByName({
+                const team = await github.rest.teams.getByName({
                   org: context.repo.owner,
                   team_slug: teamSlug
                 });
+                validTeams.push(teamSlug);
+                console.log(`✅ Team found: ${teamSlug} (ID: ${team.data.id}, Name: ${team.data.name})`);
               } catch (error) {
+                console.log(`❌ Team not found: ${teamSlug}`);
+                console.log(`   Error: ${error.message}`);
+                console.log(`   Status: ${error.status || 'N/A'}`);
                 invalidTeams.push(teamSlug);
               }
             }
 
             if (invalidTeams.length > 0) {
-              core.setOutput('error', `Teams do not exist in organization: ${invalidTeams.join(', ')}`);
+              // Try to list available teams to help with debugging
+              try {
+                console.log(`📋 Fetching list of teams from organization: ${context.repo.owner}`);
+                const { data: orgTeams } = await github.rest.teams.list({
+                  org: context.repo.owner,
+                  per_page: 100
+                });
+                console.log(`Found ${orgTeams.length} teams in organization`);
+                const teamSlugs = orgTeams.map(t => `${t.slug} (${t.name})`).join(', ');
+                core.setOutput('error', `Teams do not exist in organization '${context.repo.owner}': ${invalidTeams.join(', ')}. Available teams: ${teamSlugs}`);
+              } catch (listError) {
+                console.log(`❌ Failed to list teams: ${listError.message}`);
+                core.setOutput('error', `Teams do not exist in organization '${context.repo.owner}': ${invalidTeams.join(', ')}. Unable to list available teams - check GitHub token has 'read:org' permission.`);
+              }
               core.setOutput('valid', 'false');
               return;
             }
 
             core.setOutput('valid', 'true');
-            core.setOutput('team-list', JSON.stringify(teamList));
-            core.setOutput('teams-display', teamList.join(', '));
+            core.setOutput('team-list', JSON.stringify(validTeams));
+            core.setOutput('teams-display', validTeams.join(', '));
 
       - name: Check repository existence
         id: check-repo
