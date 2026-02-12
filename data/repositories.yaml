@@ -99,27 +99,6 @@ repositories:
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
     teams:
-          - team: paloitmbb-devsecops
-            permission: push
-    
-
-  - name: mbb-new-service
-    description: "Mbb New Service using React"
-    visibility: private
-    features:
-      has_issues: true
-      has_projects: true
-      has_wiki: false
-    default_branch: main
-    topics: ["maybank", "mbb", "react"]
-    security:
-      enable_vulnerability_alerts: true
-      enable_advanced_security: false
-      enable_secret_scanning: false
-      enable_secret_scanning_push_protection: false
-      enable_dependabot_alerts: true
-      enable_dependabot_security_updates: true
-    teams:
           - team: _No response_
             permission: push
     
