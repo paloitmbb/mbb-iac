@@ -15,7 +15,7 @@ locals {
   ]
 
   # Merge repositories from YAML file and tfvars (tfvars takes precedence if both exist)
-  all_repositories = length(var.repositories) > 0 ? var.repositories : local.yaml_repositories
+  all_repositories = coalescelist(var.repositories, local.yaml_repositories)
 }
 
 # Organization Management
