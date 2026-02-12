@@ -189,7 +189,7 @@ jobs:
                     repo: repoName
                   });
                   
-                  results.push(`✅ Team \\`${teamSlug}\\` has \\`${repoAccess.data.permission}\\` access`);
+                  results.push('✅ Team `' + teamSlug + '` has `' + repoAccess.data.permission + '` access');
                 } catch (error) {
                   // Team exists but doesn't have access - grant it now
                   try {
@@ -200,14 +200,14 @@ jobs:
                       repo: repoName,
                       permission: 'push' // Default to push (write) access
                     });
-                    results.push(`✅ Team \\`${teamSlug}\\` access granted (push permission)`);
+                    results.push('✅ Team `' + teamSlug + '` access granted (push permission)');
                   } catch (grantError) {
-                    results.push(`❌ Failed to grant access to team \\`${teamSlug}\\`: ${grantError.message}`);
+                    results.push('❌ Failed to grant access to team `' + teamSlug + '`: ' + grantError.message);
                     hasErrors = true;
                   }
                 }
               } catch (error) {
-                results.push(`❌ Team \\`${teamSlug}\\` not found or not accessible`);
+                results.push('❌ Team `' + teamSlug + '` not found or not accessible');
                 hasErrors = true;
               }
             }
