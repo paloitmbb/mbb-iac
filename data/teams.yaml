@@ -56,3 +56,21 @@ teams: []
     permission: maintain
     privacy: closed
     description: "Production team for mbb-new-repo repository - maintain access for production releases"
+
+  - name: mbb-service-test-dev
+    repository: mbb-service-test
+    permission: push
+    privacy: closed
+    description: "Developer team for mbb-service-test repository - write access for development"
+  
+  - name: mbb-service-test-test
+    repository: mbb-service-test
+    permission: push
+    privacy: closed
+    description: "Test team for mbb-service-test repository - write access for testing activities"
+  
+  - name: mbb-service-test-prod
+    repository: mbb-service-test
+    permission: maintain
+    privacy: closed
+    description: "Production team for mbb-service-test repository - maintain access for production releases"
