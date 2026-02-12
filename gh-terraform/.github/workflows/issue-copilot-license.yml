@@ -1,0 +1,253 @@
+name: "Copilot License Management"
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Job 1: Validate the request
+  # ──────────────────────────────────────────────
+  validate:
+    name: "Validate Request"
+    if: startsWith(github.event.issue.title, '[Copilot License]')
+    runs-on: ubuntu-latest
+    outputs:
+      organization: ${{ steps.parse.outputs.issueparser_organization }}
+      action: ${{ steps.parse.outputs.issueparser_action }}
+      users: ${{ steps.parse.outputs.issueparser_users }}
+      justification: ${{ steps.parse.outputs.issueparser_justification }}
+    steps:
+      - name: Parse issue form
+        id: parse
+        uses: stefanbuck/github-issue-parser@v3
+        with:
+          template-path: .github/ISSUE_TEMPLATE/copilot-license-request.yml
+
+      - name: Display parsed values
+        run: |
+          echo "Organization: ${{ steps.parse.outputs.issueparser_organization }}"
+          echo "Action: ${{ steps.parse.outputs.issueparser_action }}"
+          echo "Users: ${{ steps.parse.outputs.issueparser_users }}"
+          echo "Justification: ${{ steps.parse.outputs.issueparser_justification }}"
+
+      - name: Validate organization has Copilot billing
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          ORG: ${{ steps.parse.outputs.issueparser_organization }}
+        run: |
+          echo "Checking Copilot billing for organization: $ORG"
+
+          HTTP_STATUS=$(curl -s -o /tmp/copilot_billing.json -w "%{http_code}" \
+            -H "Accept: application/json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/orgs/$ORG/copilot/billing")
+
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "✅ Copilot billing is enabled for $ORG"
+            cat /tmp/copilot_billing.json | python3 -m json.tool
+          elif [ "$HTTP_STATUS" = "404" ]; then
+            echo "❌ Copilot is not enabled for organization '$ORG' or token lacks required scope"
+            exit 1
+          else
+            echo "❌ Failed to check Copilot billing (HTTP $HTTP_STATUS)"
+            cat /tmp/copilot_billing.json
+            exit 1
+          fi
+
+      - name: Validate usernames exist
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          USERS: ${{ steps.parse.outputs.issueparser_users }}
+        run: |
+          echo "Validating GitHub usernames..."
+          INVALID_USERS=""
+
+          # Parse users (comma or newline separated)
+          CLEANED=$(echo "$USERS" | tr '\n' ',' | sed 's/,\+/,/g' | sed 's/^,//;s/,$//')
+          IFS=',' read -ra USER_ARRAY <<< "$CLEANED"
+
+          for RAW_USER in "${USER_ARRAY[@]}"; do
+            USER=$(echo "$RAW_USER" | xargs | sed 's/^@//')
+            if [ -z "$USER" ]; then
+              continue
+            fi
+
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Accept: application/json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/users/$USER")
+
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "  ✅ $USER - valid"
+            else
+              echo "  ❌ $USER - not found (HTTP $HTTP_STATUS)"
+              INVALID_USERS="$INVALID_USERS $USER"
+            fi
+          done
+
+          if [ -n "$INVALID_USERS" ]; then
+            echo ""
+            echo "❌ Invalid usernames found:$INVALID_USERS"
+            exit 1
+          fi
+
+          echo ""
+          echo "✅ All usernames are valid"
+
+      - name: Comment on issue - validation passed
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const action = '${{ steps.parse.outputs.issueparser_action }}'.toLowerCase();
+            const org = '${{ steps.parse.outputs.issueparser_organization }}';
+            const users = '${{ steps.parse.outputs.issueparser_users }}';
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `### ✅ Validation Passed\n\n**Organization:** ${org}\n**Action:** ${action}\n**Users:**\n\`\`\`\n${users}\n\`\`\`\n\nProceeding with license ${action}...`
+            });
+
+      - name: Comment on issue - validation failed
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `### ❌ Validation Failed\n\nPlease check the workflow logs for details. Common issues:\n- Organization does not have Copilot enabled\n- Invalid GitHub usernames\n- Token missing \`manage_billing:copilot\` scope\n\nPlease fix the issues and create a new request.`
+            });
+
+  # ──────────────────────────────────────────────
+  # Job 2: Manage Copilot Licenses
+  # ──────────────────────────────────────────────
+  manage-licenses:
+    name: "Manage Copilot Licenses"
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run license management script
+        id: manage
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          ORG: ${{ needs.validate.outputs.organization }}
+          ACTION: ${{ needs.validate.outputs.action }}
+          USERS: ${{ needs.validate.outputs.users }}
+        run: |
+          # Normalize action to lowercase
+          ACTION_LOWER=$(echo "$ACTION" | tr '[:upper:]' '[:lower:]')
+
+          # Clean up users string (comma or newline separated)
+          CLEANED_USERS=$(echo "$USERS" | tr '\n' ',' | sed 's/,\+/,/g' | sed 's/^,//;s/,$//' | sed 's/@//g')
+
+          echo "Running Copilot license management..."
+          echo "  Org: $ORG"
+          echo "  Action: $ACTION_LOWER"
+          echo "  Users: $CLEANED_USERS"
+
+          python3 scripts/manage_copilot_license.py \
+            --org "$ORG" \
+            --action "$ACTION_LOWER" \
+            --users "$CLEANED_USERS" \
+            --token "$GH_TOKEN" 2>&1 | tee /tmp/copilot_output.txt
+
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+
+          if [ "$EXIT_CODE" -ne 0 ]; then
+            echo "❌ License management failed"
+            exit 1
+          fi
+
+      - name: Comment on issue - success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const output = fs.readFileSync('/tmp/copilot_output.txt', 'utf8');
+            const action = '${{ needs.validate.outputs.action }}'.toLowerCase();
+            const org = '${{ needs.validate.outputs.organization }}';
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `### ✅ Copilot License ${action === 'assign' ? 'Assignment' : 'Revocation'} Successful\n\n**Organization:** ${org}\n\n<details>\n<summary>Script Output</summary>\n\n\`\`\`\n${output}\n\`\`\`\n</details>`
+            });
+
+      - name: Comment on issue - failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            let output = '';
+            try {
+              output = fs.readFileSync('/tmp/copilot_output.txt', 'utf8');
+            } catch (e) {
+              output = 'No output captured';
+            }
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `### ❌ Copilot License Management Failed\n\nPlease check the workflow logs for details.\n\n<details>\n<summary>Script Output</summary>\n\n\`\`\`\n${output}\n\`\`\`\n</details>`
+            });
+
+  # ──────────────────────────────────────────────
+  # Job 3: Close Issue
+  # ──────────────────────────────────────────────
+  close-issue:
+    name: "Close Issue"
+    needs: [validate, manage-licenses]
+    if: success()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close issue as completed
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const action = '${{ needs.validate.outputs.action }}'.toLowerCase();
+            const org = '${{ needs.validate.outputs.organization }}';
+            const users = '${{ needs.validate.outputs.users }}';
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `### 🎉 Request Completed\n\nCopilot licenses have been successfully **${action === 'assign' ? 'assigned' : 'revoked'}** for the requested users in organization **${org}**.\n\nClosing this issue.`
+            });
+
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              state: 'closed',
+              state_reason: 'completed'
+            });

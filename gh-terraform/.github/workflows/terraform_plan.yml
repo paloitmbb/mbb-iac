@@ -1,0 +1,101 @@
+name: Terraform Plan
+
+on:
+  pull_request:
+    paths:
+      - "environments/**/*.tfvars"
+      - "data/**/*.yaml"
+      - "data/**/*.yml"
+      - "modules/**/*.tf"
+      - "*.tf"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  terraform-plan:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [sit, staging, prod]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.0
+
+      - name: Terraform Init
+        working-directory: environments/${{ matrix.environment }}
+        run: terraform init
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_github_token: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_organization: ${{ vars.ORGANIZATION || '' }}
+          GITHUB_OWNER: ${{ vars.ORGANIZATION || '' }}
+
+      - name: Terraform Validate
+        working-directory: environments/${{ matrix.environment }}
+        run: terraform validate
+        env:
+          TF_VAR_github_token: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_organization: ${{ vars.ORGANIZATION || '' }}
+          GITHUB_OWNER: ${{ vars.ORGANIZATION || '' }}
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Validate YAML Data Files
+        if: hashFiles('data/*.yaml') != '' || hashFiles('data/*.yml') != ''
+        run: |
+          echo "Validating YAML files..."
+          for file in data/*.yaml data/*.yml; do
+            if [ -f "$file" ]; then
+              echo "Checking $file"
+              python3 -c "import yaml; yaml.safe_load(open('$file'))" && echo "✓ $file is valid" || exit 1
+            fi
+          done
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: environments/${{ matrix.environment }}
+        run: terraform plan -no-color
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_github_token: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_organization: ${{ vars.ORGANIZATION || '' }}
+          GITHUB_OWNER: ${{ vars.ORGANIZATION || '' }}
+        continue-on-error: true
+
+      - name: Comment Plan on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const output = `#### Terraform Plan for \`${{ matrix.environment }}\` 📖
+
+            <details><summary>Show Plan</summary>
+
+            \`\`\`terraform
+            ${{ steps.plan.outputs.stdout }}
+            \`\`\`
+
+            </details>
+
+            *Pushed by: @${{ github.actor }}*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+      - name: Terraform Plan Status
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
