@@ -317,7 +317,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.TF_GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure Git
         run: |
@@ -376,26 +376,26 @@ jobs:
           DESCRIPTION=$(echo "$REPO_NAME" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2));}1')
           DESCRIPTION="${DESCRIPTION} using ${TECH_STACK}"
 
-          # Append to repositories.yaml
-          cat >> data/repositories.yaml << EOF
-
-            - name: ${REPO_NAME}
-              description: "${DESCRIPTION}"
-              visibility: ${VISIBILITY}
-              features:
-                has_issues: ${HAS_ISSUES}
-                has_projects: ${HAS_PROJECTS}
-                has_wiki: ${HAS_WIKI}
-              default_branch: ${{ needs.validate-request.outputs.default-branch }}
-              topics: ${TOPICS_ARRAY}
-              security:
-                enable_vulnerability_alerts: ${VULN_ALERTS}
-                enable_advanced_security: ${ADV_SECURITY}
-                enable_secret_scanning: ${SECRET_SCAN}
-                enable_secret_scanning_push_protection: ${SECRET_PUSH}
-                enable_dependabot_alerts: ${DEPENDABOT_ALERTS}
-                enable_dependabot_security_updates: ${DEPENDABOT_UPDATES}
-          EOF
+          # Append to repositories.yaml with proper indentation (2 spaces for array items)
+          {
+            echo ""
+            echo "  - name: ${REPO_NAME}"
+            echo "    description: \"${DESCRIPTION}\""
+            echo "    visibility: ${VISIBILITY}"
+            echo "    features:"
+            echo "      has_issues: ${HAS_ISSUES}"
+            echo "      has_projects: ${HAS_PROJECTS}"
+            echo "      has_wiki: ${HAS_WIKI}"
+            echo "    default_branch: ${{ needs.validate-request.outputs.default-branch }}"
+            echo "    topics: ${TOPICS_ARRAY}"
+            echo "    security:"
+            echo "      enable_vulnerability_alerts: ${VULN_ALERTS}"
+            echo "      enable_advanced_security: ${ADV_SECURITY}"
+            echo "      enable_secret_scanning: ${SECRET_SCAN}"
+            echo "      enable_secret_scanning_push_protection: ${SECRET_PUSH}"
+            echo "      enable_dependabot_alerts: ${DEPENDABOT_ALERTS}"
+            echo "      enable_dependabot_security_updates: ${DEPENDABOT_UPDATES}"
+          } >> data/repositories.yaml
 
           echo "Successfully updated repositories.yaml with defaults"
 
@@ -405,27 +405,34 @@ jobs:
           REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
           TEAMS_FILE="data/teams.yaml"
 
-          # Append 3 teams for the new repository
-          cat >> "$TEAMS_FILE" << EOF
+          # Replace empty teams array if needed, then append 3 teams
+          if grep -q "^teams: \[\]" "$TEAMS_FILE"; then
+            # Replace 'teams: []' with 'teams:' to prepare for array items
+            sed -i.bak 's/^teams: \[\]/teams:/' "$TEAMS_FILE"
+            rm "${TEAMS_FILE}.bak" 2>/dev/null || true
+          fi
 
-            - name: ${REPO_NAME}-dev
-              repository: ${REPO_NAME}
-              permission: push
-              privacy: closed
-              description: "Developer team for ${REPO_NAME} repository - write access for development"
-            
-            - name: ${REPO_NAME}-test
-              repository: ${REPO_NAME}
-              permission: push
-              privacy: closed
-              description: "Test team for ${REPO_NAME} repository - write access for testing activities"
-            
-            - name: ${REPO_NAME}-prod
-              repository: ${REPO_NAME}
-              permission: maintain
-              privacy: closed
-              description: "Production team for ${REPO_NAME} repository - maintain access for production releases"
-          EOF
+          # Append 3 teams with proper indentation (2 spaces for array items)
+          {
+            echo ""
+            echo "  - name: ${REPO_NAME}-dev"
+            echo "    repository: ${REPO_NAME}"
+            echo "    permission: push"
+            echo "    privacy: closed"
+            echo "    description: \"Developer team for ${REPO_NAME} repository - write access for development\""
+            echo "  "
+            echo "  - name: ${REPO_NAME}-test"
+            echo "    repository: ${REPO_NAME}"
+            echo "    permission: push"
+            echo "    privacy: closed"
+            echo "    description: \"Test team for ${REPO_NAME} repository - write access for testing activities\""
+            echo "  "
+            echo "  - name: ${REPO_NAME}-prod"
+            echo "    repository: ${REPO_NAME}"
+            echo "    permission: maintain"
+            echo "    privacy: closed"
+            echo "    description: \"Production team for ${REPO_NAME} repository - maintain access for production releases\""
+          } >> "$TEAMS_FILE"
 
           echo "Successfully updated teams.yaml"
 

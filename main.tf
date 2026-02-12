@@ -1,7 +1,7 @@
 # Load repositories from YAML data file
 locals {
   repositories_file = "${path.module}/data/repositories.yaml"
-  repositories_data = fileexists(local.repositories_file) ? yamldecode(file(local.repositories_file)) : { repositories = [] }
+  repositories_data = try(yamldecode(file(local.repositories_file)), { repositories = [] })
 
   # Normalize YAML repositories to ensure all optional attributes exist
   yaml_repositories = [
@@ -15,7 +15,7 @@ locals {
   ]
 
   # Merge repositories from YAML file and tfvars (tfvars takes precedence if both exist)
-  all_repositories = length(var.repositories) > 0 ? var.repositories : local.yaml_repositories
+  all_repositories = coalescelist(var.repositories, local.yaml_repositories)
 }
 
 # Organization Management
@@ -65,7 +65,7 @@ module "github_repositories" {
 # Load teams configuration
 locals {
   teams_file = "${path.module}/data/teams.yaml"
-  teams_data = fileexists(local.teams_file) ? yamldecode(file(local.teams_file)) : { teams = [] }
+  teams_data = try(yamldecode(file(local.teams_file)), { teams = [] })
 
   # Normalize teams data
   all_teams = try(local.teams_data.teams, [])

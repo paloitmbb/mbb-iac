@@ -29,7 +29,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
-          token: ${{ secrets.TF_GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract issue number from PR
         id: extract-issue
@@ -90,14 +90,24 @@ jobs:
         run: |
           ./scripts/init.sh dev
         env:
-          GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Terraform Plan
+        id: terraform-plan
+        run: |
+          terraform plan -var-file=environments/dev/terraform.tfvars -out=tfplan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Terraform Apply
         id: terraform-apply
         run: |
-          ./scripts/apply.sh dev -auto-approve
+          terraform apply -auto-approve tfplan
         env:
-          GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract admin users from PR
         id: get-admins
