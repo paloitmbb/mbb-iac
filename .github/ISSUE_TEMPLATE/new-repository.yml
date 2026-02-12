@@ -1,5 +1,5 @@
 name: New Repository Request
-description: Request creation of a new GitHub repository with automated team setup
+description: Request creation of a new GitHub repository with access granted to existing teams
 title: "[REPO REQUEST] "
 labels: ["repo-request", "pending-review"]
 assignees:
@@ -13,9 +13,8 @@ body:
         Please fill out this form to request a new repository. Your request will be reviewed by the DevSecOps team.
 
         **Note:** The repository will be created with:
-        - 3 teams: `{repo-name}-dev`, `{repo-name}-test`, `{repo-name}-prod`
+        - Access granted to existing teams you specify
         - Default settings based on existing repository configurations
-        - Team maintainers (admins) will manage team membership
 
         **Default Configuration:**
         All settings not specified in this form (visibility, features, security, topics, etc.) will use default values from existing repository configurations in the organization.
@@ -30,13 +29,13 @@ body:
       required: true
 
   - type: input
-    id: admins
+    id: teams
     attributes:
-      label: Team Maintainers
-      description: Comma-separated GitHub usernames who will become team maintainers (can manage team membership). Leave empty to make yourself the maintainer. (Usernames will be validated)
-      placeholder: "john-doe, jane-smith, bob-jones"
+      label: Team Access
+      description: Comma-separated list of existing team slugs that should have access to this repository. Teams must already exist in the organization. (Team existence will be validated)
+      placeholder: "platform-team, backend-developers, qa-team"
     validations:
-      required: false
+      required: true
 
   - type: dropdown
     id: tech-stack
@@ -89,9 +88,9 @@ body:
       label: Acknowledgment
       description: Please confirm you understand the following
       options:
-        - label: I understand that this repository will be created with 3 default teams (dev, test, prod)
+        - label: I understand that this repository will be created with access granted to the teams I specified
           required: true
-        - label: I understand that team maintainers manage team membership and can add/remove members
+        - label: I understand that the teams I specify must already exist in the organization
           required: true
         - label: I understand that repository settings will use organization defaults unless otherwise specified
           required: true

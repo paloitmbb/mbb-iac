@@ -9,11 +9,11 @@
 > **⚠️ IMPORTANT UPDATE (Current Implementation):**  
 > The implementation has been modified from the original plan:
 >
-> - **3 teams** are created per repository (dev, test, prod) instead of 4
-> - **No separate admin team** - removed from the design
-> - **Team Maintainers** specified in the issue become maintainers of all 3 teams
-> - If **no maintainers specified**, the issue creator becomes the team maintainer
-> - Team maintainers can manage team membership via GitHub UI
+> - **No teams are created** - users specify existing teams that will have access to the repository
+> - **Teams are specified** as comma-separated entries in the issue form
+> - **Team validation** ensures all specified teams exist in the organization before approval
+> - **Team permissions** are assigned based on the teams' existing roles
+> - Users must use existing organization teams, not create new ones
 >
 > This document retains the original plan for reference. See [02-IMPLEMENTATION_SUMMARY.md](./02-IMPLEMENTATION_SUMMARY.md) for the current architecture.
 
@@ -21,7 +21,7 @@
 
 ## Executive Summary
 
-Implement a GitHub issue-driven automated workflow that allows end users to request new repository creation through a structured issue form. The workflow requires approval from paloitmbb-devsecops team members and automatically provisions repositories with associated teams and permissions.
+Implement a GitHub issue-driven automated workflow that allows end users to request new repository creation through a structured issue form. The workflow requires approval from paloitmbb-devsecops team members and automatically provisions repositories with access granted to existing organization teams specified in the request.
 
 ---
 
@@ -37,6 +37,8 @@ Implement a GitHub issue-driven automated workflow that allows end users to requ
 ┌─────────────────────────┐
 │  Workflow: Validate &   │
 │  Post Issue Summary     │
+│  - Validate repo name   │
+│  - Validate teams exist │
 └────────┬────────────────┘
          │
          ▼
@@ -49,7 +51,7 @@ Implement a GitHub issue-driven automated workflow that allows end users to requ
 ┌─────────────────────────┐
 │  Update YAML Files:     │
 │  - repositories.yaml    │
-│  - teams.yaml           │
+│  (with team access)     │
 └────────┬────────────────┘
          │
          ▼
@@ -74,14 +76,7 @@ Implement a GitHub issue-driven automated workflow that allows end users to requ
 ┌─────────────────────────┐
 │  Terraform Apply        │
 │  - Create Repo          │
-│  - Create 3 Teams       │
-│  - Set Permissions      │
-└────────┬────────────────┘
-         │
-         ▼
-┌─────────────────────────┐
-│  GitHub API Call:       │
-│  Assign Team Maintainer │
+│  - Grant Team Access    │
 └────────┬────────────────┘
          │
          ▼
@@ -94,410 +89,115 @@ Implement a GitHub issue-driven automated workflow that allows end users to requ
 
 ---
 
-## Phase 1: Terraform Module for Teams
+## Phase 1: Team Access Configuration
 
-### 1.1 Create Teams Module
+### 1.1 Team Access via Repository Module
 
-**File:** `modules/github-teams/main.tf`
+**Approach:** Instead of creating new teams, the workflow will grant access to existing teams specified by the user. The `github-repository` module already supports team access configuration through the `teams` parameter.
+
+**Existing Module Support:**
+
+The `modules/github-repository/main.tf` already includes:
 
 ```hcl
-terraform {
-  required_version = ">= 1.5.7"
-  required_providers {
-    github = {
-      source  = "integrations/github"
-      version = "~> 6.0"
-    }
-  }
-}
-
-# Create GitHub team
-resource "github_team" "this" {
-  name        = var.team_name
-  description = var.description
-  privacy     = var.privacy
-
-  # Parent team for hierarchical structure (optional)
-  parent_team_id = var.parent_team_id
-}
-
-# Team repository access
 resource "github_team_repository" "this" {
-  for_each = toset(var.repositories)
+  for_each = {
+    for team in var.teams : team.team => team
+  }
 
-  team_id    = github_team.this.id
-  repository = each.value
-  permission = var.permission
+  team_id    = each.value.team
+  repository = github_repository.this.name
+  permission = each.value.permission
 }
 ```
 
-**File:** `modules/github-teams/variables.tf`
-
-```hcl
-variable "team_name" {
-  description = "Name of the GitHub team"
-  type        = string
-
-  validation {
-    condition     = can(regex("^[a-zA-Z0-9._-]+$", var.team_name))
-    error_message = "Team name must contain only alphanumeric characters, hyphens, underscores, and periods."
-  }
-}
-
-variable "description" {
-  description = "Description of the team"
-  type        = string
-  default     = ""
-}
-
-variable "privacy" {
-  description = "Privacy level of the team (secret or closed)"
-  type        = string
-  default     = "closed"
-
-  validation {
-    condition     = contains(["secret", "closed"], var.privacy)
-    error_message = "Privacy must be either 'secret' or 'closed'."
-  }
-}
-
-variable "repositories" {
-  description = "List of repository names this team has access to"
-  type        = list(string)
-  default     = []
-}
-
-variable "permission" {
-  description = "Permission level for team access to repositories"
-  type        = string
-  default     = "pull"
-
-  validation {
-    condition     = contains(["pull", "triage", "push", "maintain", "admin"], var.permission)
-    error_message = "Permission must be one of: pull, triage, push, maintain, admin."
-  }
-}
-
-variable "parent_team_id" {
-  description = "ID of parent team for hierarchical structure"
-  type        = number
-  default     = null
-}
-```
-
-**File:** `modules/github-teams/outputs.tf`
-
-```hcl
-output "team_id" {
-  description = "The ID of the created team"
-  value       = github_team.this.id
-}
-
-output "team_name" {
-  description = "The name of the created team"
-  value       = github_team.this.name
-}
-
-output "team_slug" {
-  description = "The slug of the created team"
-  value       = github_team.this.slug
-}
-
-output "repository_associations" {
-  description = "Map of repository associations"
-  value = {
-    for repo in var.repositories : repo => {
-      team_id    = github_team.this.id
-      permission = var.permission
-    }
-  }
-}
-```
-
-**File:** `modules/github-teams/versions.tf`
-
-```hcl
-terraform {
-  required_version = ">= 1.5.7"
-  required_providers {
-    github = {
-      source  = "integrations/github"
-      version = "~> 6.0"
-    }
-  }
-}
-```
-
-**File:** `modules/github-teams/README.md`
-
-````markdown
-# GitHub Teams Module
-
-Manages GitHub teams and their repository access permissions.
-
-## Features
-
-- Creates GitHub teams with customizable settings
-- Manages team repository access and permissions
-- Supports hierarchical team structures
-- Configurable privacy levels
-
-## Usage
-
-```hcl
-module "admin_team" {
-  source = "./modules/github-teams"
-
-  team_name    = "mbb-frontend-admin"
-  description  = "Admin team for mbb-frontend repository"
-  privacy      = "closed"
-  repositories = ["mbb-frontend"]
-  permission   = "admin"
-}
-```
-````
-
-## Inputs
-
-| Name           | Description                   | Type         | Default  | Required |
-| -------------- | ----------------------------- | ------------ | -------- | -------- |
-| team_name      | Name of the GitHub team       | string       | n/a      | yes      |
-| description    | Description of the team       | string       | ""       | no       |
-| privacy        | Privacy level (secret/closed) | string       | "closed" | no       |
-| repositories   | List of repository names      | list(string) | []       | no       |
-| permission     | Permission level              | string       | "pull"   | no       |
-| parent_team_id | Parent team ID                | number       | null     | no       |
-
-## Outputs
-
-| Name                    | Description                    |
-| ----------------------- | ------------------------------ |
-| team_id                 | The ID of the created team     |
-| team_name               | The name of the created team   |
-| team_slug               | The slug of the created team   |
-| repository_associations | Map of repository associations |
-
-````
-
----
-
-## Phase 2: DevSecOps Team Creation
-
-### 2.1 Proposed DevSecOps Team Structure
-
-**Role & Permissions:**
-- **Organization Role:** `maintain` (can manage organization settings, teams, and repositories)
-- **Repository Permission:** `admin` on all repositories
-- **Purpose:** Review and approve repository requests, manage infrastructure
-
-**Justification:**
-- `maintain` role allows team to manage repos without full org owner privileges
-- Provides necessary access for DevOps operations while maintaining security
-- Can approve workflows and manage team memberships
-
-### 2.2 Update Root Module
-
-**File:** `main.tf` (Add after repository module)
-
-```hcl
-# ============================================================================
-# DevSecOps Team Management
-# ============================================================================
-
-# Load teams configuration
-locals {
-  teams_file = "${path.module}/data/teams.yaml"
-  teams_data = fileexists(local.teams_file) ? yamldecode(file(local.teams_file)) : { teams = [] }
-
-  # Normalize teams data
-  all_teams = try(local.teams_data.teams, [])
-}
-
-# Create DevSecOps team
-module "devsecops_team" {
-  source = "./modules/github-teams"
-
-  team_name    = "paloitmbb-devsecops"
-  description  = "DevSecOps team with organization-level permissions to view and approve all repositories and pipelines"
-  privacy      = "closed"
-
-  # Grant admin access to all managed repositories
-  repositories = [for repo in local.all_repositories : repo.name]
-  permission   = "admin"
-}
-
-# Create repository-specific teams
-module "repository_teams" {
-  source   = "./modules/github-teams"
-  for_each = { for team in local.all_teams : team.name => team }
-
-  team_name    = each.value.name
-  description  = each.value.description
-  privacy      = try(each.value.privacy, "closed")
-  repositories = [each.value.repository]
-  permission   = each.value.permission
-
-  depends_on = [module.github_repositories]
-}
-````
-
----
-
-## Phase 3: Teams Data Structure
-
-### 3.1 Create Teams YAML File
-
-**File:** `data/teams.yaml`
+**Configuration Example:**
 
 ```yaml
----
-# GitHub Teams Configuration
-# This file defines teams and their repository access permissions
-# Teams are created via Terraform; membership is managed via GitHub API
-
-teams:
-  # Example: Teams for mbb-web-portal repository
-  - name: mbb-web-portal-admin
-    repository: mbb-web-portal
-    permission: admin
-    privacy: closed
-    description: "Admin team for mbb-web-portal repository - full administrative access"
-
-  - name: mbb-web-portal-dev
-    repository: mbb-web-portal
-    permission: push
-    privacy: closed
-    description: "Developer team for mbb-web-portal repository - write access for development"
-
-  - name: mbb-web-portal-test
-    repository: mbb-web-portal
-    permission: push
-    privacy: closed
-    description: "Test team for mbb-web-portal repository - write access for testing activities"
-
-  - name: mbb-web-portal-prod
-    repository: mbb-web-portal
-    permission: maintain
-    privacy: closed
-    description: "Production team for mbb-web-portal repository - maintain access for production releases"
-
-  # Example: Teams for mbb-api-gateway repository
-  - name: mbb-api-gateway-admin
-    repository: mbb-api-gateway
-    permission: admin
-    privacy: closed
-    description: "Admin team for mbb-api-gateway repository - full administrative access"
-
-  - name: mbb-api-gateway-dev
-    repository: mbb-api-gateway
-    permission: push
-    privacy: closed
-    description: "Developer team for mbb-api-gateway repository - write access for development"
-
-  - name: mbb-api-gateway-test
-    repository: mbb-api-gateway
-    permission: push
-    privacy: closed
-    description: "Test team for mbb-api-gateway repository - write access for testing activities"
-
-  - name: mbb-api-gateway-prod
-    repository: mbb-api-gateway
-    permission: maintain
-    privacy: closed
-    description: "Production team for mbb-api-gateway repository - maintain access for production releases"
-
-# Team Structure Convention:
-# {repository-name}-{role}
-#
-# Roles:
-# - admin: Full administrative access (admin permission)
-# - dev: Developer access (push permission)
-# - test: Test manager access (push permission)
-# - prod: Production manager access (maintain permission)
-#
-# Note: Team membership is managed separately via GitHub API
-# This file only defines team creation and repository permissions
+# data/repositories.yaml
+repositories:
+  - name: mbb-payment-service
+    description: "Payment processing service"
+    visibility: private
+    teams:
+      - team: platform-team
+        permission: admin
+      - team: developers
+        permission: push
+      - team: qa-team
+        permission: push
 ```
-
-### 3.2 Teams Data README
-
-**File:** `data/TEAMS.md`
-
-```markdown
-# Teams Data Management
-
-## Overview
-
-The `teams.yaml` file defines GitHub teams and their repository access permissions. Teams are created and managed via Terraform, while team membership is managed through GitHub REST API calls in the automated workflow.
-
-## Team Naming Convention
-
-All teams follow this naming pattern:
-```
-
-{repository-name}-{role}
-
-````
-
-### Roles and Permissions
-
-| Role | Suffix | Permission | Description |
-|------|--------|------------|-------------|
-| Admin | `-admin` | `admin` | Full administrative access including settings and team management |
-| Developer | `-dev` | `push` | Write access for development activities |
-| Test Manager | `-test` | `push` | Write access for testing activities |
-| Production Manager | `-prod` | `maintain` | Maintain access for production releases and management |
-
-## Automatic Team Creation
-
-When a new repository is created via the automated workflow, the system automatically:
-
-1. Creates 4 teams for the repository following the naming convention
-2. Assigns appropriate permissions to each team
-3. Populates the admin team with users specified in the repository request
-4. Updates this YAML file with the new team definitions
-
-## Manual Team Management
-
-To manually add teams:
-
-1. Edit `data/teams.yaml`
-2. Add team definition following the structure:
-   ```yaml
-   - name: {repo-name}-{role}
-     repository: {repo-name}
-     permission: {admin|push|maintain}
-     privacy: closed
-     description: "{Role} team for {repo-name} repository"
-````
-
-3. Run Terraform: `./scripts/plan.sh dev` then `./scripts/apply.sh dev`
-
-## Team Membership Management
-
-Team memberships are **NOT** managed in this file or via Terraform. Use GitHub UI or API to:
-
-- Add/remove team members
-- Assign team maintainers
-- Configure team settings
-
-The automated workflow handles admin team membership population during repository creation.
-
-````
 
 ---
 
-## Phase 4: Update Issue Template
+## Phase 2: Team Validation
 
-### 4.1 Simplified Issue Template
+### 2.1 Team Existence Validation
 
-**Design Philosophy:** Keep the form minimal and use defaults from existing repositories in `repositories.yaml` for all settings not explicitly requested.
+**Approach:** The workflow will validate that all teams specified in the repository request exist in the organization before proceeding with repository creation.
+
+**Validation Requirements:**
+
+- Teams must exist in the organization
+- Team names must be valid GitHub team slugs
+- Users must have permission to view the teams
+
+### 2.2 Team Permission Mapping
+
+**Supported Permissions:**
+
+The workflow will support the following GitHub repository permissions:
+
+| Permission | Description                                     |
+| ---------- | ----------------------------------------------- |
+| `pull`     | Read access - can pull but not push             |
+| `triage`   | Can manage issues and PRs without write access  |
+| `push`     | Write access - can push to repository           |
+| `maintain` | Maintain access - can manage repo without admin |
+| `admin`    | Full administrative access                      |
+
+**Default Permission:** If not specified, teams will be granted `push` (write) permission.
+
+### 2.3 Repository YAML Structure with Teams
+
+**File:** `data/repositories.yaml` (example entry)
+
+```yaml
+repositories:
+  - name: mbb-payment-service
+    description: "Payment processing service"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics:
+      - payment
+      - api
+      - java
+    teams:
+      - team: platform-team
+        permission: admin
+      - team: backend-developers
+        permission: push
+      - team: qa-team
+        permission: push
+```
+
+## Phase 3: Issue Template with Team Access
+
+### 3.1 Updated Issue Template
+
+### 3.1 Updated Issue Template
+
+**Design Philosophy:** Keep the form minimal, use defaults from existing repositories, and allow users to specify existing teams for access.
 
 **File:** `.github/ISSUE_TEMPLATE/new-repository.yml`
 
 ```yaml
 name: New Repository Request
-description: Request creation of a new GitHub repository with automated team setup
+description: Request creation of a new GitHub repository with access granted to existing teams
 title: "[REPO REQUEST] "
 labels: ["repo-request", "pending-review"]
 assignees:
@@ -511,9 +211,8 @@ body:
         Please fill out this form to request a new repository. Your request will be reviewed by the DevSecOps team.
 
         **Note:** The repository will be created with:
-        - 3 teams: `{repo-name}-dev`, `{repo-name}-test`, `{repo-name}-prod`
+        - Access granted to existing teams you specify
         - Default settings based on existing repository configurations
-        - Team maintainers (admins) will manage team membership
 
         **Default Configuration:**
         All settings not specified in this form (visibility, features, security, topics, etc.) will use default values from existing repository configurations in the organization.
@@ -528,13 +227,13 @@ body:
       required: true
 
   - type: input
-    id: admins
+    id: teams
     attributes:
-      label: Team Maintainers
-      description: Comma-separated GitHub usernames who will become team maintainers (can manage team membership). Leave empty to make yourself the maintainer. (Usernames will be validated)
-      placeholder: "john-doe, jane-smith, bob-jones"
+      label: Team Access
+      description: Comma-separated list of existing team slugs that should have access to this repository. Teams must already exist in the organization. (Team existence will be validated)
+      placeholder: "platform-team, backend-developers, qa-team"
     validations:
-      required: false
+      required: true
 
   - type: dropdown
     id: tech-stack
@@ -587,18 +286,103 @@ body:
       label: Acknowledgment
       description: Please confirm you understand the following
       options:
-        - label: I understand that this repository will be created with 3 default teams (dev, test, prod)
+        - label: I understand that this repository will be created with access granted to the teams I specified
           required: true
-        - label: I understand that team maintainers manage team membership and can add/remove members
+        - label: I understand that the teams I specify must already exist in the organization
           required: true
         - label: I understand that repository settings will use organization defaults unless otherwise specified
           required: true
+```
+
+title: "[REPO REQUEST] "
+labels: ["repo-request", "pending-review"]
+assignees:
+
+- devsecops-team
+
+body:
+
+- type: markdown
+  attributes:
+  value: | ## Repository Request Form
+  Please fill out this form to request a new repository. Your request will be reviewed by the DevSecOps team.
+
+      **Note:** The repository will be created with:
+      - 3 teams: `{repo-name}-dev`, `{repo-name}-test`, `{repo-name}-prod`
+      - Default settings based on existing repository configurations
+      - Team maintainers (admins) will manage team membership
+
+      **Default Configuration:**
+      All settings not specified in this form (visibility, features, security, topics, etc.) will use default values from existing repository configurations in the organization.
+
+- type: input
+  id: repo-name
+  attributes:
+  label: Repository Name
+  description: Name of the new repository (lowercase, hyphens only, no spaces)
+  placeholder: "mbb-new-service"
+  validations:
+  required: true
+
+- type: input
+  id: admins
+  attributes:
+  label: Team Maintainers
+  description: Comma-separated GitHub usernames who will become team maintainers (can manage team membership). Leave empty to make yourself the maintainer. (Usernames will be validated)
+  placeholder: "john-doe, jane-smith, bob-jones"
+  validations:
+  required: false
+
+- type: dropdown
+  id: tech-stack
+  attributes:
+  label: Tech Stack
+  description: Primary technology stack for this repository
+  options: - React - Java Springboot - NodeJS - Python - Others (specify below)
+  validations:
+  required: true
+
+- type: input
+  id: tech-stack-other
+  attributes:
+  label: Other Tech Stack
+  description: If you selected "Others", please specify the tech stack
+  placeholder: "e.g., Ruby on Rails, Go, .NET"
+
+- type: textarea
+  id: justification
+  attributes:
+  label: Business Justification
+  description: Explain why this repository is needed and how it will be used
+  placeholder: | - Business need: - Expected usage: - Impact:
+  validations:
+  required: true
+
+- type: dropdown
+  id: default-branch
+  attributes:
+  label: Default Branch Name
+  options: - main - master - develop
+  default: 0
+  validations:
+  required: true
+
+- type: checkboxes
+  id: terms
+  attributes:
+  label: Acknowledgment
+  description: Please confirm you understand the following
+  options: - label: I understand that this repository will be created with 3 default teams (dev, test, prod)
+  required: true - label: I understand that team maintainers manage team membership and can add/remove members
+  required: true - label: I understand that repository settings will use organization defaults unless otherwise specified
+  required: true
+
 ````
 
 **Simplified Form Fields:**
 
 - **Repository Name** (required)
-- **Team Maintainers/Admins** (optional - defaults to issue creator)
+- **Team Access** (required - comma-separated existing team slugs)
 - **Tech Stack** (required)
 - **Business Justification** (required)
 - **Default Branch** (required - dropdown: main/master/develop)
@@ -613,9 +397,7 @@ All other repository settings (visibility, features, security, topics, variables
 - Easier maintenance
 - Ability to override defaults via manual YAML edits after creation
 
----
-
-### 4.2 Default Values Configuration
+### 3.2 Default Values Configuration
 
 The workflow will use the first repository in `repositories.yaml` as a template for default values:
 
@@ -662,9 +444,9 @@ The workflow will:
 
 ---
 
-## Phase 5: Automated Workflow Implementation
+## Phase 4: Automated Workflow Implementation
 
-### 5.1 GitHub Environment Setup
+### 4.1 GitHub Environment Setup
 
 **Manual Step:** Create GitHub Environment for approval
 
@@ -673,7 +455,7 @@ The workflow will:
 3. Add required reviewers: `paloitmbb-devsecops` team
 4. Set deployment branch pattern: `main`
 
-### 5.2 Updated Workflow with Default Values
+### 4.2 Updated Workflow with Team Validation
 
 **File:** `.github/workflows/repo-request.yml`
 
@@ -701,7 +483,7 @@ jobs:
       repo-name: ${{ steps.parse.outputs.repo-name }}
       tech-stack: ${{ steps.parse.outputs.tech-stack }}
       justification: ${{ steps.parse.outputs.justification }}
-      admins: ${{ steps.parse.outputs.admins }}
+      teams: ${{ steps.parse.outputs.teams }}
       default-branch: ${{ steps.parse.outputs.default-branch }}
       validation-passed: ${{ steps.validate.outputs.passed }}
 
@@ -728,7 +510,7 @@ jobs:
             const techStack = extractField(issueBody, 'Tech Stack');
             const techStackOther = extractField(issueBody, 'Other Tech Stack');
             const justification = extractField(issueBody, 'Business Justification');
-            const admins = extractField(issueBody, 'Team Maintainers');
+            const teams = extractField(issueBody, 'Team Access');
             const defaultBranch = extractField(issueBody, 'Default Branch Name');
 
             // Determine final tech stack
@@ -738,7 +520,7 @@ jobs:
             core.setOutput('repo-name', repoName);
             core.setOutput('tech-stack', finalTechStack);
             core.setOutput('justification', justification);
-            core.setOutput('admins', admins || context.payload.issue.user.login);
+            core.setOutput('teams', teams);
             core.setOutput('default-branch', defaultBranch || 'main');
 
       - name: Load default values from repositories.yaml
@@ -764,39 +546,42 @@ jobs:
 
           echo "valid=true" >> $GITHUB_OUTPUT
 
-      - name: Validate admin usernames
-        id: validate-admins
+      - name: Validate team existence
+        id: validate-teams
         uses: actions/github-script@v7
         with:
           script: |
-            const adminsString = '${{ steps.parse.outputs.admins }}';
-            const adminList = adminsString.split(',').map(u => u.trim()).filter(u => u);
+            const teamsString = '${{ steps.parse.outputs.teams }}';
+            const teamList = teamsString.split(',').map(t => t.trim()).filter(t => t);
 
-            if (adminList.length === 0) {
-              core.setOutput('error', 'At least one admin user must be specified');
+            if (teamList.length === 0) {
+              core.setOutput('error', 'At least one team must be specified');
               core.setOutput('valid', 'false');
               return;
             }
 
-            const invalidUsers = [];
+            const invalidTeams = [];
 
-            // Validate each username exists in organization
-            for (const username of adminList) {
+            // Validate each team exists in organization
+            for (const teamSlug of teamList) {
               try {
-                await github.rest.users.getByUsername({ username });
+                await github.rest.teams.getByName({
+                  org: context.repo.owner,
+                  team_slug: teamSlug
+                });
               } catch (error) {
-                invalidUsers.push(username);
+                invalidTeams.push(teamSlug);
               }
             }
 
-            if (invalidUsers.length > 0) {
-              core.setOutput('error', `Invalid usernames: ${invalidUsers.join(', ')}`);
+            if (invalidTeams.length > 0) {
+              core.setOutput('error', `Teams do not exist in organization: ${invalidTeams.join(', ')}`);
               core.setOutput('valid', 'false');
               return;
             }
 
             core.setOutput('valid', 'true');
-            core.setOutput('admin-list', JSON.stringify(adminList));
+            core.setOutput('team-list', JSON.stringify(teamList));
 
       - name: Check repository existence
         id: check-repo
@@ -823,10 +608,10 @@ jobs:
         id: validate
         run: |
           NAME_VALID="${{ steps.validate-name.outputs.valid }}"
-          ADMINS_VALID="${{ steps.validate-admins.outputs.valid }}"
+          TEAMS_VALID="${{ steps.validate-teams.outputs.valid }}"
           REPO_EXISTS="${{ steps.check-repo.outputs.exists }}"
 
-          if [[ "$NAME_VALID" == "true" && "$ADMINS_VALID" == "true" && "$REPO_EXISTS" != "true" ]]; then
+          if [[ "$NAME_VALID" == "true" && "$TEAMS_VALID" == "true" && "$REPO_EXISTS" != "true" ]]; then
             echo "passed=true" >> $GITHUB_OUTPUT
           else
             echo "passed=false" >> $GITHUB_OUTPUT
@@ -838,7 +623,7 @@ jobs:
           script: |
             const passed = '${{ steps.validate.outputs.passed }}' === 'true';
             const nameValid = '${{ steps.validate-name.outputs.valid }}' === 'true';
-            const adminsValid = '${{ steps.validate-admins.outputs.valid }}' === 'true';
+            const teamsValid = '${{ steps.validate-teams.outputs.valid }}' === 'true';
             const repoExists = '${{ steps.check-repo.outputs.exists }}' === 'true';
 
             let commentBody = '## 🔍 Repository Request Validation\n\n';
@@ -847,47 +632,34 @@ jobs:
               commentBody += '✅ **All validations passed!**\n\n';
               commentBody += '### Request Summary\n';
               commentBody += `- **Repository Name:** \`${{ steps.parse.outputs.repo-name }}\`\n`;
-              commentBody += `- **Description:** ${{ steps.parse.outputs.description }}\n`;
               commentBody += `- **Tech Stack:** ${{ steps.parse.outputs.tech-stack }}\n`;
-              commentBody += `- **Visibility:** ${{ steps.parse.outputs.visibility }}\n`;
-              commentBody += `- **Environment:** ${{ steps.parse.outputs.environment }}\`\n`;
-              commentBody += `- **Admins:** ${{ steps.parse.outputs.admins }}\n`;
+              commentBody += `- **Teams:** ${{ steps.parse.outputs.teams }}\n`;
               commentBody += `- **Default Branch:** ${{ steps.parse.outputs.default-branch }}\n\n`;
-              
-              commentBody += '### Teams to be Created\n';
-              commentBody += `- \`${{ steps.parse.outputs.repo-name }}-admin\` (Admin permission)\n`;
-              commentBody += `- \`${{ steps.parse.outputs.repo-name }}-dev\` (Write permission)\n`;
-              commentBody += `- \`${{ steps.parse.outputs.repo-name }}-test\` (Write permission)\n`;
-              commentBody += `- \`${{ steps.parse.outputs.repo-name }}-prod\` (Maintain permission)\n\n`;
-              
-              commentBody += '### Features Enabled\n';
-              commentBody += `- Issues: ${{ steps.parse.outputs.has-issues }}\n`;
-              commentBody += `- Projects: ${{ steps.parse.outputs.has-projects }}\n`;
-              commentBody += `- Wiki: ${{ steps.parse.outputs.has-wiki }}\n\n`;
-              
-              commentBody += '### Security Features\n';
-              commentBody += `- Vulnerability Alerts: ${{ steps.parse.outputs.enable-vuln-alerts }}\n`;
-              commentBody += `- Dependabot Alerts: ${{ steps.parse.outputs.enable-dependabot-alerts }}\n`;
-              commentBody += `- Dependabot Updates: ${{ steps.parse.outputs.enable-dependabot-updates }}\n`;
-              commentBody += `- Advanced Security: ${{ steps.parse.outputs.enable-advanced-security }}\n\n`;
-              
+
+              commentBody += '### Teams with Access\n';
+              const teamList = '${{ steps.parse.outputs.teams }}'.split(',').map(t => t.trim());
+              for (const team of teamList) {
+                commentBody += `- \`${team}\` - Existing organization team\n`;
+              }
+              commentBody += '\n';
+
               commentBody += '---\n\n';
               commentBody += '⏳ **Awaiting approval from DevSecOps team...**\n';
-              commentBody += 'Once approved, the repository and teams will be created automatically.';
+              commentBody += 'Once approved, the repository will be created with access granted to the specified teams.';
             } else {
               commentBody += '❌ **Validation Failed**\n\n';
               commentBody += '### Errors Found:\n';
-              
+
               if (!nameValid) {
                 commentBody += `- ❌ Repository Name: ${{ steps.validate-name.outputs.error }}\n`;
               }
-              if (!adminsValid) {
-                commentBody += `- ❌ Admin Users: ${{ steps.validate-admins.outputs.error }}\n`;
+              if (!teamsValid) {
+                commentBody += `- ❌ Teams: ${{ steps.validate-teams.outputs.error }}\n`;
               }
               if (repoExists) {
                 commentBody += `- ❌ Repository Already Exists: ${{ steps.check-repo.outputs.error }}\n`;
               }
-              
+
               commentBody += '\n---\n\n';
               commentBody += '⚠️ **Please fix the above errors and create a new issue.**';
             }
@@ -914,7 +686,7 @@ jobs:
                 repo: context.repo.repo,
                 labels: ['validation-failed']
               });
-              
+
               // Close issue if validation failed
               await github.rest.issues.update({
                 issue_number: context.issue.number,
@@ -924,137 +696,50 @@ jobs:
               });
             }
 
-  # ============================================================================
-  # Job 2: Create Repository (Requires Approval)
-  # ============================================================================
-  create-repository:
-    name: Create Repository and Teams
-    runs-on: ubuntu-latest
-    needs: validate-request
-    if: needs.validate-request.outputs.validation-passed == 'true'
-    environment: repo-creation-approval # Requires approval from paloitmbb-devsecops
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Configure Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Update repositories.yaml
+      - name: Update repositories.yaml with team access
         id: update-repos
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const yaml = require('js-yaml');
-
-            // Read existing repositories.yaml
-            const reposFile = 'data/repositories.yaml';
-            const reposContent = fs.readFileSync(reposFile, 'utf8');
-            const reposData = yaml.load(reposContent);
-
-            // Parse topics
-            const topicsString = '${{ needs.validate-request.outputs.topics }}';
-            const topics = topicsString ? topicsString.split(',').map(t => t.trim()) : [];
-
-            // Add tech stack to topics
-            const techStack = '${{ needs.validate-request.outputs.tech-stack }}';
-            if (techStack) {
-              topics.push(techStack.toLowerCase().replace(/\s+/g, '-'));
-            }
-
-            // Create new repository entry
-            const newRepo = {
-              name: '${{ needs.validate-request.outputs.repo-name }}',
-              description: '${{ needs.validate-request.outputs.description }}',
-              visibility: '${{ needs.validate-request.outputs.visibility }}',
-              features: {
-                has_issues: ${{ needs.validate-request.outputs.has-issues }},
-                has_projects: ${{ needs.validate-request.outputs.has-projects }},
-                has_wiki: ${{ needs.validate-request.outputs.has-wiki }}
-              },
-              default_branch: '${{ needs.validate-request.outputs.default-branch }}',
-              topics: topics,
-              security: {
-                enable_vulnerability_alerts: ${{ needs.validate-request.outputs.enable-vuln-alerts }},
-                enable_advanced_security: ${{ needs.validate-request.outputs.enable-advanced-security }},
-                enable_secret_scanning: ${{ needs.validate-request.outputs.enable-secret-scanning }},
-                enable_secret_scanning_push_protection: ${{ needs.validate-request.outputs.enable-secret-push-protection }},
-                enable_dependabot_alerts: ${{ needs.validate-request.outputs.enable-dependabot-alerts }},
-                enable_dependabot_security_updates: ${{ needs.validate-request.outputs.enable-dependabot-updates }}
-              }
-            };
-
-            // Add to repositories array
-            reposData.repositories.push(newRepo);
-
-            // Write back to file
-            const updatedYaml = yaml.dump(reposData, { indent: 2, lineWidth: -1 });
-            fs.writeFileSync(reposFile, updatedYaml, 'utf8');
-
-            console.log('Successfully updated repositories.yaml');
-
-      - name: Update teams.yaml
-        id: update-teams
         run: |
           REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
-          TEAMS_FILE="data/teams.yaml"
+          TEAMS="${{ needs.validate-request.outputs.teams }}"
 
-          # Create teams.yaml if it doesn't exist
-          if [ ! -f "$TEAMS_FILE" ]; then
-            cat > "$TEAMS_FILE" << 'EOF'
-          ---
-          # GitHub Teams Configuration
-          teams: []
-          EOF
-          fi
+          # Parse teams from comma-separated list
+          IFS=',' read -ra TEAM_ARRAY <<< "$TEAMS"
 
-          # Append 4 teams for the new repository
-          cat >> "$TEAMS_FILE" << EOF
+          # Build teams YAML array
+          TEAMS_YAML=""
+          for team in "${TEAM_ARRAY[@]}"; do
+            team=$(echo "$team" | xargs)  # Trim whitespace
+            TEAMS_YAML+="\n      - team: ${team}\n        permission: push"
+          done
 
-            - name: ${REPO_NAME}-admin
-              repository: ${REPO_NAME}
-              permission: admin
-              privacy: closed
-              description: "Admin team for ${REPO_NAME} repository - full administrative access"
-            
-            - name: ${REPO_NAME}-dev
-              repository: ${REPO_NAME}
-              permission: push
-              privacy: closed
-              description: "Developer team for ${REPO_NAME} repository - write access for development"
-            
-            - name: ${REPO_NAME}-test
-              repository: ${REPO_NAME}
-              permission: push
-              privacy: closed
-              description: "Test team for ${REPO_NAME} repository - write access for testing activities"
-            
-            - name: ${REPO_NAME}-prod
-              repository: ${REPO_NAME}
-              permission: maintain
-              privacy: closed
-              description: "Production team for ${REPO_NAME} repository - maintain access for production releases"
-          EOF
+          # Append to repositories.yaml
+          cat >> data/repositories.yaml << EOF
 
-          echo "Successfully updated teams.yaml"
+    - name: ${REPO_NAME}
+      description: "${{ needs.validate-request.outputs.tech-stack }} repository"
+      visibility: private
+      features:
+        has_issues: true
+        has_projects: true
+        has_wiki: false
+      default_branch: ${{ needs.validate-request.outputs.default-branch }}
+      topics:
+        - ${{ needs.validate-request.outputs.tech-stack }}
+      teams:${TEAMS_YAML}
+  EOF
+
+          echo "Successfully updated repositories.yaml with team access"
 
       - name: Commit changes to main
         run: |
-          git add data/repositories.yaml data/teams.yaml
-          git commit -m "feat: ✨ add repository ${{ needs.validate-request.outputs.repo-name }} and associated teams
+          git add data/repositories.yaml
+          git commit -m "feat: ✨ add repository ${{ needs.validate-request.outputs.repo-name }} with team access
 
           Repository request from issue #${{ github.event.issue.number }}
 
           - Repository: ${{ needs.validate-request.outputs.repo-name }}
           - Tech Stack: ${{ needs.validate-request.outputs.tech-stack }}
-          - Environment: ${{ needs.validate-request.outputs.environment }}
-          - Created 4 teams: admin, dev, test, prod
+          - Teams: ${{ needs.validate-request.outputs.teams }}
 
           Closes #${{ github.event.issue.number }}"
 
@@ -1078,34 +763,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Populate Admin Team Membership
-        id: populate-admins
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const adminsString = '${{ needs.validate-request.outputs.admins }}';
-            const adminList = adminsString.split(',').map(u => u.trim()).filter(u => u);
-            const teamSlug = '${{ needs.validate-request.outputs.repo-name }}-admin';
-
-            const results = [];
-
-            for (const username of adminList) {
-              try {
-                await github.rest.teams.addOrUpdateMembershipForUserInOrg({
-                  org: context.repo.owner,
-                  team_slug: teamSlug,
-                  username: username,
-                  role: 'member'
-                });
-                results.push(`✅ Added ${username} to ${teamSlug}`);
-              } catch (error) {
-                results.push(`❌ Failed to add ${username}: ${error.message}`);
-              }
-            }
-
-            core.setOutput('results', results.join('\n'));
-            return results;
-
       - name: Post success comment
         if: success()
         uses: actions/github-script@v7
@@ -1113,6 +770,7 @@ jobs:
           script: |
             const repoName = '${{ needs.validate-request.outputs.repo-name }}';
             const org = context.repo.owner;
+            const teams = '${{ needs.validate-request.outputs.teams }}';
 
             const commentBody = `## ✅ Repository Created Successfully!
 
@@ -1120,24 +778,16 @@ jobs:
 
             ### 🎉 Repository Details
             - **Repository:** [${org}/${repoName}](https://github.com/${org}/${repoName})
-            - **Visibility:** ${{ needs.validate-request.outputs.visibility }}
+            - **Visibility:** private
             - **Default Branch:** ${{ needs.validate-request.outputs.default-branch }}
-            - **Environment:** ${{ needs.validate-request.outputs.environment }}
 
-            ### 👥 Teams Created
-            - [\`${repoName}-admin\`](https://github.com/orgs/${org}/teams/${repoName}-admin) - Admin access
-            - [\`${repoName}-dev\`](https://github.com/orgs/${org}/teams/${repoName}-dev) - Write access
-            - [\`${repoName}-test\`](https://github.com/orgs/${org}/teams/${repoName}-test) - Write access
-            - [\`${repoName}-prod\`](https://github.com/orgs/${org}/teams/${repoName}-prod) - Maintain access
-
-            ### 👤 Admin Team Members
-            ${{ steps.populate-admins.outputs.results }}
+            ### 👥 Teams with Access
+            ${teams.split(',').map(t => `- \`${t.trim()}\` - Existing organization team`).join('\n            ')}
 
             ### 📋 Next Steps
             1. Visit your repository: https://github.com/${org}/${repoName}
-            2. Add team members to dev, test, and prod teams via GitHub UI
-            3. Configure branch protection rules if needed
-            4. Start developing! 🚀
+            2. Configure branch protection rules if needed
+            3. Start developing! 🚀
 
             ---
             *Automated by GitHub Actions workflow*`;
@@ -1203,133 +853,84 @@ jobs:
 
 ---
 
-## Phase 6: Implementation Checklist
+## Phase 5: Implementation Checklist
 
-### 6.1 Pre-Implementation Tasks
+### 5.1 Pre-Implementation Tasks
 
 - [ ] Review and approve implementation plan
 - [ ] Ensure GitHub token has required permissions (`repo`, `admin:org`, `workflow`)
 - [ ] Verify Terraform backend is properly configured
 - [ ] Backup existing data files (`repositories.yaml`)
 
-### 6.2 Module Creation
-
-- [ ] Create `modules/github-teams/` directory structure
-- [ ] Implement `main.tf` for teams module
-- [ ] Implement `variables.tf` with validation rules
-- [ ] Implement `outputs.tf` with team details
-- [ ] Create `versions.tf` matching project requirements
-- [ ] Write comprehensive README.md with usage examples
-- [ ] Test module independently with sample team
-
-### 6.3 Data Structure Setup
-
-- [ ] Create `data/teams.yaml` with structure
-- [ ] Create `data/TEAMS.md` documentation
-- [ ] Migrate existing repository teams (if any) to YAML format
-- [ ] Validate YAML syntax
-
-### 6.4 Root Module Updates
-
-- [ ] Update `main.tf` with teams module integration
-- [ ] Add DevSecOps team module instantiation
-- [ ] Add repository teams module instantiation
-- [ ] Update `outputs.tf` to include team information
-- [ ] Test with `terraform plan` in dev environment
-
-### 6.5 Issue Template Enhancement
+### 5.2 Issue Template Enhancement
 
 - [ ] Update `.github/ISSUE_TEMPLATE/new-repository.yml`
 - [ ] Add tech stack dropdown with options
 - [ ] Add "Others" tech stack input field
 - [ ] Add justification textarea
-- [ ] Add admins input field with validation description
+- [ ] Add teams input field for comma-separated team slugs
 - [ ] Add acknowledgment checkboxes
 - [ ] Test issue template creation
 
-### 6.6 GitHub Environment Setup
+### 5.3 GitHub Environment Setup
 
 - [ ] Create `repo-creation-approval` environment in GitHub settings
 - [ ] Add `paloitmbb-devsecops` team as required reviewers
 - [ ] Configure deployment branch restrictions to `main`
 - [ ] Test approval workflow
 
-### 6.7 Workflow Implementation
+### 5.4 Workflow Implementation
 
 **Repository Request Workflow:**
 
 - [ ] Update `.github/workflows/repo-request.yml`
-- [ ] Implement validation job with all checks
+- [ ] Implement validation job with repository name validation
+- [ ] Implement team existence validation
 - [ ] Implement create-repository job with approval requirement
-- [ ] Add YAML file update logic
-- [ ] Create feature branch instead of committing to main
-- [ ] Implement PR creation with detailed description
-- [ ] Add admin users to PR body for extraction
-- [ ] Add labels to PR (`repo-request`, `automated`)
-- [ ] Post PR link comment to issue
-- [ ] Test PR creation with sample issue
-
-**Terraform Apply Workflow:**
-
-- [ ] Create `.github/workflows/terraform-apply-repo.yml`
-- [ ] Implement PR merge trigger with label filter
-- [ ] Extract issue number from PR body
-- [ ] Extract repository details from PR description
-- [ ] Extract admin users from PR body
-- [ ] Add Terraform init and apply steps
-- [ ] Add GitHub API team membership population
-- [ ] Add success comment to issue
+- [ ] Add YAML file update logic with team access configuration
+- [ ] Add success comment with team access details
 - [ ] Add failure comment with troubleshooting
 - [ ] Close issue on success
-- [ ] Add appropriate labels (`completed` or `terraform-failed`)
-- [ ] Test workflow with merged PR
+- [ ] Add appropriate labels (`completed` or `creation-failed`)
+- [ ] Test workflow with sample issue
 
-### 6.8 Testing Plan
+### 5.5 Testing Plan
 
 **Validation Testing:**
 
-- [ ] **Test 1:** Create test issue with valid data
+- [ ] **Test 1:** Create test issue with valid data and existing teams
 - [ ] **Test 2:** Verify validation passes and comment posted
 - [ ] **Test 3:** Test invalid repository name (validation failure)
-- [ ] **Test 4:** Test invalid admin username (validation failure)
+- [ ] **Test 4:** Test non-existent team names (validation failure)
 - [ ] **Test 5:** Test duplicate repository name (validation failure)
+- [ ] **Test 6:** Test empty teams field (validation failure)
 
-**PR Creation Testing:**
+**Repository Creation Testing:**
 
-- [ ] **Test 6:** Approve workflow and verify PR creation
-- [ ] **Test 7:** Verify PR has correct title and labels
-- [ ] **Test 8:** Verify PR body contains all repository details
-- [ ] **Test 9:** Verify PR body includes admin users
-- [ ] **Test 10:** Verify YAML files updated correctly in PR branch
-- [ ] **Test 11:** Verify PR link posted to issue
-- [ ] **Test 12:** Verify issue not closed after PR creation
-
-**Terraform Apply Testing:**
-
-- [ ] **Test 13:** Merge PR and verify terraform workflow triggers
-- [ ] **Test 14:** Verify repository created with correct settings
-- [ ] **Test 15:** Verify 3 teams created with correct permissions
-- [ ] **Test 16:** Verify team maintainers assigned correctly
-- [ ] **Test 17:** Verify success comment posted to issue
-- [ ] **Test 18:** Verify issue closed with "completed" status
-- [ ] **Test 19:** Test terraform failure scenario
-- [ ] **Test 20:** Verify failure comment and labels added
+- [ ] **Test 7:** Approve workflow and verify repository creation
+- [ ] **Test 8:** Verify repository has correct settings
+- [ ] **Test 9:** Verify teams have access to repository
+- [ ] **Test 10:** Verify team permissions are correct
+- [ ] **Test 11:** Verify success comment posted to issue
+- [ ] **Test 12:** Verify issue closed with "completed" status
+- [ ] **Test 13:** Test terraform failure scenario
+- [ ] **Test 14:** Verify failure comment and labels added
 
 **End-to-End Testing:**
 
-- [ ] **Test 21:** Complete end-to-end test in dev environment
-- [ ] **Test 22:** Test with empty admins field (defaults to requestor)
-- [ ] **Test 23:** Test with multiple admins
+- [ ] **Test 15:** Complete end-to-end test in dev environment
+- [ ] **Test 16:** Test with single team
+- [ ] **Test 17:** Test with multiple teams
 
-### 6.9 Documentation
+### 5.6 Documentation
 
 - [ ] Update main README.md with workflow documentation
 - [ ] Create runbook for troubleshooting common issues
-- [ ] Document team management procedures
+- [ ] Document team access management procedures
 - [ ] Update project structure documentation
 - [ ] Create user guide for repository requesters
 
-### 6.10 Deployment
+### 5.7 Deployment
 
 - [ ] Deploy to dev environment
 - [ ] Run full test suite in dev
@@ -1340,33 +941,33 @@ jobs:
 
 ---
 
-## Phase 7: Rollout Plan
+## Phase 6: Rollout Plan
 
-### 7.1 Development Environment (Week 1)
+### 6.1 Development Environment (Week 1)
 
-1. **Day 1-2:** Implement Terraform modules and data structures
-2. **Day 3-4:** Update root module and test locally
-3. **Day 5:** Deploy to dev environment and run Terraform apply
+1. **Day 1-2:** Update issue template with team access field
+2. **Day 3-4:** Implement team validation logic in workflow
+3. **Day 5:** Test validation workflow in dev environment
 
-### 7.2 Workflow Development (Week 2)
+### 6.2 Workflow Development (Week 2)
 
-1. **Day 1-2:** Update issue template and create GitHub environment
-2. **Day 3-4:** Implement workflow YAML with validation logic
-3. **Day 5:** Implement creation and notification logic
+1. **Day 1-2:** Create GitHub environment for approval
+2. **Day 3-4:** Implement repository creation workflow with team access
+3. **Day 5:** Implement success/failure notification logic
 
-### 7.3 Testing Phase (Week 3)
+### 6.3 Testing Phase (Week 3)
 
 1. **Day 1-2:** Execute test plan in dev environment
 2. **Day 3:** Fix identified issues
 3. **Day 4-5:** Regression testing and documentation
 
-### 7.4 Staging Deployment (Week 4)
+### 6.4 Staging Deployment (Week 4)
 
 1. **Day 1:** Deploy to staging environment
 2. **Day 2-3:** Run full test suite in staging
 3. **Day 4-5:** User acceptance testing with DevSecOps team
 
-### 7.5 Production Deployment (Week 5)
+### 6.5 Production Deployment (Week 5)
 
 1. **Day 1:** Production deployment during maintenance window
 2. **Day 2-3:** Monitor first production requests
@@ -1374,20 +975,20 @@ jobs:
 
 ---
 
-## Phase 8: Success Criteria
+## Phase 7: Success Criteria
 
-### 8.1 Functional Requirements
+### 7.1 Functional Requirements
 
 - ✅ Users can create repository requests via GitHub issues
 - ✅ Workflow validates all input fields automatically
+- ✅ Workflow validates that specified teams exist in the organization
 - ✅ DevSecOps team receives approval requests
 - ✅ Repositories are created with correct configuration
-- ✅ 4 teams are created automatically per repository
-- ✅ Admin team is populated with specified users
+- ✅ Existing teams are granted access to the repository
 - ✅ Success/failure notifications posted to issue
 - ✅ YAML data files updated automatically
 
-### 8.2 Non-Functional Requirements
+### 7.2 Non-Functional Requirements
 
 - ✅ Workflow completes within 5 minutes (excluding approval wait time)
 - ✅ All operations are idempotent (can be retried safely)
@@ -1396,47 +997,47 @@ jobs:
 - ✅ Audit trail maintained in Git history
 - ✅ Documentation comprehensive and up-to-date
 
-### 8.3 Security Requirements
+### 7.3 Security Requirements
 
 - ✅ GitHub token permissions follow least privilege principle
 - ✅ Approval required from authorized team members only
 - ✅ Input validation prevents injection attacks
-- ✅ Team memberships validated against org members
+- ✅ Team existence validated against organization teams
 - ✅ All operations logged and auditable
 
 ---
 
-## Phase 9: Monitoring and Maintenance
+## Phase 8: Monitoring and Maintenance
 
-### 9.1 Monitoring
+### 8.1 Monitoring
 
 - Monitor workflow success/failure rates via GitHub Actions insights
 - Track average time from request to completion
 - Monitor Terraform apply success rates
 - Alert on consecutive workflow failures
 
-### 9.2 Maintenance Tasks
+### 8.2 Maintenance Tasks
 
 - **Weekly:** Review failed workflow runs and resolve issues
 - **Monthly:** Review and update tech stack options based on usage
-- **Quarterly:** Audit team permissions and memberships
+- **Quarterly:** Audit team permissions and repository access
 - **Annually:** Review and optimize workflow performance
 
 ---
 
-## Phase 10: Troubleshooting Guide
+## Phase 9: Troubleshooting Guide
 
-### 10.1 Common Issues
+### 9.1 Common Issues
 
 | Issue                               | Possible Cause           | Resolution                            |
 | ----------------------------------- | ------------------------ | ------------------------------------- |
-| Validation fails for valid username | User not in organization | Add user to org or use org member     |
+| Validation fails for valid team     | Team doesn't exist in org | Create team first or use existing team |
 | Terraform apply fails               | State lock conflict      | Wait for lock release or force unlock |
-| Team creation fails                 | Team already exists      | Check teams.yaml for duplicates       |
-| Admin population fails              | Invalid team slug        | Verify team was created by Terraform  |
+| Team access not granted             | Team permissions issue   | Check team exists and has repo access |
 | Workflow stuck on approval          | No reviewers available   | Ensure DevSecOps team has members     |
+| Invalid team slug error             | Team name format wrong   | Use team slug, not display name       |
 
-### 10.2 Rollback Procedures
+### 9.2 Rollback Procedures
 
 If workflow fails after repository creation:
 
@@ -1445,12 +1046,6 @@ If workflow fails after repository creation:
    ```bash
    # Delete repository
    gh repo delete org/repo-name --yes
-
-   # Delete teams
-   gh api -X DELETE /orgs/org/teams/repo-name-admin
-   gh api -X DELETE /orgs/org/teams/repo-name-dev
-   gh api -X DELETE /orgs/org/teams/repo-name-test
-   gh api -X DELETE /orgs/org/teams/repo-name-prod
    ```
 
 2. **Revert YAML changes:**
@@ -1463,8 +1058,6 @@ If workflow fails after repository creation:
 3. **Remove from Terraform state:**
    ```bash
    terraform state rm 'module.github_repositories["repo-name"]'
-   terraform state rm 'module.repository_teams["repo-name-admin"]'
-   # ... repeat for all teams
    ```
 
 ---
@@ -1488,7 +1081,7 @@ Issue Created: #123 "[REPO REQUEST] mbb-payment-service"
     ↓
 Validation Job (30 seconds)
     ✅ Repository name valid
-    ✅ Admin users validated
+    ✅ Teams validated (platform-team, backend-developers)
     ✅ Repository doesn't exist
     📝 Posted summary comment
     ↓
@@ -1497,14 +1090,12 @@ Awaiting Approval (manual step)
     ✅ Team member approves
     ↓
 Creation Job (3 minutes)
-    ✅ Updated repositories.yaml
-    ✅ Updated teams.yaml
+    ✅ Updated repositories.yaml with team access
     ✅ Committed to main branch
     ✅ Terraform init completed
     ✅ Terraform apply completed
     ✅ Repository created
-    ✅ 4 teams created
-    ✅ Admin team populated
+    ✅ Teams granted access
     📝 Posted success comment
     ✅ Closed issue
     ↓
@@ -1513,23 +1104,16 @@ Complete! Repository Ready 🎉
 
 ### Appendix C: File Change Summary
 
-**New Files:**
-
-- `modules/github-teams/main.tf`
-- `modules/github-teams/variables.tf`
-- `modules/github-teams/outputs.tf`
-- `modules/github-teams/versions.tf`
-- `modules/github-teams/README.md`
-- `data/teams.yaml`
-- `data/TEAMS.md`
-- `data/defaults.yaml`
-
 **Modified Files:**
 
-- `main.tf` (add teams module integration)
-- `outputs.tf` (add team outputs)
-- `.github/ISSUE_TEMPLATE/new-repository.yml` (enhance with new fields)
-- `.github/workflows/repo-request.yml` (complete workflow implementation)
+- `.github/ISSUE_TEMPLATE/new-repository.yml` (add teams field, update descriptions)
+- `.github/workflows/repo-request.yml` (add team validation, update workflow)
+- `data/repositories.yaml` (updated by workflow with team access)
+
+**No New Files Required:**
+- No new modules needed
+- No teams.yaml file needed
+- Uses existing github-repository module team access functionality
 
 **Manual Setup:**
 
@@ -1550,3 +1134,4 @@ Complete! Repository Ready 🎉
 ---
 
 **End of Implementation Plan**
+````

@@ -1,58 +1,53 @@
 # Automated Repository Workflow - Implementation Summary
 
 **Date:** 12 February 2026  
-**Status:** ✅ Implementation Complete (Updated with Simplified Form)
+**Status:** ✅ Implementation Complete (Updated - Team Access Model)
 
 ## What Was Implemented
 
-This implementation creates an issue-driven automated workflow for repository creation with team management, following the plan in [02-AUTOMATED_REPO_WORKFLOW_PLAN.md](./02-AUTOMATED_REPO_WORKFLOW_PLAN.md).
+This implementation creates an issue-driven automated workflow for repository creation with access granted to existing organization teams, following the plan in [02-AUTOMATED_REPO_WORKFLOW_PLAN.md](./02-AUTOMATED_REPO_WORKFLOW_PLAN.md).
 
-**Key Design Decision:** The form has been simplified to only request essential information. All other repository settings use default values from existing repositories in `data/repositories.yaml`, ensuring consistency and reducing complexity.
+**Key Design Decisions:**
 
-## Files Created
+1. **No Team Creation:** Users specify existing organization teams that should have access
+2. **Simplified Form:** Only essential information requested; other settings use defaults
+3. **Team Validation:** All specified teams must exist in the organization before approval
+4. **Centralized Defaults:** Repository settings use default values from `data/defaults.yaml`
 
-### 1. GitHub Teams Terraform Module
+## Files Modified
 
-**Location:** `modules/github-teams/`
+### 1. GitHub Issue Template
 
-- ✅ `main.tf` - Team and repository access resources
-- ✅ `variables.tf` - Input variables with validation
-- ✅ `outputs.tf` - Team information outputs
-- ✅ `versions.tf` - Provider version requirements
-- ✅ `README.md` - Module documentation
+**File:** `.github/ISSUE_TEMPLATE/new-repository.yml`
 
-**Features:**
+**Updated with:**
 
-- Creates GitHub teams with configurable settings
-- Manages team repository access permissions
-- Supports hierarchical team structures
-- Validates team names and permission levels
+- ✅ Team Access field (comma-separated existing team slugs)
+- ✅ Removed Team Maintainers field (not needed)
+- ✅ Updated descriptions to clarify existing teams only
+- ✅ Updated acknowledgment checkboxes
 
-### 2. Data Files
+### 2. GitHub Workflow
+
+**File:** `.github/workflows/repo-request.yml`
+
+**Updated with:**
+
+- ✅ Team existence validation using GitHub API
+- ✅ Parse teams from comma-separated input
+- ✅ Validate all teams exist in organization
+- ✅ Update repositories.yaml with team access configuration
+- ✅ Removed team creation steps
+- ✅ Updated success/failure messages
+
+### 3. Data Files
 
 **Location:** `data/`
 
-- ✅ `teams.yaml` - YAML configuration for team definitions
-- ✅ `TEAMS.md` - Teams data management documentation
-
-### 2. Data Files
-
-**Location:** `data/`
-
-- ✅ `teams.yaml` - YAML configuration for team definitions
-- ✅ `TEAMS.md` - Teams data management documentation
 - ✅ `defaults.yaml` - Default repository configuration for automated workflow
+- ✅ `repositories.yaml` - Updated by workflow with team access configuration
 
-**Teams Structure:**
-
-```yaml
-teams:
-  - name: {repo-name}-dev
-    repository: {repo-name}
-    permission: push
-    privacy: closed
-    description: "Developer team for {repo-name} repository"
-```
+**Note:** No `teams.yaml` file needed - teams are not created by the workflow.
 
 **Defaults Structure:**
 
@@ -72,28 +67,54 @@ repository_defaults:
     - mbb
 ```
 
-### 3. Root Module Updates
+**Repository Structure with Teams:**
 
-**File:** `main.tf`
+```yaml
+repositories:
+  - name: mbb-payment-service
+    description: "Payment processing service"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics:
+      - payment
+      - api
+    teams:
+      - team: platform-team
+        permission: admin
+      - team: backend-developers
+        permission: push
+```
 
-- ✅ Added teams configuration loading from YAML
-- ✅ Integrated DevSecOps team module (admin access to all repos)
-- ✅ Integrated repository-specific teams module
+## Existing Module Leveraged
 
-**File:** `outputs.tf`
+**Module:** `modules/github-repository/`
 
-- ✅ Added DevSecOps team output
-- ✅ Added repository teams output map
-- ✅ Added team count output
+The existing repository module already supports team access via the `teams` parameter:
 
-### 4. GitHub Issue Template
+```hcl
+resource "github_team_repository" "this" {
+  for_each = {
+    for team in var.teams : team.team => team
+  }
 
-**File:** `.github/ISSUE_TEMPLATE/new-repository.yml`
+  team_id    = each.value.team
+  repository = github_repository.this.name
+  permission = each.value.permission
+}
+```
 
-**Simplified form with essential fields only:**
+**No new modules created** - leverages existing functionality.
+
+## Issue Template Updates
+
+**Updated form with essential fields:**
 
 - ✅ Repository name (required)
-- ✅ Team maintainers/admins (optional - defaults to issue creator)
+- ✅ **Team Access** (required - comma-separated existing team slugs)
 - ✅ Tech stack dropdown with "Others" option (required)
 - ✅ Business justification field (required)
 - ✅ Default branch selection (required)
@@ -109,6 +130,11 @@ All repository settings not requested in the form (visibility, features, securit
 - Easy maintenance of organizational defaults
 - No dependency on existing repositories
 
+**Changed from original plan:**
+
+- ❌ Team Maintainers field **replaced with** Team Access field
+- ❌ No team creation - uses existing organization teams only
+
 **Removed fields (now use defaults):**
 
 - ❌ Repository description (auto-generated)
@@ -120,18 +146,18 @@ All repository settings not requested in the form (visibility, features, securit
 - ❌ Branch protection settings (uses defaults)
 - ❌ Additional notes (not needed)
 
-### 5. GitHub Actions Workflow
+## GitHub Actions Workflow
 
 **File:** `.github/workflows/repo-request.yml`
 
-Implemented two-job workflow for PR creation:
+Implemented workflow with team validation:
 
 **Job 1: Validation (validate-request)**
 
-- ✅ Parse issue body to extract simplified fields (name, admins, tech stack, justification, default branch)
+- ✅ Parse issue body to extract fields (name, teams, tech stack, justification, default branch)
 - ✅ Load default values from `defaults.yaml`
 - ✅ Validate repository name format (lowercase, hyphens only)
-- ✅ Validate admin usernames exist in GitHub
+- ✅ **Validate teams exist in organization using GitHub API**
 - ✅ Check repository doesn't already exist
 - ✅ Post validation results comment to issue
 - ✅ Add validation status labels
@@ -142,35 +168,12 @@ Implemented two-job workflow for PR creation:
 - ✅ Requires approval via GitHub Environment
 - ✅ Merge issue form data with default values from defaults.yaml
 - ✅ Generate description from repository name and tech stack
-- ✅ Update `repositories.yaml` with new repository (using defaults + form overrides)
-- ✅ Update `teams.yaml` with 3 new teams
-- ✅ Create feature branch `repo-request/{repo-name}`
-- ✅ Commit changes to feature branch
-- ✅ Create pull request with detailed description
-- ✅ Add PR labels (`repo-request`, `automated`)
-- ✅ Post PR link comment to issue
-- ✅ Keep issue open (closed after PR merge)
-
-**File:** `.github/workflows/terraform-apply-repo.yml`
-
-Implemented automated terraform apply workflow:
-
-**Job: apply-repository**
-
-- ✅ Trigger on PR merge to main (with `repo-request` label)
-- ✅ Extract issue number from PR body
-- ✅ Extract repository details from PR description
-- ✅ Extract admin users from PR body
-- ✅ Run Terraform init and apply
-- ✅ Assign team maintainers via GitHub API
-- ✅ Post success comment to original issue with:
-  - Repository link
-  - Team links
-  - Maintainer assignments
-  - Next steps
-- ✅ Close issue with "completed" status
-- ✅ Post failure comment with troubleshooting if terraform fails
-- ✅ Add appropriate labels (`completed` or `terraform-failed`)
+- ✅ Update `repositories.yaml` with new repository including team access configuration
+- ✅ **Parse comma-separated teams and add to repository configuration**
+- ✅ Create feature branch with YAML changes
+- ✅ Create pull request for review
+- ✅ Post success/failure comment to issue
+- ✅ Link issue to PR (closes when PR merged)
 
 ## Terraform Configuration Status
 
@@ -184,17 +187,23 @@ terraform validate
 Success! The configuration is valid.
 ```
 
-## Team Structure
+## Team Access Model
 
-For each repository created, 3 teams are automatically provisioned:
+**Existing Teams Only:** Repositories are granted access to existing organization teams specified in the request.
 
-| Team Suffix | Permission | Description                        |
-| ----------- | ---------- | ---------------------------------- |
-| `-dev`      | `push`     | Developer write access             |
-| `-test`     | `push`     | Test manager write access          |
-| `-prod`     | `maintain` | Production manager maintain access |
+**Supported Permissions:**
 
-**Team Maintainers:** The admins specified in the repository request become team maintainers for all 3 teams, with the ability to manage team membership. If no admins are specified, the issue requestor becomes the team maintainer.
+| Permission | Description                                     |
+| ---------- | ----------------------------------------------- |
+| `pull`     | Read access - can pull but not push             |
+| `triage`   | Can manage issues and PRs without write access  |
+| `push`     | Write access - can push to repository (default) |
+| `maintain` | Maintain access - can manage repo without admin |
+| `admin`    | Full administrative access                      |
+
+**Default Permission:** If not specified in the YAML, teams are granted `push` (write) permission.
+
+**Team Management:** Users must create and manage teams separately through GitHub UI or API. The workflow only grants access to existing teams.
 
 ## What Still Needs to Be Done
 
@@ -209,60 +218,59 @@ For each repository created, 3 teams are automatically provisioned:
 
 **Why:** The workflow requires manual approval from DevSecOps team before creating the pull request.
 
-### 2. Create DevSecOps Team (Manual or via Terraform)
-
-Two options:
-
-**Option A: Manual (Quick)**
+### 2. Create DevSecOps Team (Manual)
 
 1. Go to Organization → Teams
 2. Create team: `paloitmbb-devsecops`
 3. Add team members who should approve requests
 
-**Option B: Via Terraform (Recommended)**
+### 3. Create Organization Teams (Manual)
 
-1. First create the team manually without repository access
-2. Run `terraform apply` to grant admin access to all repos
+**Before users can request repositories:**
 
-### 3. Test the Workflow
+1. Create teams in the organization that will be used for repository access
+2. Examples: `platform-team`, `backend-developers`, `qa-team`, etc.
+3. Users will reference these team slugs in repository requests
 
-After environment setup:
+### 4. Test the Workflow
+
+After environment and team setup:
 
 1. **Create a test issue** using the new template
-2. **Fill in all required fields**
-3. **Wait for validation comment**
+2. **Fill in all required fields** including existing team slugs
+3. **Wait for validation comment** (should validate teams exist)
 4. **Approve the workflow** (if validation passed)
-5. **Review the pull request** created by the workflow
-6. **Merge the pull request**
-7. **Verify terraform apply workflow** triggers automatically
+5. **Wait for PR creation** automatically
+6. **Review and merge the PR** with YAML changes
+7. **Run terraform apply** in the environment
 8. **Check repository creation**
-9. **Verify teams were created**
-10. **Confirm team maintainers populated**
+9. **Verify teams have access** to the repository
+10. **Verify team permissions** are correct
 11. **Verify issue closed** after successful creation
 
-### 4. Documentation Updates
+### 5. Documentation Updates
 
 Consider updating:
 
-- Main README.md with PR-based workflow usage instructions
-- CONTRIBUTING.md with repository request and PR review process
-- Add troubleshooting section for common issues
-- Document PR merge approval process
+- Main README.md with team access workflow usage instructions
+- CONTRIBUTING.md with repository request process
+- Add troubleshooting section for common team validation issues
+- Document team management and access procedures
 
 ## Architecture Flow
 
 ```
 User Creates Issue (Simplified Form)
    - Repository name
-   - Team maintainers
+   - Team access (existing teams)
    - Tech stack
    - Justification
    - Default branch
        ↓
 Validation Job (automatic)
    ✅ Validate name
-   ✅ Validate maintainers
-   ✅ Check existence
+   ✅ Validate teams exist in org
+   ✅ Check repository existence
    ✅ Load defaults from defaults.yaml
    ✅ Post results
        ↓
@@ -270,25 +278,23 @@ Awaiting Approval (manual)
    ⏳ DevSecOps reviews
    ✅ Approves deployment
        ↓
-Create PR Job (automatic)
+Creation Job (automatic)
    ✅ Merge form data with defaults
    ✅ Generate description
-   ✅ Update YAML files
+   ✅ Update repositories.yaml with teams
    ✅ Create feature branch
-   ✅ Commit to branch
-   ✅ Open pull request
-   ✅ Post PR link to issue
-       ↓
-Manual PR Review
-   ⏳ Review YAML changes
-   ✅ Approve and merge PR
-       ↓
-Terraform Apply Job (automatic on PR merge)
-   ✅ Extract issue details
-   ✅ Terraform init & apply
-   ✅ Assign team maintainers
+   ✅ Create Pull Request
    ✅ Post success to issue
-   ✅ Close issue
+   ✅ Link issue to PR
+       ↓
+PR Review & Merge (manual)
+   ⏳ DevSecOps reviews YAML changes
+   ✅ Merges PR to main
+       ↓
+Terraform Apply (manual)
+   ✅ Run terraform apply
+   ✅ Repository created
+   ✅ Team access granted
        ↓
 Repository Ready! 🎉
 ```
@@ -349,57 +355,11 @@ repository_defaults:
 - ✅ No dependency on existing repositories
 - ✅ Can still override manually after creation
 
-## Configuration Examples
-
-✅ Validate name
-✅ Validate maintainers
-✅ Check existence
-✅ Post results
-↓
-Awaiting Approval (manual)
-⏳ DevSecOps reviews
-✅ Approves deployment
-↓
-Creation Job (automatic)
-✅ Update YAML files
-✅ Commit to main
-✅ Terraform apply
-✅ Assign team maintainers
-✅ Post success
-✅ Close issue
-↓
-Repository Ready! 🎉
-
-````
-
-## Configuration Examples
-
-### Example Repository Request
-
-```markdown
-Repository Name: mbb-payment-api
-Description: Payment processing API service
-Tech Stack: Java Springboot
-Team Maintainers: john-doe, jane-smith
-Visibility: private
-Environment: dev
-Features: ✓ Issues, ✓ Projects
-Security: ✓ Dependabot, ✓ GHAS
-````
-
-### Resulting Teams
-
-All teams with john-doe and jane-smith as maintainers:
-
-- `mbb-payment-api-dev`
-- `mbb-payment-api-test`
-- `mbb-payment-api-prod`
-
 ## Security Considerations
 
 ✅ **Input Validation:** All user inputs validated before processing
 ✅ **Approval Required:** DevSecOps team must approve before creation
-✅ **User Validation:** Admin usernames validated against GitHub
+✅ **Team Validation:** Team existence validated against organization
 ✅ **Repository Checks:** Ensures no duplicate repositories
 ✅ **Audit Trail:** All changes committed to Git history
 ✅ **Least Privilege:** Workflow uses minimum required permissions
@@ -407,67 +367,62 @@ All teams with john-doe and jane-smith as maintainers:
 ## Benefits
 
 1. **Self-Service:** Users can request repositories via simple form
-2. **Consistency:** All repositories follow standard structure
+2. **Consistency:** All repositories follow standard structure and defaults
 3. **Automation:** Reduces manual work for DevSecOps team
 4. **Auditability:** Full history in Git and GitHub Actions
 5. **Scalability:** Can handle multiple requests efficiently
-6. **Team Management:** Automatically creates and configures teams
+6. **Team Access Control:** Uses existing teams, no new team proliferation
 7. **Security:** Built-in validation and approval process
-8. **Review Process:** PR-based workflow allows code review before infrastructure changes
-9. **Rollback:** Easy to revert changes by reverting PR
-10. **Visibility:** Clear visibility of what will be created before terraform apply
+8. **Team Validation:** Prevents typos and non-existent team references
+9. **Simplified Management:** No team creation/deletion needed in workflow
+10. **Flexibility:** Teams can be managed independently of repositories
 
 ## Rollback Procedure
 
 If a repository needs to be removed after creation:
 
-**Option A: Via Pull Request (Recommended)**
+**Option A: Via Git (Recommended)**
 
 ```bash
-# 1. Create feature branch
+# 1. Remove from YAML file
+vim data/repositories.yaml  # Remove repository entry
+
+# 2. Create PR with changes
 git checkout -b remove-repo-{name}
-
-# 2. Remove from YAML files
-vim data/repositories.yaml  # Remove entry
-vim data/teams.yaml         # Remove 3 team entries
-
-# 3. Commit and push
-git add data/repositories.yaml data/teams.yaml
+git add data/repositories.yaml
 git commit -m "fix: 🗑️ remove repository {name}"
 git push origin remove-repo-{name}
+# Create PR and merge after review
 
-# 4. Create PR and merge after review
-# Terraform destroy will run automatically via workflow
+# 3. Run Terraform apply to remove repository
+./scripts/apply.sh <environment>
 ```
 
 **Option B: Manual Terraform Destroy**
 
 ```bash
-# 1. Remove from YAML files
+# 1. Remove from YAML file
 vim data/repositories.yaml  # Remove entry
-vim data/teams.yaml         # Remove 3 team entries
 
-# 2. Commit changes
-git add data/repositories.yaml data/teams.yaml
-git commit -m "fix: remove repository {name}"
-git push origin main
+# 2. Create PR and merge changes
+# (same as Option A)
 
-# 3. Run Terraform destroy for specific resources
+# 3. Run Terraform destroy for specific resource
 terraform destroy -target='module.github_repositories["{name}"]'
-terraform destroy -target='module.repository_teams["{name}-dev"]'
-terraform destroy -target='module.repository_teams["{name}-test"]'
-terraform destroy -target='module.repository_teams["{name}-prod"]'
 ```
+
+**Note:** Team access is automatically removed when the repository is destroyed. No separate team cleanup needed.
 
 ## Next Steps
 
 1. ✅ **Set up GitHub Environment** `repo-creation-approval`
 2. ✅ **Create DevSecOps team** with appropriate members
-3. ✅ **Test workflow** with sample repository request
-4. ✅ **Document process** for end users
-5. ✅ **Train team** on approval process
-6. ✅ **Monitor** first few requests for issues
-7. ✅ **Iterate** based on feedback
+3. ✅ **Create organization teams** for repository access (platform-team, developers, qa-team, etc.)
+4. ✅ **Test workflow** with sample repository request using existing teams
+5. ✅ **Document process** for end users with list of available teams
+6. ✅ **Train team** on approval process and team validation
+7. ✅ **Monitor** first few requests for issues
+8. ✅ **Iterate** based on feedback
 
 ## Success Metrics
 
