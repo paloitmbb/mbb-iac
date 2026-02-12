@@ -434,7 +434,7 @@ jobs:
         run: |
           REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
           BRANCH_NAME="repo-request/${REPO_NAME}"
-          
+
           git checkout -b "${BRANCH_NAME}"
           git add data/repositories.yaml data/teams.yaml
           git commit -m "feat: ✨ add repository ${REPO_NAME} and associated teams
@@ -448,9 +448,9 @@ jobs:
           - Created 3 teams: dev, test, prod
 
           Related to #${{ github.event.issue.number }}"
-          
+
           git push origin "${BRANCH_NAME}"
-          
+
           echo "branch=${BRANCH_NAME}" >> $GITHUB_OUTPUT
 
       - name: Create Pull Request
@@ -463,10 +463,10 @@ jobs:
             const defaultBranch = '${{ needs.validate-request.outputs.default-branch }}';
             const branchName = '${{ steps.create-branch.outputs.branch }}';
             const issueNumber = context.issue.number;
-            
+
             const admins = '${{ needs.validate-request.outputs.admins }}';
             const adminsList = admins || context.payload.issue.user.login;
-            
+
             const prBody = `## 🎉 New Repository Request
 
             ### Repository Details
@@ -506,7 +506,7 @@ jobs:
             ---
 
             Closes #${issueNumber}`;
-            
+
             const pr = await github.rest.pulls.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -515,7 +515,7 @@ jobs:
               base: 'main',
               body: prBody
             });
-            
+
             core.setOutput('pr-number', pr.data.number);
             core.setOutput('pr-url', pr.data.html_url);
             return pr.data;
@@ -559,7 +559,7 @@ jobs:
             core.setOutput('maintainers', maintainerList.join(', '));
             return results;
 
-- name: Generate PR creation summary
+      - name: Generate PR creation summary
         if: success()
         uses: actions/github-script@v7
         with:
@@ -570,7 +570,7 @@ jobs:
             const maintainers = '${{ steps.prepare-maintainers.outputs.maintainers }}';
             const prUrl = '${{ steps.create-pr.outputs.pr-url }}';
             const prNumber = '${{ steps.create-pr.outputs.pr-number }}';
-            
+
             let summary = '# ✅ Pull Request Created Successfully!\n\n';
             summary += `## 🎉 Repository Configuration Ready\n\n`;
             summary += '| Field | Value |\n';
@@ -580,20 +580,20 @@ jobs:
             summary += `| **Default Branch** | \`${defaultBranch}\` |\n`;
             summary += `| **Team Maintainers** | ${maintainers} |\n`;
             summary += `| **Pull Request** | [#${prNumber}](${prUrl}) |\n\n`;
-            
+
             summary += '## 👥 Teams to be Created\n\n';
             summary += '| Team | Permission | Description |\n';
             summary += '|------|------------|-------------|\n';
             summary += `| \`${repoName}-dev\` | push | Developer write access |\n`;
             summary += `| \`${repoName}-test\` | push | Test manager write access |\n`;
             summary += `| \`${repoName}-prod\` | maintain | Production manager maintain access |\n\n`;
-            
+
             summary += '## 📋 Next Steps\n\n';
             summary += `1. 📝 Review the PR: [#${prNumber}](${prUrl})\n`;
             summary += `2. ✅ Approve and merge the PR\n`;
             summary += `3. 🚀 Run Terraform apply to create repository and teams\n`;
             summary += `4. 👥 Assign team maintainers via GitHub UI\n\n`;
-            
+
             summary += '---\n\n';
             summary += `*PR created for issue #${context.issue.number}*\n`;
 
