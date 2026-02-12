@@ -2,7 +2,20 @@
 
 **Created:** 11 February 2026  
 **Owner:** DevSecOps Team  
-**Status:** Planning
+**Status:** Implemented
+
+---
+
+> **⚠️ IMPORTANT UPDATE (Current Implementation):**  
+> The implementation has been modified from the original plan:
+>
+> - **3 teams** are created per repository (dev, test, prod) instead of 4
+> - **No separate admin team** - removed from the design
+> - **Team Maintainers** specified in the issue become maintainers of all 3 teams
+> - If **no maintainers specified**, the issue creator becomes the team maintainer
+> - Team maintainers can manage team membership via GitHub UI
+>
+> This document retains the original plan for reference. See [02-IMPLEMENTATION_SUMMARY.md](./02-IMPLEMENTATION_SUMMARY.md) for the current architecture.
 
 ---
 
@@ -462,7 +475,9 @@ The automated workflow handles admin team membership population during repositor
 
 ## Phase 4: Update Issue Template
 
-### 4.1 Enhanced Issue Template
+### 4.1 Simplified Issue Template
+
+**Design Philosophy:** Keep the form minimal and use defaults from existing repositories in `repositories.yaml` for all settings not explicitly requested.
 
 **File:** `.github/ISSUE_TEMPLATE/new-repository.yml`
 
@@ -481,11 +496,13 @@ body:
         ## Repository Request Form
         Please fill out this form to request a new repository. Your request will be reviewed by the DevSecOps team.
 
-        **Note:** The repository will be created with 4 teams:
-        - `{repo-name}-admin` - Full administrative access
-        - `{repo-name}-dev` - Developer write access
-        - `{repo-name}-test` - Test manager write access
-        - `{repo-name}-prod` - Production manager maintain access
+        **Note:** The repository will be created with:
+        - 3 teams: `{repo-name}-dev`, `{repo-name}-test`, `{repo-name}-prod`
+        - Default settings based on existing repository configurations
+        - Team maintainers (admins) will manage team membership
+
+        **Default Configuration:**
+        All settings not specified in this form (visibility, features, security, topics, etc.) will use default values from existing repository configurations in the organization.
 
   - type: input
     id: repo-name
@@ -496,14 +513,14 @@ body:
     validations:
       required: true
 
-  - type: textarea
-    id: description
+  - type: input
+    id: admins
     attributes:
-      label: Repository Description
-      description: Brief description of the repository purpose and what it will contain
-      placeholder: "This repository will contain..."
+      label: Team Maintainers
+      description: Comma-separated GitHub usernames who will become team maintainers (can manage team membership). Leave empty to make yourself the maintainer. (Usernames will be validated)
+      placeholder: "john-doe, jane-smith, bob-jones"
     validations:
-      required: true
+      required: false
 
   - type: dropdown
     id: tech-stack
@@ -538,79 +555,6 @@ body:
     validations:
       required: true
 
-  - type: input
-    id: admins
-    attributes:
-      label: Repository Admins
-      description: Comma-separated GitHub usernames who will have admin access (will be validated)
-      placeholder: "john-doe, jane-smith, bob-jones"
-    validations:
-      required: true
-
-  - type: dropdown
-    id: visibility
-    attributes:
-      label: Repository Visibility
-      options:
-        - private
-        - internal
-        - public
-      default: 0
-    validations:
-      required: true
-
-  - type: dropdown
-    id: environment
-    attributes:
-      label: Target Environment
-      description: Which environment should this repository be created in
-      options:
-        - dev
-        - staging
-        - production
-      default: 0
-    validations:
-      required: true
-
-  - type: checkboxes
-    id: features
-    attributes:
-      label: Repository Features
-      description: Select the features you want enabled
-      options:
-        - label: Enable Issues
-          required: false
-        - label: Enable Projects
-          required: false
-        - label: Enable Wiki
-          required: false
-
-  - type: checkboxes
-    id: security
-    attributes:
-      label: Security Features
-      description: Select security features (GHAS features require license)
-      options:
-        - label: Enable Vulnerability Alerts
-          required: false
-        - label: Enable Dependabot Alerts
-          required: false
-        - label: Enable Dependabot Security Updates
-          required: false
-        - label: Enable Advanced Security (GHAS)
-          required: false
-        - label: Enable Secret Scanning
-          required: false
-        - label: Enable Secret Scanning Push Protection
-          required: false
-
-  - type: input
-    id: topics
-    attributes:
-      label: Repository Topics
-      description: Comma-separated list of topics/tags for the repository
-      placeholder: "backend, api, microservices, nodejs"
-
   - type: dropdown
     id: default-branch
     attributes:
@@ -623,37 +567,81 @@ body:
     validations:
       required: true
 
-  - type: textarea
-    id: branch-protection
-    attributes:
-      label: Branch Protection Requirements (Optional)
-      description: Specify branch protection rules if different from defaults
-      placeholder: |
-        Required approving reviews: 2
-        Require code owner reviews: yes
-        Dismiss stale reviews: no
-        Require signed commits: no
-
-  - type: textarea
-    id: additional-notes
-    attributes:
-      label: Additional Notes
-      description: Any additional information or special requirements
-      placeholder: "Please add any special configuration needs or notes here..."
-
   - type: checkboxes
     id: terms
     attributes:
       label: Acknowledgment
       description: Please confirm you understand the following
       options:
-        - label: I understand that this repository will be created with 4 default teams
+        - label: I understand that this repository will be created with 3 default teams (dev, test, prod)
           required: true
-        - label: I have listed all required admin users and verified their usernames
+        - label: I understand that team maintainers manage team membership and can add/remove members
           required: true
-        - label: I will manage additional team memberships after repository creation
+        - label: I understand that repository settings will use organization defaults unless otherwise specified
           required: true
 ````
+
+**Simplified Form Fields:**
+- **Repository Name** (required)
+- **Team Maintainers/Admins** (optional - defaults to issue creator)
+- **Tech Stack** (required)
+- **Business Justification** (required)
+- **Default Branch** (required - dropdown: main/master/develop)
+- **Acknowledgement** (required checkboxes)
+
+**Default Values Strategy:**
+All other repository settings (visibility, features, security, topics, variables, etc.) will use default values from `data/defaults.yaml`. This provides:
+- Explicit and centralized default configuration
+- Consistency across repositories
+- Reduced form complexity
+- Easier maintenance
+- Ability to override defaults via manual YAML edits after creation
+
+---
+
+### 4.2 Default Values Configuration
+
+The workflow will use the first repository in `repositories.yaml` as a template for default values:
+
+```yaml
+# data/repositories.yaml - First entry used as defaults
+repositories:
+  - name: mbb-web-portal  # Template repository
+    description: Customer-facing web portal for Paloitmbb services
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics:
+      - frontend
+      - react
+      - typescript
+      - customer-portal
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: true
+    variables:
+      ENVIRONMENT:
+        value: production
+      API_BASE_URL:
+        value: https://api.paloitmbb.com
+```
+
+The workflow will:
+1. Load the first repository from `repositories.yaml`
+2. Use its configuration as default values
+3. Override only the fields from the issue form:
+   - `name` - from issue
+   - `description` - generated from name and tech stack
+   - `default_branch` - from issue
+   - `topics` - add tech stack to existing topics
+4. Keep all other settings from the template
 
 ---
 
@@ -668,7 +656,7 @@ body:
 3. Add required reviewers: `paloitmbb-devsecops` team
 4. Set deployment branch pattern: `main`
 
-### 5.2 Main Workflow File
+### 5.2 Updated Workflow with Default Values
 
 **File:** `.github/workflows/repo-request.yml`
 
@@ -694,12 +682,10 @@ jobs:
     if: contains(github.event.issue.labels.*.name, 'repo-request')
     outputs:
       repo-name: ${{ steps.parse.outputs.repo-name }}
-      description: ${{ steps.parse.outputs.description }}
       tech-stack: ${{ steps.parse.outputs.tech-stack }}
       justification: ${{ steps.parse.outputs.justification }}
       admins: ${{ steps.parse.outputs.admins }}
-      visibility: ${{ steps.parse.outputs.visibility }}
-      environment: ${{ steps.parse.outputs.environment }}
+      default-branch: ${{ steps.parse.outputs.default-branch }}
       validation-passed: ${{ steps.validate.outputs.passed }}
 
     steps:
@@ -720,53 +706,32 @@ jobs:
               return match ? match[1].trim() : '';
             }
 
-            // Extract all fields
+            // Extract simplified fields only
             const repoName = extractField(issueBody, 'Repository Name');
-            const description = extractField(issueBody, 'Repository Description');
             const techStack = extractField(issueBody, 'Tech Stack');
             const techStackOther = extractField(issueBody, 'Other Tech Stack');
             const justification = extractField(issueBody, 'Business Justification');
-            const admins = extractField(issueBody, 'Repository Admins');
-            const visibility = extractField(issueBody, 'Repository Visibility');
-            const environment = extractField(issueBody, 'Target Environment');
-            const topics = extractField(issueBody, 'Repository Topics');
+            const admins = extractField(issueBody, 'Team Maintainers');
             const defaultBranch = extractField(issueBody, 'Default Branch Name');
-
-            // Extract checkboxes
-            const issuesEnabled = issueBody.includes('[x] Enable Issues');
-            const projectsEnabled = issueBody.includes('[x] Enable Projects');
-            const wikiEnabled = issueBody.includes('[x] Enable Wiki');
-
-            // Security features
-            const vulnAlerts = issueBody.includes('[x] Enable Vulnerability Alerts');
-            const dependabotAlerts = issueBody.includes('[x] Enable Dependabot Alerts');
-            const dependabotUpdates = issueBody.includes('[x] Enable Dependabot Security Updates');
-            const advancedSecurity = issueBody.includes('[x] Enable Advanced Security');
-            const secretScanning = issueBody.includes('[x] Enable Secret Scanning');
-            const secretPushProtection = issueBody.includes('[x] Enable Secret Scanning Push Protection');
 
             // Determine final tech stack
             const finalTechStack = techStack === 'Others (specify below)' ? techStackOther : techStack;
 
-            // Set outputs
+            // Set outputs (only required fields)
             core.setOutput('repo-name', repoName);
-            core.setOutput('description', description);
             core.setOutput('tech-stack', finalTechStack);
             core.setOutput('justification', justification);
-            core.setOutput('admins', admins);
-            core.setOutput('visibility', visibility);
-            core.setOutput('environment', environment);
-            core.setOutput('topics', topics);
+            core.setOutput('admins', admins || context.payload.issue.user.login);
             core.setOutput('default-branch', defaultBranch || 'main');
-            core.setOutput('has-issues', issuesEnabled);
-            core.setOutput('has-projects', projectsEnabled);
-            core.setOutput('has-wiki', wikiEnabled);
-            core.setOutput('enable-vuln-alerts', vulnAlerts);
-            core.setOutput('enable-dependabot-alerts', dependabotAlerts);
-            core.setOutput('enable-dependabot-updates', dependabotUpdates);
-            core.setOutput('enable-advanced-security', advancedSecurity);
-            core.setOutput('enable-secret-scanning', secretScanning);
-            core.setOutput('enable-secret-push-protection', secretPushProtection);
+
+      - name: Load default values from repositories.yaml
+        id: load-defaults
+        run: |
+          # Load first repository as template
+          DEFAULTS=$(yq eval '.repositories[0]' data/repositories.yaml -o json)
+          echo "defaults<<EOF" >> $GITHUB_OUTPUT
+          echo "$DEFAULTS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Validate repository name
         id: validate-name
@@ -1497,6 +1462,7 @@ Complete! Repository Ready 🎉
 - `modules/github-teams/README.md`
 - `data/teams.yaml`
 - `data/TEAMS.md`
+- `data/defaults.yaml`
 
 **Modified Files:**
 

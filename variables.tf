@@ -62,11 +62,11 @@ variable "repositories" {
       require_signed_commits          = bool
       enforce_admins                  = bool
     }))
-    teams     = optional(list(object({
+    teams = optional(list(object({
       team       = string
       permission = string
     })))
-    secrets   = optional(map(object({
+    secrets = optional(map(object({
       value = string
     })))
     variables = optional(map(object({
