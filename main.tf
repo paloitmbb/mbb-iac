@@ -67,8 +67,9 @@ locals {
   teams_file = "${path.module}/data/teams.yaml"
   teams_data = try(yamldecode(file(local.teams_file)), { teams = [] })
 
-  # Normalize teams data
-  all_teams = try(local.teams_data.teams, [])
+  # Normalize teams data - ensure it's always a list, never null
+  # Handle cases where teams: is present but null/empty
+  all_teams = coalesce(try(local.teams_data.teams, null), [])
 }
 
 # Create DevSecOps team with admin access to all repositories

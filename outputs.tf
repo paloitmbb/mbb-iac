@@ -52,5 +52,5 @@ output "repository_teams" {
 
 output "team_count" {
   description = "Total number of teams being managed"
-  value       = length(local.all_teams) + 1 # +1 for devsecops team
+  value       = length(coalesce(local.all_teams, [])) + 1 # +1 for devsecops team
 }

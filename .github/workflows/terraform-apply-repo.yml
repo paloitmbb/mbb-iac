@@ -3,8 +3,6 @@ name: Terraform Apply Repository
 on:
   pull_request:
     types: [closed]
-    branches:
-      - main
 
 permissions:
   contents: write
@@ -106,8 +104,8 @@ jobs:
         run: |
           terraform apply -auto-approve tfplan
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
 
       - name: Extract admin users from PR
         id: get-admins
