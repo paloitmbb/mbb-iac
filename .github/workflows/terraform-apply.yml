@@ -64,16 +64,22 @@ jobs:
           if ! terraform apply -auto-approve environments/${{ matrix.environment }}/tfplan; then
             if [ -f "errored.tfstate" ]; then
               echo "⚠️  Error saving state detected. Attempting manual state upload..."
-              gh release upload state-${{ matrix.environment }} errored.tfstate --clobber && \
-              gh release download state-${{ matrix.environment }} -p "errored.tfstate" -O terraform.tfstate && \
-              gh release upload state-${{ matrix.environment }} terraform.tfstate --clobber && \
-              rm terraform.tfstate errored.tfstate
-              echo "✅ State manually uploaded to GitHub release"
+              if gh release upload state-${{ matrix.environment }} errored.tfstate --clobber && \
+                 gh release download state-${{ matrix.environment }} -p "errored.tfstate" -O terraform.tfstate && \
+                 gh release upload state-${{ matrix.environment }} terraform.tfstate --clobber && \
+                 rm terraform.tfstate errored.tfstate; then
+                echo "✅ State manually uploaded to GitHub release"
+                exit 0  # Explicitly succeed after successful recovery
+              else
+                echo "❌ State recovery failed"
+                exit 1
+              fi
             else
               echo "❌ Terraform apply failed"
               exit 1
             fi
           fi
+          echo "✅ Terraform apply completed successfully"
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
           TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}

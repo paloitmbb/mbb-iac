@@ -105,86 +105,117 @@ jobs:
           if ! terraform apply -auto-approve tfplan; then
             if [ -f "errored.tfstate" ]; then
               echo "⚠️  Error saving state detected. Attempting manual state upload..."
-              gh release upload state-dev errored.tfstate --clobber && \
-              gh release download state-dev -p "errored.tfstate" -O terraform.tfstate && \
-              gh release upload state-dev terraform.tfstate --clobber && \
-              rm terraform.tfstate errored.tfstate
-              echo "✅ State manually uploaded to GitHub release"
+              if gh release upload state-dev errored.tfstate --clobber && \
+                 gh release download state-dev -p "errored.tfstate" -O terraform.tfstate && \
+                 gh release upload state-dev terraform.tfstate --clobber && \
+                 rm terraform.tfstate errored.tfstate; then
+                echo "✅ State manually uploaded to GitHub release"
+                exit 0  # Explicitly succeed after successful recovery
+              else
+                echo "❌ State recovery failed"
+                exit 1
+              fi
             else
               echo "❌ Terraform apply failed"
               exit 1
             fi
           fi
+          echo "✅ Terraform apply completed successfully"
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
           TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
 
-      - name: Extract admin users from PR
-        id: get-admins
+      - name: Extract teams from PR
+        id: get-teams
         uses: actions/github-script@v7
         with:
           script: |
             const prBody = context.payload.pull_request.body || '';
 
-            // Extract admin users from PR body table
-            const adminMatch = prBody.match(/\*\*Admin Users\*\*\s*\|\s*([^\n|]+)/);
+            // Extract teams from PR body table
+            const teamsMatch = prBody.match(/\*\*Teams with Access\*\*\s*\|\s*([^\n|]+)/);
 
-            let adminsList = '';
-            if (adminMatch) {
-              adminsList = adminMatch[1].trim();
+            let teamsList = '';
+            let teamsArray = [];
+
+            if (teamsMatch) {
+              teamsList = teamsMatch[1].trim();
+              // Parse comma-separated teams
+              teamsArray = teamsList.split(',').map(t => t.trim()).filter(t => t && t !== 'None');
             }
 
-            // If no admins found, use PR author as fallback
-            if (!adminsList) {
-              adminsList = context.payload.pull_request.user.login;
-              core.warning('No admin users found in PR body, using PR author as fallback');
-            }
+            core.setOutput('teams', teamsList);
+            core.setOutput('teams-array', JSON.stringify(teamsArray));
+            console.log(`Teams with access: ${teamsList || 'None'}`);
+            return { teams: teamsList, teamsArray };
 
-            core.setOutput('maintainers', adminsList);
-            console.log(`Admin users: ${adminsList}`);
-            return adminsList;
-
-      - name: Assign Team Maintainers
-        id: assign-maintainers
+      - name: Validate Team Access
+        id: validate-teams
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
-            const maintainersString = '${{ steps.get-admins.outputs.maintainers }}';
-            const maintainerList = maintainersString.split(',').map(u => u.trim()).filter(u => u);
+            const teamsString = '${{ steps.get-teams.outputs.teams }}';
+            const teamsArray = JSON.parse('${{ steps.get-teams.outputs.teams-array }}');
 
-            if (maintainerList.length === 0) {
-              core.warning('No maintainers found in teams.yaml');
-              return { results: [], success: true };
+            if (teamsArray.length === 0) {
+              console.log('ℹ️  No teams specified - repository created without team access');
+              core.setOutput('summary', 'No teams specified - repository created without team access');
+              core.setOutput('success', true);
+              return { summary: 'No teams specified', success: true };
             }
 
             const repoName = '${{ steps.extract-details.outputs.repo-name }}';
-            const teams = ['dev', 'test', 'prod'];
             const results = [];
             let hasErrors = false;
 
-            for (const teamSuffix of teams) {
-              const teamSlug = `${repoName}-${teamSuffix}`;
-              
-              for (const username of maintainerList) {
+            console.log(`\n🔍 Verifying team access for repository: ${repoName}`);
+            console.log(`📋 Teams: ${teamsArray.join(', ')}\n`);
+
+            for (const teamSlug of teamsArray) {
+              try {
+                // Verify team exists
+                await github.rest.teams.getByName({
+                  org: context.repo.owner,
+                  team_slug: teamSlug
+                });
+                
+                // Check if team has access to repository
                 try {
-                  await github.rest.teams.addOrUpdateMembershipForUserInOrg({
+                  const repoAccess = await github.rest.teams.checkPermissionsForRepoInOrg({
                     org: context.repo.owner,
                     team_slug: teamSlug,
-                    username: username,
-                    role: 'maintainer'
+                    owner: context.repo.owner,
+                    repo: repoName
                   });
-                  results.push(`✅ Added ${username} as maintainer of ${teamSlug}`);
+                  
+                  results.push(`✅ Team \\`${teamSlug}\\` has \\`${repoAccess.data.permission}\\` access`);
                 } catch (error) {
-                  results.push(`❌ Failed to add ${username} to ${teamSlug}: ${error.message}`);
-                  hasErrors = true;
+                  // Team exists but doesn't have access - grant it now
+                  try {
+                    await github.rest.teams.addOrUpdateRepoPermissionsInOrg({
+                      org: context.repo.owner,
+                      team_slug: teamSlug,
+                      owner: context.repo.owner,
+                      repo: repoName,
+                      permission: 'push' // Default to push (write) access
+                    });
+                    results.push(`✅ Team \\`${teamSlug}\\` access granted (push permission)`);
+                  } catch (grantError) {
+                    results.push(`❌ Failed to grant access to team \\`${teamSlug}\\`: ${grantError.message}`);
+                    hasErrors = true;
+                  }
                 }
+              } catch (error) {
+                results.push(`❌ Team \\`${teamSlug}\\` not found or not accessible`);
+                hasErrors = true;
               }
             }
 
-            core.setOutput('results', results.join('\n'));
+            const summary = results.join('\n');
+            core.setOutput('summary', summary);
             core.setOutput('success', !hasErrors);
-            core.setOutput('maintainers', maintainerList.join(', '));
-            return { results, success: !hasErrors };
+            return { summary, success: !hasErrors };
 
       - name: Generate apply summary
         if: success()
@@ -195,7 +226,8 @@ jobs:
             const org = context.repo.owner;
             const techStack = '${{ steps.extract-details.outputs.tech-stack }}';
             const defaultBranch = '${{ steps.extract-details.outputs.default-branch }}';
-            const maintainers = '${{ steps.assign-maintainers.outputs.results }}';
+            const teamsString = '${{ steps.get-teams.outputs.teams }}';
+            const teamsSummary = '${{ steps.validate-teams.outputs.summary }}';
             const issueNumber = '${{ steps.extract-issue.outputs.issue-number }}';
             const prNumber = context.payload.pull_request.number;
 
@@ -203,28 +235,25 @@ jobs:
             summary += `## 🎉 Repository Details\n\n`;
             summary += '| Field | Value |\n';
             summary += '|-------|-------|\n';
-            summary += `| **Repository** | [\`${org}/${repoName}\`](https://github.com/${org}/${repoName}) |\n`;
+            summary += `| **Repository** | [\\\`${org}/${repoName}\\\`](https://github.com/${org}/${repoName}) |\n`;
             summary += `| **Tech Stack** | ${techStack} |\n`;
-            summary += `| **Default Branch** | \`${defaultBranch}\` |\n`;
+            summary += `| **Default Branch** | \\\`${defaultBranch}\\\` |\n`;
             summary += `| **Configuration** | Using organizational defaults |\n`;
             summary += `| **Source PR** | [#${prNumber}](${context.payload.pull_request.html_url}) |\n`;
             summary += `| **Source Issue** | [#${issueNumber}](https://github.com/${org}/${context.repo.repo}/issues/${issueNumber}) |\n\n`;
 
-            summary += '## 👥 Teams Created\n\n';
-            summary += '| Team | Permission | Link |\n';
-            summary += '|------|------------|------|\n';
-            summary += `| \`${repoName}-dev\` | push | [View Team](https://github.com/orgs/${org}/teams/${repoName}-dev) |\n`;
-            summary += `| \`${repoName}-test\` | push | [View Team](https://github.com/orgs/${org}/teams/${repoName}-test) |\n`;
-            summary += `| \`${repoName}-prod\` | maintain | [View Team](https://github.com/orgs/${org}/teams/${repoName}-prod) |\n\n`;
-
-            summary += '## 👤 Team Maintainers\n\n';
-            summary += '```\n' + maintainers + '\n```\n\n';
+            if (teamsString && teamsString !== 'None') {
+              summary += '## 👥 Team Access\n\n';
+              summary += teamsSummary + '\n\n';
+            } else {
+              summary += '## 👥 Team Access\n\n';
+              summary += 'No teams specified - repository created without team access\n\n';
+            }
 
             summary += '## 📋 Next Steps\n\n';
             summary += `1. 🔗 Visit your repository: https://github.com/${org}/${repoName}\n`;
-            summary += `2. 👥 Team maintainers can add members to teams via GitHub UI\n`;
-            summary += `3. 🔒 Configure branch protection rules if needed\n`;
-            summary += `4. 🚀 Start developing!\n\n`;
+            summary += `2. 🔒 Configure branch protection rules if needed\n`;
+            summary += `3. 🚀 Start developing!\n\n`;
 
             summary += '---\n\n';
             summary += `*Terraform applied for PR #${prNumber}, completing issue #${issueNumber}*\n`;
@@ -244,7 +273,15 @@ jobs:
             const defaultBranch = '${{ steps.extract-details.outputs.default-branch }}';
             const prNumber = context.payload.pull_request.number;
             const issueNumber = '${{ steps.extract-issue.outputs.issue-number }}';
-            const maintainers = '${{ steps.assign-maintainers.outputs.results }}';
+            const teamsString = '${{ steps.get-teams.outputs.teams }}';
+            const teamsSummary = '${{ steps.validate-teams.outputs.summary }}';
+
+            let teamsSection = '';
+            if (teamsString && teamsString !== 'None') {
+              teamsSection = `\n\n            ### 👥 Team Access\n            ${teamsSummary}`;
+            } else {
+              teamsSection = `\n\n            ### 👥 Team Access\n            No teams specified - repository created without team access`;
+            }
 
             const commentBody = `## ✅ Repository Created Successfully!
 
@@ -255,23 +292,12 @@ jobs:
             - **Tech Stack:** ${techStack}
             - **Default Branch:** ${defaultBranch}
             - **Configuration:** Using organizational defaults for visibility, features, and security
-            - **Created from PR:** [#${prNumber}](${context.payload.pull_request.html_url})
-
-            ### 👥 Teams Created
-            - [\`${repoName}-dev\`](https://github.com/orgs/${org}/teams/${repoName}-dev) - Write access
-            - [\`${repoName}-test\`](https://github.com/orgs/${org}/teams/${repoName}-test) - Write access
-            - [\`${repoName}-prod\`](https://github.com/orgs/${org}/teams/${repoName}-prod) - Maintain access
-
-            ### 👤 Team Maintainers
-            \`\`\`
-            ${maintainers}
-            \`\`\`
+            - **Created from PR:** [#${prNumber}](${context.payload.pull_request.html_url})${teamsSection}
 
             ### 📋 Next Steps
             1. Visit your repository: https://github.com/${org}/${repoName}
-            2. Team maintainers can add members to teams via GitHub UI
-            3. Configure branch protection rules if needed
-            4. Start developing! 🚀
+            2. Configure branch protection rules if needed
+            3. Start developing! 🚀
 
             ---
             *Automated by GitHub Actions workflow - Terraform applied successfully*`;
@@ -328,7 +354,7 @@ jobs:
             summary += '1. Check the workflow logs for detailed error messages\n';
             summary += '2. Verify GITHUB_TOKEN has sufficient permissions\n';
             summary += '3. Ensure the repository name is not already taken\n';
-            summary += '4. Verify team names are valid and not already in use\n';
+            summary += '4. Verify team names are valid and exist in the organization\n';
             summary += '5. Check that the YAML files are properly formatted\n\n';
 
             summary += '## 📋 Next Steps\n\n';
@@ -366,7 +392,7 @@ jobs:
             1. Check the [workflow logs](${runUrl}) for detailed error messages
             2. Verify GITHUB_TOKEN has sufficient permissions
             3. Ensure the repository name is not already taken
-            4. Verify team names are valid and not already in use
+            4. Verify team names are valid and exist in the organization
 
             ### 📋 Next Steps
             1. Review the error logs
