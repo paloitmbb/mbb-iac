@@ -22,6 +22,8 @@ jobs:
       tech-stack: ${{ steps.parse.outputs.tech-stack }}
       justification: ${{ steps.parse.outputs.justification }}
       teams: ${{ steps.parse.outputs.teams }}
+      teams-validated: ${{ steps.validate-teams.outputs.team-list }}
+      teams-display: ${{ steps.validate-teams.outputs.teams-display }}
       default-branch: ${{ steps.parse.outputs.default-branch }}
       defaults: ${{ steps.load-defaults.outputs.defaults }}
       validation-passed: ${{ steps.validate.outputs.passed }}
@@ -407,21 +409,23 @@ jobs:
           DESCRIPTION=$(echo "$REPO_NAME" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2));}1')
           DESCRIPTION="${DESCRIPTION} using ${TECH_STACK}"
 
-          # Parse teams from validated input (comma-separated)
-          TEAMS_INPUT="${{ needs.validate-request.outputs.teams }}"
+          # Parse teams from validated JSON array
+          TEAMS_JSON='${{ needs.validate-request.outputs.teams-validated }}'
 
           # Build teams array in YAML format
           TEAMS_YAML=""
-          if [ -n "$TEAMS_INPUT" ]; then
-            IFS=',' read -ra TEAM_ARRAY <<< "$TEAMS_INPUT"
-            for team in "${TEAM_ARRAY[@]}"; do
-              team=$(echo "$team" | xargs)  # trim whitespace
-              if [ -n "$team" ]; then
-                TEAMS_YAML="${TEAMS_YAML}"
-                TEAMS_YAML="${TEAMS_YAML}      - team: ${team}\n"
-                TEAMS_YAML="${TEAMS_YAML}        permission: push\n"
-              fi
-            done
+          if [ "$TEAMS_JSON" != "null" ] && [ "$TEAMS_JSON" != "[]" ]; then
+            # Parse JSON array and build YAML
+            TEAM_COUNT=$(echo "$TEAMS_JSON" | jq -r 'length')
+            if [ "$TEAM_COUNT" -gt 0 ]; then
+              for i in $(seq 0 $((TEAM_COUNT - 1))); do
+                team=$(echo "$TEAMS_JSON" | jq -r ".[$i]")
+                if [ -n "$team" ] && [ "$team" != "null" ] && [ "$team" != "_No response_" ]; then
+                  TEAMS_YAML="${TEAMS_YAML}      - team: ${team}\n"
+                  TEAMS_YAML="${TEAMS_YAML}        permission: push\n"
+                fi
+              done
+            fi
           fi
 
           # Append to repositories.yaml with proper indentation (2 spaces for array items)
@@ -457,7 +461,7 @@ jobs:
         run: |
           REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
           BRANCH_NAME="repo-request/${REPO_NAME}"
-          TEAMS="${{ needs.validate-request.outputs.teams }}"
+          TEAMS="${{ needs.validate-request.outputs.teams-display }}"
 
           # Delete remote branch if it exists (ignore errors)
           git push origin --delete "${BRANCH_NAME}" 2>/dev/null || true
@@ -500,8 +504,8 @@ jobs:
             const branchName = '${{ steps.create-branch.outputs.branch }}';
             const issueNumber = context.issue.number;
 
-            const teams = '${{ needs.validate-request.outputs.teams }}';
-            const teamsList = teams ? teams.split(',').map(t => t.trim()).join(', ') : 'None';
+            const teams = '${{ needs.validate-request.outputs.teams-display }}';
+            const teamsList = teams && teams !== 'None' ? teams : 'None';
 
             const prBody = `## 🎉 New Repository Request
 
@@ -517,7 +521,7 @@ jobs:
 
             ### Team Access
 
-            ${teams ? teams.split(',').map(t => `- \`${t.trim()}\` - Write access (existing organization team)`).join('\n') : '- No teams specified'}
+            ${teams && teams !== 'None' ? teams.split(',').map(t => `- \`${t.trim()}\` - Write access (existing organization team)`).join('\n') : '- No teams specified'}
 
             ### Configuration
 
@@ -572,8 +576,8 @@ jobs:
             const repoName = '${{ needs.validate-request.outputs.repo-name }}';
             const techStack = '${{ needs.validate-request.outputs.tech-stack }}';
             const defaultBranch = '${{ needs.validate-request.outputs.default-branch }}';
-            const teams = '${{ needs.validate-request.outputs.teams }}';
-            const teamsList = teams ? teams.split(',').map(t => t.trim()) : [];
+            const teams = '${{ needs.validate-request.outputs.teams-display }}';
+            const teamsList = teams && teams !== 'None' ? teams.split(',').map(t => t.trim()) : [];
             const prUrl = '${{ steps.create-pr.outputs.pr-url }}';
             const prNumber = '${{ steps.create-pr.outputs.pr-number }}';
 
@@ -617,8 +621,8 @@ jobs:
             const repoName = '${{ needs.validate-request.outputs.repo-name }}';
             const prUrl = '${{ steps.create-pr.outputs.pr-url }}';
             const prNumber = '${{ steps.create-pr.outputs.pr-number }}';
-            const teams = '${{ needs.validate-request.outputs.teams }}';
-            const teamsList = teams ? teams.split(',').map(t => t.trim()) : [];
+            const teams = '${{ needs.validate-request.outputs.teams-display }}';
+            const teamsList = teams && teams !== 'None' ? teams.split(',').map(t => t.trim()) : [];
 
             let commentBody = `## ✅ Pull Request Created!
 

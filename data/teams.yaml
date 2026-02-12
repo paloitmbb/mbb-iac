@@ -38,21 +38,3 @@ teams:
 #
 # Note: Team membership is managed separately via GitHub API
 # This file only defines team creation and repository permissions
-
-  - name: mbb-new-repo-dev
-    repository: mbb-new-repo
-    permission: push
-    privacy: closed
-    description: "Developer team for mbb-new-repo repository - write access for development"
-  
-  - name: mbb-new-repo-test
-    repository: mbb-new-repo
-    permission: push
-    privacy: closed
-    description: "Test team for mbb-new-repo repository - write access for testing activities"
-  
-  - name: mbb-new-repo-prod
-    repository: mbb-new-repo
-    permission: maintain
-    privacy: closed
-    description: "Production team for mbb-new-repo repository - maintain access for production releases"
