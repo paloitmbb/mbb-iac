@@ -70,7 +70,7 @@ jobs:
             wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
             chmod +x /usr/local/bin/yq
           fi
-          
+
           # Load repository defaults from defaults.yaml
           DEFAULTS=$(yq eval '.repository_defaults' data/defaults.yaml -o json)
           echo "defaults<<EOF" >> $GITHUB_OUTPUT
@@ -174,9 +174,9 @@ jobs:
             const nameValid = '${{ steps.validate-name.outputs.valid }}' === 'true';
             const adminsValid = '${{ steps.validate-admins.outputs.valid }}' === 'true';
             const repoExists = '${{ steps.check-repo.outputs.exists }}' === 'true';
-            
+
             let summary = '# 🔍 Repository Request Validation\n\n';
-            
+
             if (passed) {
               summary += '## ✅ All validations passed!\n\n';
               summary += '| Field | Value |\n';
@@ -217,7 +217,7 @@ jobs:
               summary += '\n---\n\n';
               summary += '⚠️ **Please fix the above errors and create a new issue.**\n';
             }
-            
+
             await core.summary
               .addRaw(summary)
               .write();
@@ -332,16 +332,16 @@ jobs:
             sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
             sudo chmod +x /usr/local/bin/yq
           fi
-          
+
           # Load defaults from defaults.yaml
           DEFAULTS=$(yq eval '.repository_defaults' data/defaults.yaml -o json)
-          
+
           # Extract default values
           VISIBILITY=$(echo "$DEFAULTS" | jq -r '.visibility')
           HAS_ISSUES=$(echo "$DEFAULTS" | jq -r '.features.has_issues')
           HAS_PROJECTS=$(echo "$DEFAULTS" | jq -r '.features.has_projects')
           HAS_WIKI=$(echo "$DEFAULTS" | jq -r '.features.has_wiki')
-          
+
           # Security settings
           VULN_ALERTS=$(echo "$DEFAULTS" | jq -r '.security.enable_vulnerability_alerts')
           ADV_SECURITY=$(echo "$DEFAULTS" | jq -r '.security.enable_advanced_security')
@@ -349,12 +349,12 @@ jobs:
           SECRET_PUSH=$(echo "$DEFAULTS" | jq -r '.security.enable_secret_scanning_push_protection')
           DEPENDABOT_ALERTS=$(echo "$DEFAULTS" | jq -r '.security.enable_dependabot_alerts')
           DEPENDABOT_UPDATES=$(echo "$DEFAULTS" | jq -r '.security.enable_dependabot_security_updates')
-          
+
           # Get topics from default and add tech stack
           DEFAULT_TOPICS=$(echo "$DEFAULTS" | jq -r '.topics | join(", ")')
           TECH_STACK="${{ needs.validate-request.outputs.tech-stack }}"
           TECH_TOPIC=$(echo "$TECH_STACK" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
-          
+
           # Build topics array (defaults + tech stack)
           TOPICS_ARRAY="[]"
           if [ -n "$DEFAULT_TOPICS" ]; then
@@ -370,7 +370,7 @@ jobs:
           else
             TOPICS_ARRAY="[\"${TECH_TOPIC}\"]"
           fi
-          
+
           # Generate description
           REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
           DESCRIPTION=$(echo "$REPO_NAME" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2));}1')
@@ -429,43 +429,110 @@ jobs:
 
           echo "Successfully updated teams.yaml"
 
-      - name: Commit changes to main
+      - name: Create branch and commit changes
+        id: create-branch
         run: |
+          REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
+          BRANCH_NAME="repo-request/${REPO_NAME}"
+          
+          git checkout -b "${BRANCH_NAME}"
           git add data/repositories.yaml data/teams.yaml
-          git commit -m "feat: ✨ add repository ${{ needs.validate-request.outputs.repo-name }} and associated teams
+          git commit -m "feat: ✨ add repository ${REPO_NAME} and associated teams
 
           Repository request from issue #${{ github.event.issue.number }}
 
-          - Repository: ${{ needs.validate-request.outputs.repo-name }}
+          - Repository: ${REPO_NAME}
           - Tech Stack: ${{ needs.validate-request.outputs.tech-stack }}
           - Default Branch: ${{ needs.validate-request.outputs.default-branch }}
           - Configuration: Using organizational defaults
           - Created 3 teams: dev, test, prod
 
-          Closes #${{ github.event.issue.number }}"
+          Related to #${{ github.event.issue.number }}"
+          
+          git push origin "${BRANCH_NAME}"
+          
+          echo "branch=${BRANCH_NAME}" >> $GITHUB_OUTPUT
 
-          git push origin main
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - name: Create Pull Request
+        id: create-pr
+        uses: actions/github-script@v7
         with:
-          terraform_version: 1.5.7
+          script: |
+            const repoName = '${{ needs.validate-request.outputs.repo-name }}';
+            const techStack = '${{ needs.validate-request.outputs.tech-stack }}';
+            const defaultBranch = '${{ needs.validate-request.outputs.default-branch }}';
+            const branchName = '${{ steps.create-branch.outputs.branch }}';
+            const issueNumber = context.issue.number;
+            
+            const admins = '${{ needs.validate-request.outputs.admins }}';
+            const adminsList = admins || context.payload.issue.user.login;
+            
+            const prBody = `## 🎉 New Repository Request
 
-      - name: Terraform Init
-        run: |
-          ./scripts/init.sh dev
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+### Repository Details
 
-      - name: Terraform Apply
-        id: terraform-apply
-        run: |
-          ./scripts/apply.sh dev -auto-approve
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+| Field | Value |
+|-------|-------|
+| **Repository Name** | \`${repoName}\` |
+| **Tech Stack** | ${techStack} |
+| **Default Branch** | \`${defaultBranch}\` |
+| **Admin Users** | ${adminsList} |
+| **Requested By** | @${context.payload.issue.user.login} |
 
-      - name: Assign Team Maintainers
-        id: assign-maintainers
+### Teams Created
+
+- \`${repoName}-dev\` - Developer write access
+- \`${repoName}-test\` - Test manager write access
+- \`${repoName}-prod\` - Production manager maintain access
+
+### Configuration
+
+This PR adds the repository definition and team configurations to:
+- \`data/repositories.yaml\`
+- \`data/teams.yaml\`
+
+**Default settings** from \`data/defaults.yaml\` will be applied:
+- Visibility: private
+- Features: Issues, Projects (Wiki disabled)
+- Security: Vulnerability alerts, Dependabot enabled
+- Topics: maybank, mbb, ${techStack.toLowerCase().replace(/ /g, '-')}
+
+### Next Steps
+
+1. ✅ Review the YAML changes
+2. ✅ Merge this PR to apply changes
+3. 🚀 Run Terraform to create the repository and teams
+
+---
+
+Closes #${issueNumber}`;
+            
+            const pr = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🆕 Add repository: ${repoName}`,
+              head: branchName,
+              base: 'main',
+              body: prBody
+            });
+            
+            core.setOutput('pr-number', pr.data.number);
+            core.setOutput('pr-url', pr.data.html_url);
+            return pr.data;
+
+      - name: Add labels to PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ steps.create-pr.outputs.pr-number }},
+              labels: ['repo-request', 'automated']
+            });
+
+      - name: Prepare team maintainers info
+        id: prepare-maintainers
         uses: actions/github-script@v7
         with:
           script: |
@@ -483,64 +550,53 @@ jobs:
 
             for (const teamSuffix of teams) {
               const teamSlug = `${repoName}-${teamSuffix}`;
-              
               for (const username of maintainerList) {
-                try {
-                  await github.rest.teams.addOrUpdateMembershipForUserInOrg({
-                    org: context.repo.owner,
-                    team_slug: teamSlug,
-                    username: username,
-                    role: 'maintainer'
-                  });
-                  results.push(`✅ Added ${username} as maintainer of ${teamSlug}`);
-                } catch (error) {
-                  results.push(`❌ Failed to add ${username} to ${teamSlug}: ${error.message}`);
-                }
+                results.push(`📋 ${username} will be maintainer of ${teamSlug}`);
               }
             }
 
             core.setOutput('results', results.join('\n'));
+            core.setOutput('maintainers', maintainerList.join(', '));
             return results;
 
-      - name: Generate creation summary
+- name: Generate PR creation summary
         if: success()
         uses: actions/github-script@v7
         with:
           script: |
             const repoName = '${{ needs.validate-request.outputs.repo-name }}';
-            const org = context.repo.owner;
             const techStack = '${{ needs.validate-request.outputs.tech-stack }}';
             const defaultBranch = '${{ needs.validate-request.outputs.default-branch }}';
-            const maintainers = '${{ steps.assign-maintainers.outputs.results }}';
+            const maintainers = '${{ steps.prepare-maintainers.outputs.maintainers }}';
+            const prUrl = '${{ steps.create-pr.outputs.pr-url }}';
+            const prNumber = '${{ steps.create-pr.outputs.pr-number }}';
             
-            let summary = '# ✅ Repository Created Successfully!\n\n';
-            summary += `## 🎉 Repository Details\n\n`;
+            let summary = '# ✅ Pull Request Created Successfully!\n\n';
+            summary += `## 🎉 Repository Configuration Ready\n\n`;
             summary += '| Field | Value |\n';
             summary += '|-------|-------|\n';
-            summary += `| **Repository** | [\`${org}/${repoName}\`](https://github.com/${org}/${repoName}) |\n`;
+            summary += `| **Repository Name** | \`${repoName}\` |\n`;
             summary += `| **Tech Stack** | ${techStack} |\n`;
             summary += `| **Default Branch** | \`${defaultBranch}\` |\n`;
-            summary += `| **Configuration** | Using organizational defaults |\n\n`;
+            summary += `| **Team Maintainers** | ${maintainers} |\n`;
+            summary += `| **Pull Request** | [#${prNumber}](${prUrl}) |\n\n`;
             
-            summary += '## 👥 Teams Created\n\n';
-            summary += '| Team | Permission | Link |\n';
-            summary += '|------|------------|------|\n';
-            summary += `| \`${repoName}-dev\` | push | [View Team](https://github.com/orgs/${org}/teams/${repoName}-dev) |\n`;
-            summary += `| \`${repoName}-test\` | push | [View Team](https://github.com/orgs/${org}/teams/${repoName}-test) |\n`;
-            summary += `| \`${repoName}-prod\` | maintain | [View Team](https://github.com/orgs/${org}/teams/${repoName}-prod) |\n\n`;
-            
-            summary += '## 👤 Team Maintainers\n\n';
-            summary += '```\n' + maintainers + '\n```\n\n';
+            summary += '## 👥 Teams to be Created\n\n';
+            summary += '| Team | Permission | Description |\n';
+            summary += '|------|------------|-------------|\n';
+            summary += `| \`${repoName}-dev\` | push | Developer write access |\n`;
+            summary += `| \`${repoName}-test\` | push | Test manager write access |\n`;
+            summary += `| \`${repoName}-prod\` | maintain | Production manager maintain access |\n\n`;
             
             summary += '## 📋 Next Steps\n\n';
-            summary += `1. 🔗 Visit your repository: https://github.com/${org}/${repoName}\n`;
-            summary += `2. 👥 Team maintainers can add members to teams via GitHub UI\n`;
-            summary += `3. 🔒 Configure branch protection rules if needed\n`;
-            summary += `4. 🚀 Start developing!\n\n`;
+            summary += `1. 📝 Review the PR: [#${prNumber}](${prUrl})\n`;
+            summary += `2. ✅ Approve and merge the PR\n`;
+            summary += `3. 🚀 Run Terraform apply to create repository and teams\n`;
+            summary += `4. 👥 Assign team maintainers via GitHub UI\n\n`;
             
             summary += '---\n\n';
-            summary += `*Issue #${context.issue.number} completed successfully*\n`;
-            
+            summary += `*PR created for issue #${context.issue.number}*\n`;
+
             await core.summary
               .addRaw(summary)
               .write();
@@ -551,31 +607,32 @@ jobs:
         with:
           script: |
             const repoName = '${{ needs.validate-request.outputs.repo-name }}';
-            const org = context.repo.owner;
+            const prUrl = '${{ steps.create-pr.outputs.pr-url }}';
+            const prNumber = '${{ steps.create-pr.outputs.pr-number }}';
 
-            const commentBody = `## ✅ Repository Created Successfully!
+            const commentBody = `## ✅ Pull Request Created!
 
-            Your repository has been created and configured with organizational defaults.
+            A pull request has been created to add your repository configuration.
 
-            ### 🎉 Repository Details
-            - **Repository:** [${org}/${repoName}](https://github.com/${org}/${repoName})
+            ### 🎉 Configuration Details
+            - **Repository Name:** \`${repoName}\`
             - **Tech Stack:** ${{ needs.validate-request.outputs.tech-stack }}
             - **Default Branch:** ${{ needs.validate-request.outputs.default-branch }}
-            - **Configuration:** Using organizational defaults for visibility, features, and security
+            - **Pull Request:** [#${prNumber}](${prUrl})
 
-            ### 👥 Teams Created
-            - [\`${repoName}-dev\`](https://github.com/orgs/${org}/teams/${repoName}-dev) - Write access
-            - [\`${repoName}-test\`](https://github.com/orgs/${org}/teams/${repoName}-test) - Write access
-            - [\`${repoName}-prod\`](https://github.com/orgs/${org}/teams/${repoName}-prod) - Maintain access
+            ### 👥 Teams to be Created
+            - \`${repoName}-dev\` - Developer write access
+            - \`${repoName}-test\` - Test manager write access
+            - \`${repoName}-prod\` - Production manager maintain access
 
             ### 👤 Team Maintainers
-            ${{ steps.assign-maintainers.outputs.results }}
+            ${{ steps.prepare-maintainers.outputs.results }}
 
             ### 📋 Next Steps
-            1. Visit your repository: https://github.com/${org}/${repoName}
-            2. Team maintainers can add members to teams via GitHub UI
-            3. Configure branch protection rules if needed
-            4. Start developing! 🚀
+            1. 📝 Review the pull request: [#${prNumber}](${prUrl})
+            2. ✅ Approve and merge the PR
+            3. 🚀 Run \`terraform apply\` to create the repository and teams
+            4. 👥 Assign team maintainers via GitHub UI
 
             ---
             *Automated by GitHub Actions workflow*`;
@@ -587,21 +644,12 @@ jobs:
               body: commentBody
             });
 
-            // Close issue
-            await github.rest.issues.update({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'closed',
-              state_reason: 'completed'
-            });
-
-            // Add completion label
+            // Link issue to PR (will be closed when PR is merged)
             await github.rest.issues.addLabels({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              labels: ['completed']
+              labels: ['pr-created']
             });
 
       - name: Generate failure summary
@@ -610,7 +658,7 @@ jobs:
         with:
           script: |
             const repoName = '${{ needs.validate-request.outputs.repo-name }}';
-            
+
             let summary = '# ❌ Repository Creation Failed\n\n';
             summary += `## 🚨 Error Information\n\n`;
             summary += '| Field | Value |\n';
@@ -618,16 +666,16 @@ jobs:
             summary += `| **Repository Name** | \`${repoName}\` |\n`;
             summary += `| **Workflow Run** | [View Logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) |\n`;
             summary += `| **Issue** | #${context.issue.number} |\n\n`;
-            
+
             summary += '## 🔧 Troubleshooting Steps\n\n';
             summary += '1. 📋 Check the workflow logs for detailed error messages\n';
             summary += '2. 🔍 Verify that all required permissions are in place\n';
             summary += '3. 🔄 Ensure no manual changes conflict with automation\n';
             summary += '4. 👥 Contact DevSecOps team for assistance\n\n';
-            
+
             summary += '---\n\n';
             summary += '> ⚠️ A member of the DevSecOps team will investigate and follow up.\n';
-            
+
             await core.summary
               .addRaw(summary)
               .write();

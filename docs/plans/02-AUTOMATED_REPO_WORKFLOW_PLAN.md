@@ -54,27 +54,41 @@ Implement a GitHub issue-driven automated workflow that allows end users to requ
          │
          ▼
 ┌─────────────────────────┐
-│  Commit to main branch  │
+│  Create Pull Request    │
+│  (with repo config)     │
+└────────┬────────────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│  Manual PR Review       │
+│  & Merge to main        │
+└────────┬────────────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│  Workflow: Terraform    │
+│  Apply (on PR merge)    │
 └────────┬────────────────┘
          │
          ▼
 ┌─────────────────────────┐
 │  Terraform Apply        │
 │  - Create Repo          │
-│  - Create 4 Teams       │
+│  - Create 3 Teams       │
 │  - Set Permissions      │
 └────────┬────────────────┘
          │
          ▼
 ┌─────────────────────────┐
 │  GitHub API Call:       │
-│  Populate Admin Team    │
+│  Assign Team Maintainer │
 └────────┬────────────────┘
          │
          ▼
 ┌─────────────────────────┐
 │  Post Success/Failure   │
 │  Comment to Issue       │
+│  & Close Issue          │
 └─────────────────────────┘
 ```
 
@@ -582,6 +596,7 @@ body:
 ````
 
 **Simplified Form Fields:**
+
 - **Repository Name** (required)
 - **Team Maintainers/Admins** (optional - defaults to issue creator)
 - **Tech Stack** (required)
@@ -591,6 +606,7 @@ body:
 
 **Default Values Strategy:**
 All other repository settings (visibility, features, security, topics, variables, etc.) will use default values from `data/defaults.yaml`. This provides:
+
 - Explicit and centralized default configuration
 - Consistency across repositories
 - Reduced form complexity
@@ -606,7 +622,7 @@ The workflow will use the first repository in `repositories.yaml` as a template 
 ```yaml
 # data/repositories.yaml - First entry used as defaults
 repositories:
-  - name: mbb-web-portal  # Template repository
+  - name: mbb-web-portal # Template repository
     description: Customer-facing web portal for Paloitmbb services
     visibility: private
     features:
@@ -634,6 +650,7 @@ repositories:
 ```
 
 The workflow will:
+
 1. Load the first repository from `repositories.yaml`
 2. Use its configuration as default values
 3. Override only the fields from the issue form:
@@ -1239,27 +1256,70 @@ jobs:
 
 ### 6.7 Workflow Implementation
 
+**Repository Request Workflow:**
+
 - [ ] Update `.github/workflows/repo-request.yml`
 - [ ] Implement validation job with all checks
 - [ ] Implement create-repository job with approval requirement
 - [ ] Add YAML file update logic
-- [ ] Add Terraform apply integration
+- [ ] Create feature branch instead of committing to main
+- [ ] Implement PR creation with detailed description
+- [ ] Add admin users to PR body for extraction
+- [ ] Add labels to PR (`repo-request`, `automated`)
+- [ ] Post PR link comment to issue
+- [ ] Test PR creation with sample issue
+
+**Terraform Apply Workflow:**
+
+- [ ] Create `.github/workflows/terraform-apply-repo.yml`
+- [ ] Implement PR merge trigger with label filter
+- [ ] Extract issue number from PR body
+- [ ] Extract repository details from PR description
+- [ ] Extract admin users from PR body
+- [ ] Add Terraform init and apply steps
 - [ ] Add GitHub API team membership population
-- [ ] Add comprehensive comment notifications
-- [ ] Test workflow with sample issue
+- [ ] Add success comment to issue
+- [ ] Add failure comment with troubleshooting
+- [ ] Close issue on success
+- [ ] Add appropriate labels (`completed` or `terraform-failed`)
+- [ ] Test workflow with merged PR
 
 ### 6.8 Testing Plan
 
+**Validation Testing:**
+
 - [ ] **Test 1:** Create test issue with valid data
 - [ ] **Test 2:** Verify validation passes and comment posted
-- [ ] **Test 3:** Approve workflow and verify execution
-- [ ] **Test 4:** Verify repository created with correct settings
-- [ ] **Test 5:** Verify 4 teams created with correct permissions
-- [ ] **Test 6:** Verify admin team populated with correct members
-- [ ] **Test 7:** Test invalid repository name (validation failure)
-- [ ] **Test 8:** Test invalid admin username (validation failure)
-- [ ] **Test 9:** Test duplicate repository name (validation failure)
-- [ ] **Test 10:** End-to-end test in dev environment
+- [ ] **Test 3:** Test invalid repository name (validation failure)
+- [ ] **Test 4:** Test invalid admin username (validation failure)
+- [ ] **Test 5:** Test duplicate repository name (validation failure)
+
+**PR Creation Testing:**
+
+- [ ] **Test 6:** Approve workflow and verify PR creation
+- [ ] **Test 7:** Verify PR has correct title and labels
+- [ ] **Test 8:** Verify PR body contains all repository details
+- [ ] **Test 9:** Verify PR body includes admin users
+- [ ] **Test 10:** Verify YAML files updated correctly in PR branch
+- [ ] **Test 11:** Verify PR link posted to issue
+- [ ] **Test 12:** Verify issue not closed after PR creation
+
+**Terraform Apply Testing:**
+
+- [ ] **Test 13:** Merge PR and verify terraform workflow triggers
+- [ ] **Test 14:** Verify repository created with correct settings
+- [ ] **Test 15:** Verify 3 teams created with correct permissions
+- [ ] **Test 16:** Verify team maintainers assigned correctly
+- [ ] **Test 17:** Verify success comment posted to issue
+- [ ] **Test 18:** Verify issue closed with "completed" status
+- [ ] **Test 19:** Test terraform failure scenario
+- [ ] **Test 20:** Verify failure comment and labels added
+
+**End-to-End Testing:**
+
+- [ ] **Test 21:** Complete end-to-end test in dev environment
+- [ ] **Test 22:** Test with empty admins field (defaults to requestor)
+- [ ] **Test 23:** Test with multiple admins
 
 ### 6.9 Documentation
 

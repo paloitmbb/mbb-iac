@@ -34,6 +34,7 @@ This implementation creates an issue-driven automated workflow for repository cr
 
 - ✅ `teams.yaml` - YAML configuration for team definitions
 - ✅ `TEAMS.md` - Teams data management documentation
+
 ### 2. Data Files
 
 **Location:** `data/`
@@ -100,6 +101,7 @@ repository_defaults:
 
 **Default Values Strategy:**
 All repository settings not requested in the form (visibility, features, security, topics, variables) use default values from `data/defaults.yaml`. This provides:
+
 - Explicit and centralized default configuration
 - Simplified user experience
 - Consistency across repositories
@@ -108,6 +110,7 @@ All repository settings not requested in the form (visibility, features, securit
 - No dependency on existing repositories
 
 **Removed fields (now use defaults):**
+
 - ❌ Repository description (auto-generated)
 - ❌ Visibility selection (uses default: private)
 - ❌ Target environment selection (uses default)
@@ -121,7 +124,7 @@ All repository settings not requested in the form (visibility, features, securit
 
 **File:** `.github/workflows/repo-request.yml`
 
-Implemented two-job workflow:
+Implemented two-job workflow for PR creation:
 
 **Job 1: Validation (validate-request)**
 
@@ -137,15 +140,37 @@ Implemented two-job workflow:
 **Job 2: Creation (create-repository)**
 
 - ✅ Requires approval via GitHub Environment
-- ✅ Merge issue form data with default values from template
+- ✅ Merge issue form data with default values from defaults.yaml
 - ✅ Generate description from repository name and tech stack
 - ✅ Update `repositories.yaml` with new repository (using defaults + form overrides)
 - ✅ Update `teams.yaml` with 3 new teams
-- ✅ Commit changes to main branch
+- ✅ Create feature branch `repo-request/{repo-name}`
+- ✅ Commit changes to feature branch
+- ✅ Create pull request with detailed description
+- ✅ Add PR labels (`repo-request`, `automated`)
+- ✅ Post PR link comment to issue
+- ✅ Keep issue open (closed after PR merge)
+
+**File:** `.github/workflows/terraform-apply-repo.yml`
+
+Implemented automated terraform apply workflow:
+
+**Job: apply-repository**
+
+- ✅ Trigger on PR merge to main (with `repo-request` label)
+- ✅ Extract issue number from PR body
+- ✅ Extract repository details from PR description
+- ✅ Extract admin users from PR body
 - ✅ Run Terraform init and apply
-- ✅ Assign team maintainers to all teams (defaults to issue creator)
-- ✅ Post success/failure comments
-- ✅ Close issue on completion
+- ✅ Assign team maintainers via GitHub API
+- ✅ Post success comment to original issue with:
+  - Repository link
+  - Team links
+  - Maintainer assignments
+  - Next steps
+- ✅ Close issue with "completed" status
+- ✅ Post failure comment with troubleshooting if terraform fails
+- ✅ Add appropriate labels (`completed` or `terraform-failed`)
 
 ## Terraform Configuration Status
 
@@ -182,7 +207,7 @@ For each repository created, 3 teams are automatically provisioned:
 3. Add required reviewers: `paloitmbb-devsecops` team
 4. Set deployment branch pattern: `main`
 
-**Why:** The workflow requires manual approval from DevSecOps team before creating resources.
+**Why:** The workflow requires manual approval from DevSecOps team before creating the pull request.
 
 ### 2. Create DevSecOps Team (Manual or via Terraform)
 
@@ -207,17 +232,22 @@ After environment setup:
 2. **Fill in all required fields**
 3. **Wait for validation comment**
 4. **Approve the workflow** (if validation passed)
-5. **Verify repository creation**
-6. **Check teams were created**
-7. **Confirm admin team populated**
+5. **Review the pull request** created by the workflow
+6. **Merge the pull request**
+7. **Verify terraform apply workflow** triggers automatically
+8. **Check repository creation**
+9. **Verify teams were created**
+10. **Confirm team maintainers populated**
+11. **Verify issue closed** after successful creation
 
 ### 4. Documentation Updates
 
 Consider updating:
 
-- Main README.md with workflow usage instructions
-- CONTRIBUTING.md with repository request process
+- Main README.md with PR-based workflow usage instructions
+- CONTRIBUTING.md with repository request and PR review process
 - Add troubleshooting section for common issues
+- Document PR merge approval process
 
 ## Architecture Flow
 
@@ -240,14 +270,24 @@ Awaiting Approval (manual)
    ⏳ DevSecOps reviews
    ✅ Approves deployment
        ↓
-Creation Job (automatic)
+Create PR Job (automatic)
    ✅ Merge form data with defaults
    ✅ Generate description
    ✅ Update YAML files
-   ✅ Commit to main
-   ✅ Terraform apply
+   ✅ Create feature branch
+   ✅ Commit to branch
+   ✅ Open pull request
+   ✅ Post PR link to issue
+       ↓
+Manual PR Review
+   ⏳ Review YAML changes
+   ✅ Approve and merge PR
+       ↓
+Terraform Apply Job (automatic on PR merge)
+   ✅ Extract issue details
+   ✅ Terraform init & apply
    ✅ Assign team maintainers
-   ✅ Post success
+   ✅ Post success to issue
    ✅ Close issue
        ↓
 Repository Ready! 🎉
@@ -258,15 +298,16 @@ Repository Ready! 🎉
 **Default Configuration:** All default values are defined in `data/defaults.yaml` for centralized management.
 
 **Current Defaults:**
+
 ```yaml
 repository_defaults:
   visibility: private
-  
+
   features:
     has_issues: true
     has_projects: true
     has_wiki: false
-  
+
   security:
     enable_vulnerability_alerts: true
     enable_advanced_security: false
@@ -274,17 +315,18 @@ repository_defaults:
     enable_secret_scanning_push_protection: false
     enable_dependabot_alerts: true
     enable_dependabot_security_updates: true
-  
+
   topics:
     - maybank
     - mbb
-  
+
   variables:
     ENVIRONMENT:
       value: production
 ```
 
 **Field Merge Strategy:**
+
 1. **From Defaults (defaults.yaml):** visibility, features, security, base topics, variables
 2. **From Issue Form (overrides):** name, default_branch, tech stack
 3. **Auto-generated:** description (from name + tech stack), topics (defaults + tech stack)
@@ -298,6 +340,7 @@ repository_defaults:
    - Default Branch: `main` (from form)
 
 **Benefits:**
+
 - ✅ Explicit and centralized default configuration
 - ✅ Consistent security policies across all repos
 - ✅ Standardized feature settings
@@ -307,25 +350,27 @@ repository_defaults:
 - ✅ Can still override manually after creation
 
 ## Configuration Examples
-   ✅ Validate name
-   ✅ Validate maintainers
-   ✅ Check existence
-   ✅ Post results
-       ↓
+
+✅ Validate name
+✅ Validate maintainers
+✅ Check existence
+✅ Post results
+↓
 Awaiting Approval (manual)
-   ⏳ DevSecOps reviews
-   ✅ Approves deployment
-       ↓
+⏳ DevSecOps reviews
+✅ Approves deployment
+↓
 Creation Job (automatic)
-   ✅ Update YAML files
-   ✅ Commit to main
-   ✅ Terraform apply
-   ✅ Assign team maintainers
-   ✅ Post success
-   ✅ Close issue
-       ↓
+✅ Update YAML files
+✅ Commit to main
+✅ Terraform apply
+✅ Assign team maintainers
+✅ Post success
+✅ Close issue
+↓
 Repository Ready! 🎉
-```
+
+````
 
 ## Configuration Examples
 
@@ -340,7 +385,7 @@ Visibility: private
 Environment: dev
 Features: ✓ Issues, ✓ Projects
 Security: ✓ Dependabot, ✓ GHAS
-```
+````
 
 ### Resulting Teams
 
@@ -368,10 +413,34 @@ All teams with john-doe and jane-smith as maintainers:
 5. **Scalability:** Can handle multiple requests efficiently
 6. **Team Management:** Automatically creates and configures teams
 7. **Security:** Built-in validation and approval process
+8. **Review Process:** PR-based workflow allows code review before infrastructure changes
+9. **Rollback:** Easy to revert changes by reverting PR
+10. **Visibility:** Clear visibility of what will be created before terraform apply
 
 ## Rollback Procedure
 
 If a repository needs to be removed after creation:
+
+**Option A: Via Pull Request (Recommended)**
+
+```bash
+# 1. Create feature branch
+git checkout -b remove-repo-{name}
+
+# 2. Remove from YAML files
+vim data/repositories.yaml  # Remove entry
+vim data/teams.yaml         # Remove 3 team entries
+
+# 3. Commit and push
+git add data/repositories.yaml data/teams.yaml
+git commit -m "fix: 🗑️ remove repository {name}"
+git push origin remove-repo-{name}
+
+# 4. Create PR and merge after review
+# Terraform destroy will run automatically via workflow
+```
+
+**Option B: Manual Terraform Destroy**
 
 ```bash
 # 1. Remove from YAML files
