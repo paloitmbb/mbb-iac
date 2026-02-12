@@ -97,12 +97,17 @@ jobs:
         with:
           script: |
             const adminsString = '${{ steps.parse.outputs.admins }}';
-            const adminList = adminsString.split(',').map(u => u.trim()).filter(u => u);
+            // Filter out empty strings and GitHub's "_No response_" placeholder
+            const adminList = adminsString
+              .split(',')
+              .map(u => u.trim())
+              .filter(u => u && u !== '_No response_');
 
             // Allow empty admin list (requestor will become maintainer)
             if (adminList.length === 0) {
               core.setOutput('valid', 'true');
               core.setOutput('admin-list', JSON.stringify([]));
+              core.setOutput('admins-display', context.payload.issue.user.login);
               return;
             }
 
@@ -125,6 +130,7 @@ jobs:
 
             core.setOutput('valid', 'true');
             core.setOutput('admin-list', JSON.stringify(adminList));
+            core.setOutput('admins-display', adminList.join(', '));
 
       - name: Check repository existence
         id: check-repo
@@ -160,6 +166,62 @@ jobs:
             echo "passed=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Generate validation summary
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const passed = '${{ steps.validate.outputs.passed }}' === 'true';
+            const nameValid = '${{ steps.validate-name.outputs.valid }}' === 'true';
+            const adminsValid = '${{ steps.validate-admins.outputs.valid }}' === 'true';
+            const repoExists = '${{ steps.check-repo.outputs.exists }}' === 'true';
+            
+            let summary = '# 🔍 Repository Request Validation\n\n';
+            
+            if (passed) {
+              summary += '## ✅ All validations passed!\n\n';
+              summary += '| Field | Value |\n';
+              summary += '|-------|-------|\n';
+              summary += `| **Repository Name** | \`${{ steps.parse.outputs.repo-name }}\` |\n`;
+              summary += `| **Tech Stack** | ${{ steps.parse.outputs.tech-stack }} |\n`;
+              summary += `| **Team Maintainers** | ${{ steps.validate-admins.outputs.admins-display }} |\n`;
+              summary += `| **Default Branch** | ${{ steps.parse.outputs.default-branch }} |\n`;
+              summary += `| **Business Justification** | ${{ steps.parse.outputs.justification }} |\n\n`;
+              
+              summary += '### 👥 Teams to be Created\n\n';
+              summary += '| Team Name | Permission | Description |\n';
+              summary += '|-----------|------------|-------------|\n';
+              summary += `| \`${{ steps.parse.outputs.repo-name }}-dev\` | push | Developer write access |\n`;
+              summary += `| \`${{ steps.parse.outputs.repo-name }}-test\` | push | Test manager write access |\n`;
+              summary += `| \`${{ steps.parse.outputs.repo-name }}-prod\` | maintain | Production manager maintain access |\n\n`;
+              
+              summary += '### ⚙️ Default Configuration\n\n';
+              summary += '> 📋 All other settings (visibility, features, security, topics, variables) will use organizational defaults from `defaults.yaml`\n\n';
+              summary += '---\n\n';
+              summary += '### ⏳ Next Steps\n\n';
+              summary += '- Awaiting approval from **DevSecOps team**\n';
+              summary += '- Once approved, repository and teams will be created automatically\n';
+            } else {
+              summary += '## ❌ Validation Failed\n\n';
+              summary += '### Errors Found:\n\n';
+              
+              if (!nameValid) {
+                summary += `- ❌ **Repository Name:** ${{ steps.validate-name.outputs.error }}\n`;
+              }
+              if (!adminsValid) {
+                summary += `- ❌ **Admin Users:** ${{ steps.validate-admins.outputs.error }}\n`;
+              }
+              if (repoExists) {
+                summary += `- ❌ **Repository Already Exists:** ${{ steps.check-repo.outputs.error }}\n`;
+              }
+              
+              summary += '\n---\n\n';
+              summary += '⚠️ **Please fix the above errors and create a new issue.**\n';
+            }
+            
+            await core.summary
+              .addRaw(summary)
+              .write();
+
       - name: Post validation results
         uses: actions/github-script@v7
         with:
@@ -176,7 +238,7 @@ jobs:
               commentBody += '### Request Summary\n';
               commentBody += `- **Repository Name:** \`${{ steps.parse.outputs.repo-name }}\`\n`;
               commentBody += `- **Tech Stack:** ${{ steps.parse.outputs.tech-stack }}\n`;
-              const maintainersText = '${{ steps.parse.outputs.admins }}';
+              const maintainersText = '${{ steps.validate-admins.outputs.admins-display }}';
               commentBody += `- **Team Maintainers:** ${maintainersText}\n`;
               commentBody += `- **Default Branch:** ${{ steps.parse.outputs.default-branch }}\n\n`;
               
@@ -440,6 +502,49 @@ jobs:
             core.setOutput('results', results.join('\n'));
             return results;
 
+      - name: Generate creation summary
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const repoName = '${{ needs.validate-request.outputs.repo-name }}';
+            const org = context.repo.owner;
+            const techStack = '${{ needs.validate-request.outputs.tech-stack }}';
+            const defaultBranch = '${{ needs.validate-request.outputs.default-branch }}';
+            const maintainers = '${{ steps.assign-maintainers.outputs.results }}';
+            
+            let summary = '# ✅ Repository Created Successfully!\n\n';
+            summary += `## 🎉 Repository Details\n\n`;
+            summary += '| Field | Value |\n';
+            summary += '|-------|-------|\n';
+            summary += `| **Repository** | [\`${org}/${repoName}\`](https://github.com/${org}/${repoName}) |\n`;
+            summary += `| **Tech Stack** | ${techStack} |\n`;
+            summary += `| **Default Branch** | \`${defaultBranch}\` |\n`;
+            summary += `| **Configuration** | Using organizational defaults |\n\n`;
+            
+            summary += '## 👥 Teams Created\n\n';
+            summary += '| Team | Permission | Link |\n';
+            summary += '|------|------------|------|\n';
+            summary += `| \`${repoName}-dev\` | push | [View Team](https://github.com/orgs/${org}/teams/${repoName}-dev) |\n`;
+            summary += `| \`${repoName}-test\` | push | [View Team](https://github.com/orgs/${org}/teams/${repoName}-test) |\n`;
+            summary += `| \`${repoName}-prod\` | maintain | [View Team](https://github.com/orgs/${org}/teams/${repoName}-prod) |\n\n`;
+            
+            summary += '## 👤 Team Maintainers\n\n';
+            summary += '```\n' + maintainers + '\n```\n\n';
+            
+            summary += '## 📋 Next Steps\n\n';
+            summary += `1. 🔗 Visit your repository: https://github.com/${org}/${repoName}\n`;
+            summary += `2. 👥 Team maintainers can add members to teams via GitHub UI\n`;
+            summary += `3. 🔒 Configure branch protection rules if needed\n`;
+            summary += `4. 🚀 Start developing!\n\n`;
+            
+            summary += '---\n\n';
+            summary += `*Issue #${context.issue.number} completed successfully*\n`;
+            
+            await core.summary
+              .addRaw(summary)
+              .write();
+
       - name: Post success comment
         if: success()
         uses: actions/github-script@v7
@@ -498,6 +603,34 @@ jobs:
               repo: context.repo.repo,
               labels: ['completed']
             });
+
+      - name: Generate failure summary
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const repoName = '${{ needs.validate-request.outputs.repo-name }}';
+            
+            let summary = '# ❌ Repository Creation Failed\n\n';
+            summary += `## 🚨 Error Information\n\n`;
+            summary += '| Field | Value |\n';
+            summary += '|-------|-------|\n';
+            summary += `| **Repository Name** | \`${repoName}\` |\n`;
+            summary += `| **Workflow Run** | [View Logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) |\n`;
+            summary += `| **Issue** | #${context.issue.number} |\n\n`;
+            
+            summary += '## 🔧 Troubleshooting Steps\n\n';
+            summary += '1. 📋 Check the workflow logs for detailed error messages\n';
+            summary += '2. 🔍 Verify that all required permissions are in place\n';
+            summary += '3. 🔄 Ensure no manual changes conflict with automation\n';
+            summary += '4. 👥 Contact DevSecOps team for assistance\n\n';
+            
+            summary += '---\n\n';
+            summary += '> ⚠️ A member of the DevSecOps team will investigate and follow up.\n';
+            
+            await core.summary
+              .addRaw(summary)
+              .write();
 
       - name: Post failure comment
         if: failure()
