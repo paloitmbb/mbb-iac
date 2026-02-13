@@ -1,0 +1,64 @@
+name: "Copilot License Request"
+description: "Request to assign or revoke GitHub Copilot licenses for users"
+title: "[Copilot License]: "
+labels: ["copilot-license-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## GitHub Copilot License Management
+        Use this form to request assignment or revocation of GitHub Copilot licenses.
+
+  - type: input
+    id: organization
+    attributes:
+      label: Organization
+      description: "The GitHub organization to manage Copilot licenses for"
+      placeholder: "e.g., my-org"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: action
+    attributes:
+      label: Action
+      description: "Select the action to perform"
+      options:
+        - Assign
+        - Revoke
+    validations:
+      required: true
+
+  - type: textarea
+    id: users
+    attributes:
+      label: GitHub Usernames
+      description: "Enter GitHub usernames (one per line or comma-separated)"
+      placeholder: |
+        user1
+        user2
+        user3
+    validations:
+      required: true
+
+  - type: textarea
+    id: justification
+    attributes:
+      label: Justification
+      description: "Provide a reason for this license change"
+      placeholder: "e.g., New team member onboarding / User has left the organization"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Confirmation
+      description: "Please confirm the following before submitting"
+      options:
+        - label: "I have verified the GitHub usernames are correct"
+          required: true
+        - label: "I have the necessary authorization to request this change"
+          required: true
+        - label: "I understand this change will affect the organization's Copilot billing"
+          required: true

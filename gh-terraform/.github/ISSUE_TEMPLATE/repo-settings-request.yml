@@ -1,0 +1,179 @@
+name: "Repository Settings Request"
+description: "Request to change branch protection or ruleset settings on an existing GitHub repository"
+title: "[Repo Settings] "
+labels: ["repo-settings-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Repository Settings Request
+        Use this form to change **branch protection** and/or **ruleset** settings
+        on an **existing** GitHub repository. This does NOT create a new repository.
+
+        **⚠️ Changes will be applied via Terraform. Existing branch protection or
+        ruleset configurations for the same pattern/name will be overwritten.**
+
+  - type: input
+    id: organization
+    attributes:
+      label: "GitHub Organization"
+      description: "The GitHub organization that owns the repository"
+      placeholder: "maybank-sandbox"
+    validations:
+      required: true
+
+  - type: input
+    id: repo_name
+    attributes:
+      label: "Repository Name"
+      description: "The exact name of the existing repository to configure"
+      placeholder: "maybank-digital-frontend"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: settings_type
+    attributes:
+      label: "Settings to Apply"
+      description: "Select which settings you want to configure"
+      options:
+        - label: "Enable Branch Protection"
+          required: false
+        - label: "Enable Repository Ruleset"
+          required: false
+
+  # ── Branch Protection Options ──────────────────────────────
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ### Branch Protection Settings
+        _Fill out this section only if you selected **Enable Branch Protection** above._
+
+  - type: input
+    id: branch_pattern
+    attributes:
+      label: "Protected Branch Pattern"
+      description: "The branch name or pattern to protect"
+      placeholder: "main"
+
+  - type: input
+    id: approvers_count
+    attributes:
+      label: "Required Approving Reviews"
+      description: "Number of approving reviews required before merging"
+      placeholder: "1"
+
+  - type: checkboxes
+    id: bp_options
+    attributes:
+      label: "Branch Protection Options"
+      description: "Select the protection rules to enable"
+      options:
+        - label: "Enforce Admins"
+          required: false
+        - label: "Dismiss Stale Reviews"
+          required: false
+        - label: "Require Code Owner Reviews"
+          required: false
+        - label: "Require Signed Commits"
+          required: false
+        - label: "Require Linear History"
+          required: false
+        - label: "Require Conversation Resolution"
+          required: false
+        - label: "Require Last Push Approval"
+          required: false
+        - label: "Restrict Review Dismissals"
+          required: false
+        - label: "Allow Force Pushes"
+          required: false
+        - label: "Lock Branch"
+          required: false
+
+  # ── Ruleset Options ────────────────────────────────────────
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ### Repository Ruleset Settings
+        _Fill out this section only if you selected **Enable Repository Ruleset** above._
+
+  - type: input
+    id: ruleset_name
+    attributes:
+      label: "Ruleset Name"
+      description: "A descriptive name for the ruleset"
+      placeholder: "default-ruleset"
+
+  - type: dropdown
+    id: ruleset_enforcement
+    attributes:
+      label: "Ruleset Enforcement"
+      description: "How strictly the ruleset is enforced"
+      options:
+        - active
+        - evaluate
+        - disabled
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: ruleset_rules
+    attributes:
+      label: "Ruleset Rules"
+      description: "Select the rules to include in the ruleset"
+      options:
+        - label: "Block Creation"
+          required: false
+        - label: "Block Deletion"
+          required: false
+        - label: "Block Non-Fast-Forward"
+          required: false
+        - label: "Require Linear History"
+          required: false
+        - label: "Require Signatures"
+          required: false
+        - label: "Require Pull Request"
+          required: false
+        - label: "Dismiss Stale Reviews on Push"
+          required: false
+        - label: "Require Code Owner Review"
+          required: false
+        - label: "Require Last Push Approval"
+          required: false
+        - label: "Require Thread Resolution"
+          required: false
+
+  - type: input
+    id: ruleset_approvals
+    attributes:
+      label: "Ruleset Required Approvals"
+      description: "Number of approvals required by the ruleset pull request rule"
+      placeholder: "1"
+
+  # ── General ────────────────────────────────────────────────
+  - type: markdown
+    attributes:
+      value: |
+        ---
+
+  - type: textarea
+    id: justification
+    attributes:
+      label: "Justification"
+      description: "Explain why these settings are being changed"
+      placeholder: "e.g., Enforcing branch protection per security audit findings"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: "Confirmation"
+      description: "Please confirm you understand the impact"
+      options:
+        - label: "I confirm that the repository already exists and I want to modify its protection/ruleset settings"
+          required: true
+        - label: "I understand that existing branch protection or ruleset for the same pattern/name will be overwritten"
+          required: true

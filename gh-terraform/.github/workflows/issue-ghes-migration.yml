@@ -1,0 +1,798 @@
+name: "Handle GHES → GHEC Migration Request"
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  # ─────────────────────────────────────────────
+  # Job 1: Validate migration request
+  # ─────────────────────────────────────────────
+  validate:
+    name: "Validate Migration Request"
+    if: startsWith(github.event.issue.title, '[Migration]')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    outputs:
+      ghes_server_url: ${{ steps.parse.outputs.issueparser_ghes_server_url }}
+      source_organization: ${{ steps.parse.outputs.issueparser_source_organization }}
+      source_repo: ${{ steps.parse.outputs.issueparser_source_repo }}
+      target_organization: ${{ steps.parse.outputs.issueparser_target_organization }}
+      target_repo: ${{ steps.parse.outputs.issueparser_target_repo }}
+      target_visibility: ${{ steps.parse.outputs.issueparser_target_visibility }}
+      migration_options: ${{ steps.parse.outputs.issueparser_migration_options }}
+      admins: ${{ steps.parse.outputs.issueparser_admins }}
+      team_mappings: ${{ steps.parse.outputs.issueparser_team_mappings }}
+      justification: ${{ steps.parse.outputs.issueparser_justification }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse Issue Form
+        id: parse
+        uses: stefanbuck/github-issue-parser@v3
+        with:
+          template-path: .github/ISSUE_TEMPLATE/ghes-migration-request.yml
+
+      - name: Display parsed values
+        run: |
+          echo "GHES Server URL:     ${{ steps.parse.outputs.issueparser_ghes_server_url }}"
+          echo "Source Org:          ${{ steps.parse.outputs.issueparser_source_organization }}"
+          echo "Source Repo:         ${{ steps.parse.outputs.issueparser_source_repo }}"
+          echo "Target Org:          ${{ steps.parse.outputs.issueparser_target_organization }}"
+          echo "Target Repo:         ${{ steps.parse.outputs.issueparser_target_repo }}"
+          echo "Target Visibility:   ${{ steps.parse.outputs.issueparser_target_visibility }}"
+          echo "Migration Options:   ${{ steps.parse.outputs.issueparser_migration_options }}"
+          echo "Admins:              ${{ steps.parse.outputs.issueparser_admins }}"
+
+      - name: Validate required fields
+        run: |
+          ERRORS=""
+
+          if [ -z "${{ steps.parse.outputs.issueparser_ghes_server_url }}" ]; then
+            ERRORS="${ERRORS}\n- GHES Server URL is empty"
+          fi
+          if [ -z "${{ steps.parse.outputs.issueparser_source_organization }}" ]; then
+            ERRORS="${ERRORS}\n- Source Organization is empty"
+          fi
+          if [ -z "${{ steps.parse.outputs.issueparser_source_repo }}" ]; then
+            ERRORS="${ERRORS}\n- Source Repository name is empty"
+          fi
+          if [ -z "${{ steps.parse.outputs.issueparser_target_organization }}" ]; then
+            ERRORS="${ERRORS}\n- Target Organization is empty"
+          fi
+          if [ -z "${{ steps.parse.outputs.issueparser_target_repo }}" ]; then
+            ERRORS="${ERRORS}\n- Target Repository name is empty"
+          fi
+
+          if [ -n "$ERRORS" ]; then
+            echo "::error::Validation failed"
+            gh issue comment ${{ github.event.issue.number }} \
+              --body "❌ **Validation Failed**
+
+          The following required fields are missing:
+          $(echo -e $ERRORS)
+
+          Please close this issue and submit a new request."
+            exit 1
+          fi
+
+          echo "✅ All required fields present"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate source repository exists on GHES
+        run: |
+          GHES_URL="${{ steps.parse.outputs.issueparser_ghes_server_url }}"
+          GHES_API="${GHES_URL}/api/v3"
+          SRC_ORG="${{ steps.parse.outputs.issueparser_source_organization }}"
+          SRC_REPO="${{ steps.parse.outputs.issueparser_source_repo }}"
+
+          echo "Checking source: ${SRC_ORG}/${SRC_REPO} on ${GHES_API}"
+
+          HTTP_CODE=$(curl -s -o /tmp/ghes_repo.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.GHES_PAT_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "${GHES_API}/repos/${SRC_ORG}/${SRC_REPO}")
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            gh issue comment ${{ github.event.issue.number }} \
+              --body "❌ **Source Validation Failed**
+
+          Repository \`${SRC_ORG}/${SRC_REPO}\` not found on GHES (HTTP ${HTTP_CODE}).
+
+          Verify:
+          - GHES server URL is correct
+          - Organization and repo name are correct
+          - The \`GHES_PAT_TOKEN\` secret has access to the source repo"
+            exit 1
+          fi
+
+          ARCHIVED=$(jq -r '.archived' /tmp/ghes_repo.json)
+          if [ "$ARCHIVED" = "true" ]; then
+            gh issue comment ${{ github.event.issue.number }} \
+              --body "❌ **Source Validation Failed**
+
+          Repository \`${SRC_ORG}/${SRC_REPO}\` is already **archived** on GHES. Cannot migrate an archived repository."
+            exit 1
+          fi
+
+          SIZE=$(jq -r '.size' /tmp/ghes_repo.json)
+          BRANCH=$(jq -r '.default_branch' /tmp/ghes_repo.json)
+          VISIBILITY=$(jq -r '.visibility' /tmp/ghes_repo.json)
+
+          echo "✅ Source repository verified"
+          echo "   Size: ${SIZE} KB"
+          echo "   Default branch: ${BRANCH}"
+          echo "   Visibility: ${VISIBILITY}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate target organization exists on GHEC
+        run: |
+          TGT_ORG="${{ steps.parse.outputs.issueparser_target_organization }}"
+
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.GH_PAT_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/orgs/${TGT_ORG}")
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            gh issue comment ${{ github.event.issue.number }} \
+              --body "❌ **Target Validation Failed**
+
+          Organization \`${TGT_ORG}\` not found on GHEC (HTTP ${HTTP_CODE}).
+
+          Ensure the target organization exists before requesting migration."
+            exit 1
+          fi
+
+          echo "✅ Target organization '${TGT_ORG}' verified on GHEC"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check target repo name not taken
+        run: |
+          TGT_ORG="${{ steps.parse.outputs.issueparser_target_organization }}"
+          TGT_REPO="${{ steps.parse.outputs.issueparser_target_repo }}"
+
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.GH_PAT_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${TGT_ORG}/${TGT_REPO}")
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            gh issue comment ${{ github.event.issue.number }} \
+              --body "❌ **Target Validation Failed**
+
+          Repository \`${TGT_ORG}/${TGT_REPO}\` **already exists** on GHEC.
+
+          Choose a different target repository name or delete the existing one first."
+            exit 1
+          fi
+
+          echo "✅ Target name '${TGT_ORG}/${TGT_REPO}' is available"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Comment validation passed
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### ✅ Validation Passed
+
+            | Field | Value |
+            |-------|-------|
+            | **Source (GHES)** | `${{ steps.parse.outputs.issueparser_source_organization }}/${{ steps.parse.outputs.issueparser_source_repo }}` |
+            | **Target (GHEC)** | `${{ steps.parse.outputs.issueparser_target_organization }}/${{ steps.parse.outputs.issueparser_target_repo }}` |
+            | **Visibility** | `${{ steps.parse.outputs.issueparser_target_visibility }}` |
+            | **Admins** | `${{ steps.parse.outputs.issueparser_admins }}` |
+
+            🚀 Proceeding with migration...
+
+      - name: Label as in-progress
+        run: |
+          gh label create "in-progress" --color "FBCA04" --description "Request is being processed" --force 2>/dev/null || true
+          gh issue edit ${{ github.event.issue.number }} --add-label "in-progress"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─────────────────────────────────────────────
+  # Job 2: Pre-migration — record state & lock
+  # ─────────────────────────────────────────────
+  pre-migration:
+    name: "Pre-Migration Setup"
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    outputs:
+      source_branches: ${{ steps.stats.outputs.branches }}
+      source_tags: ${{ steps.stats.outputs.tags }}
+      source_head_sha: ${{ steps.stats.outputs.head_sha }}
+      source_default_branch: ${{ steps.stats.outputs.default_branch }}
+      lock_source: ${{ steps.options.outputs.lock_source }}
+      archive_source: ${{ steps.options.outputs.archive_source }}
+
+    steps:
+      - name: Parse migration options
+        id: options
+        run: |
+          OPTIONS="${{ needs.validate.outputs.migration_options }}"
+          echo "Raw options: $OPTIONS"
+
+          if echo "$OPTIONS" | grep -qi "Lock source repository"; then
+            echo "lock_source=true" >> $GITHUB_OUTPUT
+          else
+            echo "lock_source=false" >> $GITHUB_OUTPUT
+          fi
+
+          if echo "$OPTIONS" | grep -qi "Archive source repository"; then
+            echo "archive_source=true" >> $GITHUB_OUTPUT
+          else
+            echo "archive_source=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Record source repository state
+        id: stats
+        run: |
+          GHES_URL="${{ needs.validate.outputs.ghes_server_url }}"
+          GHES_API="${GHES_URL}/api/v3"
+          SRC_ORG="${{ needs.validate.outputs.source_organization }}"
+          SRC_REPO="${{ needs.validate.outputs.source_repo }}"
+          TOKEN="${{ secrets.GHES_PAT_TOKEN }}"
+
+          # Get repo info
+          REPO_JSON=$(curl -s \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "${GHES_API}/repos/${SRC_ORG}/${SRC_REPO}")
+
+          DEFAULT_BRANCH=$(echo "$REPO_JSON" | jq -r '.default_branch // "main"')
+          echo "default_branch=$DEFAULT_BRANCH" >> $GITHUB_OUTPUT
+
+          # Branch count
+          BRANCHES=$(curl -s \
+            -H "Authorization: Bearer $TOKEN" \
+            "${GHES_API}/repos/${SRC_ORG}/${SRC_REPO}/branches?per_page=100" | jq 'length')
+          echo "branches=$BRANCHES" >> $GITHUB_OUTPUT
+
+          # Tag count
+          TAGS=$(curl -s \
+            -H "Authorization: Bearer $TOKEN" \
+            "${GHES_API}/repos/${SRC_ORG}/${SRC_REPO}/tags?per_page=100" | jq 'length')
+          echo "tags=$TAGS" >> $GITHUB_OUTPUT
+
+          # HEAD SHA
+          BRANCH_JSON=$(curl -s \
+            -H "Authorization: Bearer $TOKEN" \
+            "${GHES_API}/repos/${SRC_ORG}/${SRC_REPO}/branches/${DEFAULT_BRANCH}")
+          HEAD_SHA=$(echo "$BRANCH_JSON" | jq -r '.commit.sha // "unknown"')
+          echo "head_sha=$HEAD_SHA" >> $GITHUB_OUTPUT
+
+          echo "📊 Source repository state recorded:"
+          echo "   Default branch: $DEFAULT_BRANCH"
+          echo "   Branches: $BRANCHES"
+          echo "   Tags: $TAGS"
+          echo "   HEAD SHA: ${HEAD_SHA:0:12}"
+
+      - name: Lock source repository (if requested)
+        if: steps.options.outputs.lock_source == 'true'
+        run: |
+          GHES_URL="${{ needs.validate.outputs.ghes_server_url }}"
+          GHES_API="${GHES_URL}/api/v3"
+          SRC_ORG="${{ needs.validate.outputs.source_organization }}"
+          SRC_REPO="${{ needs.validate.outputs.source_repo }}"
+
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.GHES_PAT_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            -d '{"archived": true}' \
+            "${GHES_API}/repos/${SRC_ORG}/${SRC_REPO}")
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "🔒 Source repository locked (archived) during migration"
+          else
+            echo "⚠️ Failed to lock source (HTTP $HTTP_CODE) — continuing anyway"
+          fi
+
+      - name: Comment pre-migration state
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### 📊 Pre-Migration State Recorded
+
+            | Metric | Value |
+            |--------|-------|
+            | **Branches** | ${{ steps.stats.outputs.branches }} |
+            | **Tags** | ${{ steps.stats.outputs.tags }} |
+            | **Default Branch** | ${{ steps.stats.outputs.default_branch }} |
+            | **HEAD SHA** | `${{ steps.stats.outputs.head_sha }}` |
+            | **Source Locked** | ${{ steps.options.outputs.lock_source }} |
+
+            ⏳ Starting GEI migration...
+
+  # ─────────────────────────────────────────────
+  # Job 3: Execute migration via GEI
+  # ─────────────────────────────────────────────
+  migrate:
+    name: "Execute GEI Migration"
+    needs: [validate, pre-migration]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Install GEI CLI
+        run: |
+          gh extension install github/gh-gei || true
+          gh gei --version
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+
+      - name: Run GEI migration
+        id: gei
+        run: |
+          GHES_URL="${{ needs.validate.outputs.ghes_server_url }}"
+          GHES_API="${GHES_URL}/api/v3"
+          SRC_ORG="${{ needs.validate.outputs.source_organization }}"
+          SRC_REPO="${{ needs.validate.outputs.source_repo }}"
+          TGT_ORG="${{ needs.validate.outputs.target_organization }}"
+          TGT_REPO="${{ needs.validate.outputs.target_repo }}"
+          VISIBILITY="${{ needs.validate.outputs.target_visibility }}"
+
+          echo "🚀 Starting GEI migration..."
+          echo "   Source: ${SRC_ORG}/${SRC_REPO} (GHES)"
+          echo "   Target: ${TGT_ORG}/${TGT_REPO} (GHEC)"
+          echo "   Visibility: ${VISIBILITY}"
+
+          gh gei migrate-repo \
+            --github-source-org "$SRC_ORG" \
+            --source-repo "$SRC_REPO" \
+            --github-target-org "$TGT_ORG" \
+            --target-repo "$TGT_REPO" \
+            --ghes-api-url "$GHES_API" \
+            --target-repo-visibility "$VISIBILITY" \
+            --verbose 2>&1 | tee /tmp/gei_output.txt
+
+          GEI_EXIT=$?
+          echo "exit_code=$GEI_EXIT" >> $GITHUB_OUTPUT
+
+          if [ "$GEI_EXIT" -ne 0 ]; then
+            echo "❌ GEI migration failed"
+            exit 1
+          fi
+
+          echo "✅ GEI migration command completed"
+        env:
+          GH_SOURCE_PAT: ${{ secrets.GHES_PAT_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT_TOKEN }}
+
+      - name: Comment migration result
+        if: always()
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### GEI Migration ${{ steps.gei.outcome == 'success' && '✅' || '❌' }}
+
+            **Source:** `${{ needs.validate.outputs.source_organization }}/${{ needs.validate.outputs.source_repo }}`
+            **Target:** `${{ needs.validate.outputs.target_organization }}/${{ needs.validate.outputs.target_repo }}`
+
+            <details><summary>GEI Output</summary>
+
+            ```
+            $(cat /tmp/gei_output.txt 2>/dev/null || echo "No output captured")
+            ```
+
+            </details>
+
+      - name: Unlock source on failure
+        if: failure() && needs.pre-migration.outputs.lock_source == 'true'
+        run: |
+          GHES_URL="${{ needs.validate.outputs.ghes_server_url }}"
+          GHES_API="${GHES_URL}/api/v3"
+          SRC_ORG="${{ needs.validate.outputs.source_organization }}"
+          SRC_REPO="${{ needs.validate.outputs.source_repo }}"
+
+          echo "🔄 Rollback: unlocking source repository..."
+          curl -s -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.GHES_PAT_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            -d '{"archived": false}' \
+            "${GHES_API}/repos/${SRC_ORG}/${SRC_REPO}"
+
+          echo "🔓 Source repository unlocked"
+
+  # ─────────────────────────────────────────────
+  # Job 4: Post-migration setup
+  # ─────────────────────────────────────────────
+  post-migration:
+    name: "Post-Migration Setup"
+    needs: [validate, pre-migration, migrate]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Wait for GHEC to finalize
+        run: |
+          echo "⏳ Waiting 15 seconds for GHEC to finalize import..."
+          sleep 15
+
+      - name: Add admin collaborators
+        run: |
+          TGT_ORG="${{ needs.validate.outputs.target_organization }}"
+          TGT_REPO="${{ needs.validate.outputs.target_repo }}"
+          ADMINS="${{ needs.validate.outputs.admins }}"
+          TOKEN="${{ secrets.GH_PAT_TOKEN }}"
+
+          echo "👥 Adding admin collaborators..."
+
+          IFS=',' read -ra ADMIN_ARRAY <<< "$ADMINS"
+          for RAW_ADMIN in "${ADMIN_ARRAY[@]}"; do
+            ADMIN=$(echo "$RAW_ADMIN" | xargs | sed 's/^@//')
+            if [ -z "$ADMIN" ]; then continue; fi
+
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X PUT \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/json" \
+              -d '{"permission": "admin"}' \
+              "https://api.github.com/repos/${TGT_ORG}/${TGT_REPO}/collaborators/${ADMIN}")
+
+            if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "204" ]; then
+              echo "   ✅ $ADMIN — added as admin"
+            else
+              echo "   ⚠️ $ADMIN — HTTP $HTTP_CODE"
+            fi
+          done
+
+      - name: Apply team access mappings
+        if: needs.validate.outputs.team_mappings != ''
+        run: |
+          TGT_ORG="${{ needs.validate.outputs.target_organization }}"
+          TGT_REPO="${{ needs.validate.outputs.target_repo }}"
+          TOKEN="${{ secrets.GH_PAT_TOKEN }}"
+
+          echo "👥 Applying team access mappings..."
+
+          MAPPINGS="${{ needs.validate.outputs.team_mappings }}"
+          echo "$MAPPINGS" | while IFS= read -r LINE; do
+            LINE=$(echo "$LINE" | xargs)
+            [ -z "$LINE" ] && continue
+            [[ "$LINE" == \#* ]] && continue
+
+            # Parse: ghes-team → ghec-team : permission
+            if echo "$LINE" | grep -q "→"; then
+              GHEC_PART=$(echo "$LINE" | sed 's/.*→//' | xargs)
+            elif echo "$LINE" | grep -q "->"; then
+              GHEC_PART=$(echo "$LINE" | sed 's/.*->//' | xargs)
+            else
+              echo "   ⚠️ Skipping invalid mapping: $LINE"
+              continue
+            fi
+
+            if echo "$GHEC_PART" | grep -q ":"; then
+              GHEC_TEAM=$(echo "$GHEC_PART" | sed 's/:.*//' | xargs)
+              PERMISSION=$(echo "$GHEC_PART" | sed 's/.*://' | xargs)
+            else
+              GHEC_TEAM="$GHEC_PART"
+              PERMISSION="push"
+            fi
+
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X PUT \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/json" \
+              -d "{\"permission\": \"$PERMISSION\"}" \
+              "https://api.github.com/orgs/${TGT_ORG}/teams/${GHEC_TEAM}/repos/${TGT_ORG}/${TGT_REPO}")
+
+            if [ "$HTTP_CODE" = "204" ]; then
+              echo "   ✅ $GHEC_TEAM — $PERMISSION"
+            else
+              echo "   ⚠️ $GHEC_TEAM — HTTP $HTTP_CODE"
+            fi
+          done
+
+      - name: Enable branch protection
+        run: |
+          TGT_ORG="${{ needs.validate.outputs.target_organization }}"
+          TGT_REPO="${{ needs.validate.outputs.target_repo }}"
+          DEFAULT_BRANCH="${{ needs.pre-migration.outputs.source_default_branch }}"
+          TOKEN="${{ secrets.GH_PAT_TOKEN }}"
+
+          echo "🛡️ Enabling branch protection on '${DEFAULT_BRANCH}'..."
+
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X PUT \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "required_status_checks": null,
+              "enforce_admins": true,
+              "required_pull_request_reviews": {
+                "required_approving_review_count": 1,
+                "dismiss_stale_reviews": true
+              },
+              "restrictions": null
+            }' \
+            "https://api.github.com/repos/${TGT_ORG}/${TGT_REPO}/branches/${DEFAULT_BRANCH}/protection")
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "   ✅ Branch protection enabled"
+          else
+            echo "   ⚠️ Branch protection returned HTTP $HTTP_CODE"
+          fi
+
+      - name: Comment post-migration setup
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### 🔧 Post-Migration Setup Complete
+
+            - ✅ Admin collaborators added: `${{ needs.validate.outputs.admins }}`
+            - ✅ Branch protection enabled on `${{ needs.pre-migration.outputs.source_default_branch }}`
+            - ✅ Team access mappings applied (if provided)
+
+            📋 Running verification checks...
+
+  # ─────────────────────────────────────────────
+  # Job 5: Verify migration integrity
+  # ─────────────────────────────────────────────
+  verify:
+    name: "Verify Migration"
+    needs: [validate, pre-migration, post-migration]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    outputs:
+      verification_passed: ${{ steps.verify.outputs.all_pass }}
+
+    steps:
+      - name: Verify migration integrity
+        id: verify
+        run: |
+          TGT_ORG="${{ needs.validate.outputs.target_organization }}"
+          TGT_REPO="${{ needs.validate.outputs.target_repo }}"
+          TOKEN="${{ secrets.GH_PAT_TOKEN }}"
+
+          SRC_BRANCHES="${{ needs.pre-migration.outputs.source_branches }}"
+          SRC_TAGS="${{ needs.pre-migration.outputs.source_tags }}"
+          SRC_HEAD_SHA="${{ needs.pre-migration.outputs.source_head_sha }}"
+          DEFAULT_BRANCH="${{ needs.pre-migration.outputs.source_default_branch }}"
+
+          echo "📋 Verifying migration integrity..."
+
+          # Target branches
+          TGT_BRANCHES=$(curl -s \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://api.github.com/repos/${TGT_ORG}/${TGT_REPO}/branches?per_page=100" | jq 'length')
+
+          # Target tags
+          TGT_TAGS=$(curl -s \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://api.github.com/repos/${TGT_ORG}/${TGT_REPO}/tags?per_page=100" | jq 'length')
+
+          # Target HEAD SHA
+          TGT_HEAD_SHA=$(curl -s \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://api.github.com/repos/${TGT_ORG}/${TGT_REPO}/branches/${DEFAULT_BRANCH}" | jq -r '.commit.sha // "unknown"')
+
+          ALL_PASS="true"
+
+          echo ""
+          echo "Check              Source          Target          Status"
+          echo "────────────────────────────────────────────────────────────"
+
+          # Branches
+          if [ "$SRC_BRANCHES" = "$TGT_BRANCHES" ]; then
+            echo "Branches           $SRC_BRANCHES               $TGT_BRANCHES               ✅ PASS"
+          else
+            echo "Branches           $SRC_BRANCHES               $TGT_BRANCHES               ❌ FAIL"
+            ALL_PASS="false"
+          fi
+
+          # Tags
+          if [ "$SRC_TAGS" = "$TGT_TAGS" ]; then
+            echo "Tags               $SRC_TAGS               $TGT_TAGS               ✅ PASS"
+          else
+            echo "Tags               $SRC_TAGS               $TGT_TAGS               ❌ FAIL"
+            ALL_PASS="false"
+          fi
+
+          # HEAD SHA
+          SRC_SHORT="${SRC_HEAD_SHA:0:7}"
+          TGT_SHORT="${TGT_HEAD_SHA:0:7}"
+          if [ "$SRC_SHORT" = "$TGT_SHORT" ]; then
+            echo "HEAD SHA           $SRC_SHORT          $TGT_SHORT          ✅ PASS"
+          else
+            echo "HEAD SHA           $SRC_SHORT          $TGT_SHORT          ❌ FAIL"
+            ALL_PASS="false"
+          fi
+
+          echo "────────────────────────────────────────────────────────────"
+          echo "all_pass=$ALL_PASS" >> $GITHUB_OUTPUT
+
+          # Save for comment
+          echo "tgt_branches=$TGT_BRANCHES" >> $GITHUB_OUTPUT
+          echo "tgt_tags=$TGT_TAGS" >> $GITHUB_OUTPUT
+          echo "tgt_head_sha=$TGT_HEAD_SHA" >> $GITHUB_OUTPUT
+
+      - name: Comment verification result
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### 📋 Migration Verification ${{ steps.verify.outputs.all_pass == 'true' && '✅' || '⚠️' }}
+
+            | Check | Source | Target | Status |
+            |-------|--------|--------|--------|
+            | **Branches** | ${{ needs.pre-migration.outputs.source_branches }} | ${{ steps.verify.outputs.tgt_branches }} | ${{ needs.pre-migration.outputs.source_branches == steps.verify.outputs.tgt_branches && '✅' || '❌' }} |
+            | **Tags** | ${{ needs.pre-migration.outputs.source_tags }} | ${{ steps.verify.outputs.tgt_tags }} | ${{ needs.pre-migration.outputs.source_tags == steps.verify.outputs.tgt_tags && '✅' || '❌' }} |
+            | **HEAD SHA** | `${{ needs.pre-migration.outputs.source_head_sha }}` | `${{ steps.verify.outputs.tgt_head_sha }}` | ${{ steps.verify.outputs.all_pass == 'true' && '✅' || '⚠️' }} |
+
+            **Target URL:** https://github.com/${{ needs.validate.outputs.target_organization }}/${{ needs.validate.outputs.target_repo }}
+
+  # ─────────────────────────────────────────────
+  # Job 6: Cutover — archive source & cleanup
+  # ─────────────────────────────────────────────
+  cutover:
+    name: "Cutover & Cleanup"
+    needs: [validate, pre-migration, verify]
+    if: needs.verify.outputs.verification_passed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Archive source repo on GHES (if requested)
+        if: needs.pre-migration.outputs.archive_source == 'true'
+        run: |
+          GHES_URL="${{ needs.validate.outputs.ghes_server_url }}"
+          GHES_API="${GHES_URL}/api/v3"
+          SRC_ORG="${{ needs.validate.outputs.source_organization }}"
+          SRC_REPO="${{ needs.validate.outputs.source_repo }}"
+
+          echo "📦 Archiving source repository on GHES..."
+
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.GHES_PAT_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            -d '{"archived": true, "description": "[MIGRATED TO GHEC] — see GHEC for active development"}' \
+            "${GHES_API}/repos/${SRC_ORG}/${SRC_REPO}")
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ Source repository archived"
+          else
+            echo "⚠️ Failed to archive source (HTTP $HTTP_CODE)"
+          fi
+
+      - name: Update migration manifest YAML
+        run: |
+          pip install pyyaml
+
+          python3 - <<'PYEOF'
+          import yaml
+          import os
+          from datetime import datetime
+
+          manifest_path = "data/migration-manifests.yaml"
+
+          # Load or create manifest
+          if os.path.exists(manifest_path):
+              with open(manifest_path, "r") as f:
+                  data = yaml.safe_load(f) or {}
+          else:
+              data = {}
+
+          if "migrations" not in data or data["migrations"] is None:
+              data["migrations"] = {}
+
+          source_org = "${{ needs.validate.outputs.source_organization }}"
+          source_repo = "${{ needs.validate.outputs.source_repo }}"
+          target_org = "${{ needs.validate.outputs.target_organization }}"
+          target_repo = "${{ needs.validate.outputs.target_repo }}"
+
+          key = f"{source_org}-{source_repo}"
+
+          data["migrations"][key] = {
+              "source": {
+                  "server": "${{ needs.validate.outputs.ghes_server_url }}",
+                  "organization": source_org,
+                  "repository": source_repo,
+              },
+              "target": {
+                  "organization": target_org,
+                  "repository": target_repo,
+                  "visibility": "${{ needs.validate.outputs.target_visibility }}",
+              },
+              "status": "completed",
+              "completed_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "issue_number": ${{ github.event.issue.number }},
+              "verification": {
+                  "source_branches": int("${{ needs.pre-migration.outputs.source_branches }}"),
+                  "source_tags": int("${{ needs.pre-migration.outputs.source_tags }}"),
+                  "source_head_sha": "${{ needs.pre-migration.outputs.source_head_sha }}",
+              },
+          }
+
+          with open(manifest_path, "w") as f:
+              yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
+          print(f"✅ Migration manifest updated: {key}")
+          PYEOF
+
+      - name: Commit migration manifest
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/migration-manifests.yaml
+          git diff --cached --quiet && echo "No changes to commit" || \
+            (git commit -m "Track migration: ${{ needs.validate.outputs.source_organization }}/${{ needs.validate.outputs.source_repo }} → ${{ needs.validate.outputs.target_organization }}/${{ needs.validate.outputs.target_repo }} (issue #${{ github.event.issue.number }})" && git push)
+
+  # ─────────────────────────────────────────────
+  # Job 7: Close issue
+  # ─────────────────────────────────────────────
+  close-issue:
+    name: "Close Issue"
+    needs: [validate, pre-migration, verify, cutover]
+    if: |
+      always() &&
+      needs.verify.outputs.verification_passed == 'true' &&
+      (needs.cutover.result == 'success' || needs.cutover.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Label and close issue
+        run: |
+          SRC="${{ needs.validate.outputs.source_organization }}/${{ needs.validate.outputs.source_repo }}"
+          TGT="${{ needs.validate.outputs.target_organization }}/${{ needs.validate.outputs.target_repo }}"
+          TGT_URL="https://github.com/${TGT}"
+          ARCHIVED="${{ needs.pre-migration.outputs.archive_source }}"
+
+          ARCHIVE_MSG=""
+          if [ "$ARCHIVED" = "true" ]; then
+            ARCHIVE_MSG=$'\n- 📦 Source repository archived on GHES'
+          fi
+
+          gh label create "completed" --color "0E8A16" --description "Request completed" --force 2>/dev/null || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "completed" --remove-label "in-progress"
+
+          gh issue close "$ISSUE_NUMBER" \
+            --comment "### 🎉 Migration Completed Successfully!
+
+          | Detail | Value |
+          |--------|-------|
+          | **Source (GHES)** | \`${SRC}\` |
+          | **Target (GHEC)** | [\`${TGT}\`](${TGT_URL}) |
+          | **Branches** | ${{ needs.pre-migration.outputs.source_branches }} |
+          | **Tags** | ${{ needs.pre-migration.outputs.source_tags }} |
+          | **HEAD SHA** | \`${{ needs.pre-migration.outputs.source_head_sha }}\` |
+          | **Verification** | ✅ All checks passed |
+          ${ARCHIVE_MSG}
+
+          The repository has been successfully migrated to GHEC."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}

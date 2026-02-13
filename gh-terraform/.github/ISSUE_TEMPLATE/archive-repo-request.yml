@@ -1,0 +1,89 @@
+name: "Archive Repository Request"
+description: "Request to archive an existing GitHub repository — typically when a project is deprecated, replaced, or no longer maintained"
+title: "[Archive Repo] "
+labels: ["archive-repo-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Archive Repository Request
+        Request to archive an existing GitHub repository, typically when a project is deprecated,
+        replaced, or no longer maintained. The workflow validates ownership, collects approvals,
+        and performs the archive operation while ensuring permissions and compliance requirements are met.
+
+        **⚠️ Archiving a repository makes it read-only. All code, issues, pull requests, labels,
+        milestones, projects, wiki, releases, commits, tags, branches, reactions, and comments
+        become read-only. This action can be reversed but all active work will be frozen.**
+
+  - type: input
+    id: organization
+    attributes:
+      label: "GitHub Organization"
+      description: "The GitHub organization that owns the repository"
+      placeholder: "maybank-sandbox"
+    validations:
+      required: true
+
+  - type: input
+    id: repo_name
+    attributes:
+      label: "Repository Name"
+      description: "The exact name of the repository to archive"
+      placeholder: "maybank-digital-frontend"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: reason
+    attributes:
+      label: "Reason for Archiving"
+      description: "Business reason for archiving this repository"
+      options:
+        - Deprecated
+        - Project Completed
+        - Replaced
+        - No Longer Needed
+    validations:
+      required: true
+
+  - type: textarea
+    id: justification
+    attributes:
+      label: "Justification"
+      description: "Explanation from requester supporting the archive request"
+      placeholder: |
+        e.g., This project was replaced by maybank-digital-frontend-v2.
+        All active development has been migrated. No open PRs or issues remain.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: lock_repo
+    attributes:
+      label: "Lock Repository"
+      description: "Optionally lock the repository after archiving to prevent any further changes"
+      options:
+        - label: "Lock the repository after archiving to prevent further changes"
+          required: false
+
+  - type: input
+    id: point_of_contact
+    attributes:
+      label: "Point of Contact"
+      description: "Email or GitHub username of the person responsible for the archived repository"
+      placeholder: "@username or email@example.com"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: "Confirmation"
+      description: "Please confirm you understand the impact of archiving"
+      options:
+        - label: "I confirm that I want to archive this repository and understand it will become read-only"
+          required: true
+        - label: "I have notified all active contributors and stakeholders about this archive request"
+          required: true
+        - label: "All pending pull requests and issues have been resolved or migrated"
+          required: true

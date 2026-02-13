@@ -1,0 +1,146 @@
+name: "New Repository Request"
+description: "Request creation of a new GitHub repository in any organization"
+title: "[New Repo] "
+labels: ["new-repo-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## New Repository Request
+        Fill out the form below to request a new GitHub repository.
+        The repository name must follow the naming convention: `<org>-<project>-<component>`
+
+  - type: input
+    id: organization
+    attributes:
+      label: "GitHub Organization"
+      description: "The GitHub organization where the repository will be created"
+      placeholder: "maybank-sandbox"
+    validations:
+      required: true
+
+  - type: input
+    id: repo_name
+    attributes:
+      label: "Repository Name"
+      description: "Must follow naming convention: <org>-<project>-<component> (lowercase, hyphens only)"
+      placeholder: "maybank-digital-frontend"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: visibility
+    attributes:
+      label: "Visibility"
+      options:
+        - private
+        - internal
+        - public
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: "Repository Description"
+      placeholder: "Brief description of the repository purpose"
+    validations:
+      required: true
+
+  - type: input
+    id: topics
+    attributes:
+      label: "Topics (comma-separated)"
+      placeholder: "frontend, react, production"
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: "Target Environment"
+      options:
+        - sit
+        - staging
+        - production
+        - all
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: features
+    attributes:
+      label: "Repository Features"
+      options:
+        - label: "Enable Issues"
+          required: false
+        - label: "Enable Projects"
+          required: false
+        - label: "Enable Branch Protection"
+          required: false
+        - label: "Enable Repository Ruleset"
+          required: false
+
+  - type: dropdown
+    id: merge_strategy
+    attributes:
+      label: "Merge Strategy"
+      options:
+        - squash-only
+        - merge-only
+        - rebase-only
+        - all
+    validations:
+      required: true
+
+  - type: input
+    id: approvers_count
+    attributes:
+      label: "Required Approving Reviews"
+      placeholder: "2"
+
+  - type: textarea
+    id: team_permissions
+    attributes:
+      label: "Team Permissions (YAML format)"
+      description: "Specify team access in YAML format: team-slug: permission (admin/push/pull)"
+      placeholder: |
+        platform-admins: admin
+        frontend-devs: push
+      render: yaml
+
+  - type: checkboxes
+    id: enable_codeowners
+    attributes:
+      label: "CODEOWNERS"
+      description: "Enable CODEOWNERS file for this repository"
+      options:
+        - label: "Enable CODEOWNERS file"
+
+  - type: textarea
+    id: codeowners
+    attributes:
+      label: "CODEOWNERS Rules"
+      description: |
+        Define code ownership rules. One rule per line.
+        Format: `<pattern> <owner1> <owner2> ...`
+        Owners can be @username, @org/team-slug, or email.
+
+        Leave blank if CODEOWNERS is not enabled above.
+      placeholder: |
+        # Default owners for everything
+        * @platform-team
+
+        # Frontend owned by frontend team
+        /src/frontend/ @org/frontend-team
+
+        # Docs owned by docs team
+        /docs/ @org/docs-team @tech-writer
+
+        # CI/CD config requires platform approval
+        /.github/ @org/platform-team
+      render: text
+
+  - type: textarea
+    id: additional_notes
+    attributes:
+      label: "Additional Notes"
+      placeholder: "Any extra configuration or requirements"

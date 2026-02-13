@@ -1,0 +1,482 @@
+name: "Handle Repo Settings Request"
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  # ─────────────────────────────────────────────
+  # Validate: Check repo exists
+  # ─────────────────────────────────────────────
+  validate:
+    if: startsWith(github.event.issue.title, '[Repo Settings]')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    outputs:
+      repo_name: ${{ steps.parse.outputs.issueparser_repo_name }}
+      organization: ${{ steps.parse.outputs.issueparser_organization }}
+      settings_type: ${{ steps.parse.outputs.issueparser_settings_type }}
+      branch_pattern: ${{ steps.parse.outputs.issueparser_branch_pattern }}
+      approvers_count: ${{ steps.parse.outputs.issueparser_approvers_count }}
+      bp_options: ${{ steps.parse.outputs.issueparser_bp_options }}
+      ruleset_name: ${{ steps.parse.outputs.issueparser_ruleset_name }}
+      ruleset_enforcement: ${{ steps.parse.outputs.issueparser_ruleset_enforcement }}
+      ruleset_rules: ${{ steps.parse.outputs.issueparser_ruleset_rules }}
+      ruleset_approvals: ${{ steps.parse.outputs.issueparser_ruleset_approvals }}
+      justification: ${{ steps.parse.outputs.issueparser_justification }}
+      repo_exists: ${{ steps.check_repo.outputs.exists }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse Issue Form
+        id: parse
+        uses: stefanbuck/github-issue-parser@v3
+        with:
+          template-path: .github/ISSUE_TEMPLATE/repo-settings-request.yml
+
+      - name: Validate Repository Existence
+        id: check_repo
+        run: |
+          ORG="${{ steps.parse.outputs.issueparser_organization }}"
+          REPO="${{ steps.parse.outputs.issueparser_repo_name }}"
+
+          echo "Validating repository: $ORG/$REPO"
+
+          HTTP_CODE=$(curl -s -o /tmp/repo_response.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.GH_PAT_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$ORG/$REPO")
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "::error::Repository $ORG/$REPO not found (HTTP $HTTP_CODE)"
+          else
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Repository found:"
+            jq '{name, full_name, visibility, archived, default_branch}' /tmp/repo_response.json
+          fi
+
+      - name: Fail if repo does not exist
+        if: steps.check_repo.outputs.exists != 'true'
+        run: |
+          gh issue comment ${{ github.event.issue.number }} \
+            --body "❌ **Validation Failed**
+
+          Repository \`${{ steps.parse.outputs.issueparser_organization }}/${{ steps.parse.outputs.issueparser_repo_name }}\` was **not found**.
+
+          Please verify the organization name and repository name are correct, then open a new request."
+
+          gh issue edit ${{ github.event.issue.number }} --add-label "validation-failed"
+          gh issue close ${{ github.event.issue.number }}
+          exit 1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
+      - name: Comment Validation Success
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ✅ **Validation Passed**
+
+            | Field | Value |
+            |-------|-------|
+            | **Organization** | `${{ steps.parse.outputs.issueparser_organization }}` |
+            | **Repository** | `${{ steps.parse.outputs.issueparser_repo_name }}` |
+            | **Settings** | ${{ steps.parse.outputs.issueparser_settings_type }} |
+
+            Proceeding with YAML update and Terraform plan...
+
+      - name: Label as In Progress
+        run: |
+          gh label create "in-progress" --color "FBCA04" --description "Request is being processed" --force 2>/dev/null || true
+          gh issue edit ${{ github.event.issue.number }} --add-label "in-progress"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─────────────────────────────────────────────
+  # CI: Update YAML + Commit
+  # ─────────────────────────────────────────────
+  update-yaml:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Update repo-settings-requests.yaml
+        run: |
+          python3 scripts/update_repo_settings_yaml.py \
+            --name "${{ needs.validate.outputs.repo_name }}" \
+            --org "${{ needs.validate.outputs.organization }}" \
+            --settings-type "${{ needs.validate.outputs.settings_type }}" \
+            --branch-pattern "${{ needs.validate.outputs.branch_pattern }}" \
+            --approvers "${{ needs.validate.outputs.approvers_count }}" \
+            --bp-options "${{ needs.validate.outputs.bp_options }}" \
+            --ruleset-name "${{ needs.validate.outputs.ruleset_name }}" \
+            --ruleset-enforcement "${{ needs.validate.outputs.ruleset_enforcement }}" \
+            --ruleset-rules "${{ needs.validate.outputs.ruleset_rules }}" \
+            --ruleset-approvals "${{ needs.validate.outputs.ruleset_approvals }}" \
+            --justification "${{ needs.validate.outputs.justification }}"
+
+      - name: Commit and Push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/repo-settings-requests.yaml
+          git commit -m "feat: update repo settings for ${{ needs.validate.outputs.repo_name }} in ${{ needs.validate.outputs.organization }}"
+          git push
+
+      - name: Comment on Issue
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ✅ **YAML Updated**
+
+            | Field | Value |
+            |-------|-------|
+            | **Organization** | `${{ needs.validate.outputs.organization }}` |
+            | **Repository** | `${{ needs.validate.outputs.repo_name }}` |
+            | **Settings** | ${{ needs.validate.outputs.settings_type }} |
+
+            🔍 Checkov security scan will run next, followed by Terraform plan.
+
+  # ─────────────────────────────────────────────
+  # CI: Security Scanning (Checkov)
+  # ─────────────────────────────────────────────
+  checkov-scan:
+    needs: [validate, update-yaml]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    strategy:
+      matrix:
+        environment: [sit, staging, prod]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Pull latest changes
+        run: git pull origin ${{ github.event.repository.default_branch }}
+
+      - name: Run Checkov Scan
+        id: checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: environments/${{ matrix.environment }}
+          framework: terraform
+          output_format: cli,sarif
+          output_file_path: console,checkov-${{ matrix.environment }}.sarif
+          soft_fail: true
+          skip_check: CKV_GIT_1,CKV_GIT_5
+
+      - name: Comment Checkov Result on Issue
+        if: always()
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### 🔍 Checkov Scan — `${{ matrix.environment }}` ${{ steps.checkov.outcome == 'success' && '✅' || '⚠️' }}
+
+            Security scan completed for `environments/${{ matrix.environment }}`.
+            Status: **${{ steps.checkov.outcome }}**
+
+  # ─────────────────────────────────────────────
+  # CI: Terraform Plan (all environments)
+  # ─────────────────────────────────────────────
+  terraform-plan:
+    needs: [validate, update-yaml, checkov-scan]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    strategy:
+      matrix:
+        environment: [sit, staging, prod]
+
+    steps:
+      - name: Fail if Organization is empty
+        run: |
+          ORG="${{ needs.validate.outputs.organization }}"
+          echo "Organization from issue template: [$ORG]"
+          if [ -z "$ORG" ]; then
+            echo "::error::Organization is empty! Check issue template parsing."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Pull latest changes
+        run: git pull origin ${{ github.event.repository.default_branch }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.0
+
+      - name: Terraform Init
+        working-directory: environments/${{ matrix.environment }}
+        run: terraform init
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_github_token: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_organization: ${{ needs.validate.outputs.organization }}
+          GITHUB_OWNER: ${{ needs.validate.outputs.organization }}
+
+      - name: Terraform Validate
+        working-directory: environments/${{ matrix.environment }}
+        run: terraform validate
+        env:
+          TF_VAR_github_token: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_organization: ${{ needs.validate.outputs.organization }}
+          GITHUB_OWNER: ${{ needs.validate.outputs.organization }}
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: environments/${{ matrix.environment }}
+        run: |
+          terraform plan -no-color -out=tfplan 2>&1 | tee plan_output.txt
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_github_token: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_organization: ${{ needs.validate.outputs.organization }}
+          GITHUB_OWNER: ${{ needs.validate.outputs.organization }}
+        continue-on-error: true
+
+      - name: Comment Plan on Issue
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Terraform Plan — `${{ matrix.environment }}` ${{ steps.plan.outcome == 'success' && '✅' || '❌' }}
+
+            <details><summary>Show Plan</summary>
+
+            ```
+            ${{ steps.plan.outputs.stdout }}
+            ```
+
+            </details>
+
+      - name: Fail if Plan Failed
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+  # ─────────────────────────────────────────────
+  # CD: Terraform Apply — SIT
+  # ─────────────────────────────────────────────
+  terraform-apply-sit:
+    needs: [validate, terraform-plan]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    environment:
+      name: sit
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Pull latest changes
+        run: git pull origin ${{ github.event.repository.default_branch }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.0
+
+      - name: Terraform Init
+        working-directory: environments/sit
+        run: terraform init
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_github_token: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_organization: ${{ needs.validate.outputs.organization }}
+          GITHUB_OWNER: ${{ needs.validate.outputs.organization }}
+
+      - name: Terraform Apply
+        working-directory: environments/sit
+        run: terraform apply -auto-approve
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_github_token: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_organization: ${{ needs.validate.outputs.organization }}
+          GITHUB_OWNER: ${{ needs.validate.outputs.organization }}
+
+      - name: Comment Apply Result on Issue
+        if: always()
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Terraform Apply — `sit` ${{ job.status == 'success' && '✅' || '❌' }}
+            Status: **${{ job.status }}**
+
+  # ─────────────────────────────────────────────
+  # CD: Terraform Apply — Staging
+  # ─────────────────────────────────────────────
+  terraform-apply-staging:
+    needs: [validate, terraform-apply-sit]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    environment:
+      name: staging
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Pull latest changes
+        run: git pull origin ${{ github.event.repository.default_branch }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.0
+
+      - name: Terraform Init
+        working-directory: environments/staging
+        run: terraform init
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_github_token: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_organization: ${{ needs.validate.outputs.organization }}
+          GITHUB_OWNER: ${{ needs.validate.outputs.organization }}
+
+      - name: Terraform Apply
+        working-directory: environments/staging
+        run: terraform apply -auto-approve
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_github_token: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_organization: ${{ needs.validate.outputs.organization }}
+          GITHUB_OWNER: ${{ needs.validate.outputs.organization }}
+
+      - name: Comment Apply Result on Issue
+        if: always()
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Terraform Apply — `staging` ${{ job.status == 'success' && '✅' || '❌' }}
+            Status: **${{ job.status }}**
+
+  # ─────────────────────────────────────────────
+  # CD: Terraform Apply — Prod
+  # ─────────────────────────────────────────────
+  terraform-apply-prod:
+    needs: [validate, terraform-apply-staging]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    environment:
+      name: prod
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Pull latest changes
+        run: git pull origin ${{ github.event.repository.default_branch }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.0
+
+      - name: Terraform Init
+        working-directory: environments/prod
+        run: terraform init
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_github_token: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_organization: ${{ needs.validate.outputs.organization }}
+          GITHUB_OWNER: ${{ needs.validate.outputs.organization }}
+
+      - name: Terraform Apply
+        working-directory: environments/prod
+        run: terraform apply -auto-approve
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_github_token: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_organization: ${{ needs.validate.outputs.organization }}
+          GITHUB_OWNER: ${{ needs.validate.outputs.organization }}
+
+      - name: Comment Apply Result on Issue
+        if: always()
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Terraform Apply — `prod` ${{ job.status == 'success' && '✅' || '❌' }}
+            Status: **${{ job.status }}**
+
+  # ─────────────────────────────────────────────
+  # Close Issue on Success
+  # ─────────────────────────────────────────────
+  close-issue:
+    needs: [validate, terraform-apply-sit, terraform-apply-staging, terraform-apply-prod]
+    if: |
+      always() &&
+      needs.terraform-apply-sit.result == 'success' &&
+      needs.terraform-apply-staging.result == 'success' &&
+      needs.terraform-apply-prod.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Label and Close Issue
+        run: |
+          gh label create "completed" --color "0E8A16" --description "Request completed" --force 2>/dev/null || true
+          gh issue edit ${{ github.event.issue.number }} --add-label "completed" --remove-label "in-progress"
+          gh issue close ${{ github.event.issue.number }} --comment "✅ Repository settings have been successfully applied in all environments (SIT → Staging → Prod).
+
+          **Repository:** \`${{ needs.validate.outputs.organization }}/${{ needs.validate.outputs.repo_name }}\`
+          **Settings applied:** ${{ needs.validate.outputs.settings_type }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}

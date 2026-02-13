@@ -1,0 +1,76 @@
+name: Terraform Apply
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "environments/**"
+      - "data/**/*.yaml"
+      - "data/**/*.yml"
+      - "modules/**/*.tf"
+      - "*.tf"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to apply"
+        required: true
+        type: choice
+        options:
+          - sit
+          - staging
+          - prod
+
+permissions:
+  contents: write
+  issues: write
+  actions: write
+
+jobs:
+  terraform-apply:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.environment)) || fromJSON('["sit", "staging", "prod"]') }}
+
+    environment:
+      name: ${{ matrix.environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.0
+
+      - name: Terraform Init
+        working-directory: environments/${{ matrix.environment }}
+        run: terraform init
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_github_token: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_organization: ${{ vars.ORGANIZATION || '' }}
+          GITHUB_OWNER: ${{ vars.ORGANIZATION || '' }}
+
+      - name: Terraform Plan
+        working-directory: environments/${{ matrix.environment }}
+        run: terraform plan -no-color -out=tfplan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_github_token: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_organization: ${{ vars.ORGANIZATION || '' }}
+          GITHUB_OWNER: ${{ vars.ORGANIZATION || '' }}
+
+      - name: Terraform Apply
+        working-directory: environments/${{ matrix.environment }}
+        run: terraform apply -auto-approve tfplan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          TF_HTTP_PASSWORD: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_github_token: ${{ secrets.GH_PAT_TOKEN }}
+          TF_VAR_organization: ${{ vars.ORGANIZATION || '' }}
+          GITHUB_OWNER: ${{ vars.ORGANIZATION || '' }}

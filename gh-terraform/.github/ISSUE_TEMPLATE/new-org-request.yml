@@ -1,0 +1,148 @@
+name: "New Organization Request"
+description: "Request creation of a new GitHub Enterprise organization"
+title: "[New Org] "
+labels: ["new-org-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## New Enterprise Organization Request
+        Fill out the form below to request a new GitHub Enterprise organization.
+        The organization name must be lowercase with hyphens only.
+
+  - type: input
+    id: enterprise_slug
+    attributes:
+      label: "Enterprise Slug"
+      description: "The GitHub Enterprise slug (found in your enterprise URL)"
+      placeholder: "my-enterprise"
+    validations:
+      required: true
+
+  - type: input
+    id: org_name
+    attributes:
+      label: "Organization Name (login)"
+      description: "The URL-friendly name for the organization (lowercase, hyphens only)"
+      placeholder: "maybank-sandbox"
+    validations:
+      required: true
+
+  - type: input
+    id: display_name
+    attributes:
+      label: "Display Name"
+      description: "Human-readable name for the organization"
+      placeholder: "Maybank Sandbox"
+    validations:
+      required: true
+
+  - type: textarea
+    id: org_description
+    attributes:
+      label: "Organization Description"
+      placeholder: "Brief description of the organization purpose"
+    validations:
+      required: true
+
+  - type: input
+    id: billing_email
+    attributes:
+      label: "Billing Email"
+      description: "The billing email address for the organization"
+      placeholder: "billing@company.com"
+    validations:
+      required: true
+
+  - type: input
+    id: admin_logins
+    attributes:
+      label: "Admin Usernames (comma-separated)"
+      description: "GitHub usernames who will be organization admins"
+      placeholder: "user1, user2"
+    validations:
+      required: true
+
+  - type: input
+    id: company
+    attributes:
+      label: "Company Name"
+      placeholder: "Maybank"
+
+  - type: input
+    id: blog
+    attributes:
+      label: "Blog / Website URL"
+      placeholder: "https://company.com"
+
+  - type: input
+    id: org_email
+    attributes:
+      label: "Public Email"
+      placeholder: "contact@company.com"
+
+  - type: input
+    id: location
+    attributes:
+      label: "Location"
+      placeholder: "Kuala Lumpur, Malaysia"
+
+  - type: dropdown
+    id: default_repo_permission
+    attributes:
+      label: "Default Repository Permission"
+      description: "Default permission level for organization members on new repositories"
+      options:
+        - read
+        - write
+        - admin
+        
+    validations:
+      required: true
+
+  - type: dropdown
+    id: members_can_create_repos
+    attributes:
+      label: "Members Can Create Repositories"
+      options:
+        - "Yes"
+        - "No"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: "Target Environment"
+      description: "Which environment to create the organization in"
+      options:
+        - sit
+        - staging
+        - production
+        - all
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: security_features
+    attributes:
+      label: "Security Features for New Repositories"
+      options:
+        - label: "Advanced Security"
+          required: false
+        - label: "Secret Scanning"
+          required: false
+        - label: "Secret Scanning Push Protection"
+          required: false
+        - label: "Dependabot Alerts"
+          required: false
+        - label: "Dependabot Security Updates"
+          required: false
+        - label: "Dependency Graph"
+          required: false
+
+  - type: textarea
+    id: additional_notes
+    attributes:
+      label: "Additional Notes"
+      placeholder: "Any extra configuration or requirements"

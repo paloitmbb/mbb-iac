@@ -1,0 +1,16 @@
+# CODEOWNERS file for repository ownership
+# These owners will be requested for review when someone opens a PR
+
+# Default owners for everything in the repo
+* @platform-team
+
+# Terraform configurations - infrastructure team owns all .tf files
+*.tf @infrastructure-team
+/modules/ @infrastructure-team
+
+# GitHub workflows and configurations
+/.github/ @devops-team @platform-team
+
+# Documentation
+/docs/ @platform-team
+*.md @platform-team
