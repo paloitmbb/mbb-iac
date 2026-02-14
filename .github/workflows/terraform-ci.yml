@@ -1,0 +1,110 @@
+name: Terraform CI - GitHub Provider
+
+on:
+  pull_request:
+    paths:
+      - "environments/**/*.tfvars"
+      - "data/**/*.yaml"
+      - "data/**/*.yml"
+      - "modules/**/*.tf"
+      - "*.tf"
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - production
+        default: 'dev'
+
+      terraform-version:
+        description: 'Terraform version'
+        required: false
+        type: string
+        default: '1.5.7'
+
+      enable-tfsec:
+        description: 'Enable tfsec scanning'
+        required: false
+        type: boolean
+        default: true
+
+      enable-trivy:
+        description: 'Enable Trivy scanning'
+        required: false
+        type: boolean
+        default: true
+
+      tfsec-severity:
+        description: 'tfsec minimum severity to fail on'
+        required: false
+        type: choice
+        options:
+          - LOW
+          - MEDIUM
+          - HIGH
+          - CRITICAL
+        default: 'CRITICAL'
+
+      trivy-severity:
+        description: 'Trivy minimum severity to fail on'
+        required: false
+        type: choice
+        options:
+          - LOW
+          - MEDIUM
+          - HIGH
+          - CRITICAL
+        default: 'HIGH'
+
+# Prevent concurrent runs
+concurrency:
+  group: terraform-ci-${{ github.ref }}
+  cancel-in-progress: false
+
+# Permissions for OIDC and security scanning
+permissions:
+  contents: read
+  security-events: write
+  id-token: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  terraform-ci:
+    name: Terraform CI (${{ inputs.environment || 'dev' }})
+    uses: paloitmbb/mbb-tf-workflows/.github/workflows/terraform-gh-ci.yml@main
+    with:
+      terraform-version: ${{ vars.TERRAFORM_VERSION || '1.5.7' }}
+      working-directory: '.'
+      environment: ${{ inputs.environment || 'dev' }}
+      backend-config-file: environments/${{ inputs.environment || 'dev' }}/backend.tfvars
+      terraform-var-file: environments/${{ inputs.environment || 'dev' }}/terraform.tfvars
+
+      # Code Quality Scanning
+      enable-tflint: true  # Temporarily disabled - fix unused variables first
+      tflint-version: 'v0.60.0'
+
+      # Security Scanning
+      enable-tfsec: true
+      enable-trivy: true
+      tfsec-severity: ${{ inputs.tfsec-severity || 'CRITICAL' }}
+      trivy-severity: ${{ inputs.trivy-severity || 'HIGH' }}
+
+      # Continue-on-error Control
+      # Individual scanners continue to allow all scans to complete
+      tfsec-continue-on-error: true
+      trivy-continue-on-error: true
+      # Aggregate enforces security gate: fail CI if any scanner fails
+      aggregate-continue-on-error: false
+
+      # Terraform Configuration
+      enable-pr-comment: true
+      runner-os: ${{ vars.RUNNER_OS || 'ubuntu-latest' }}
+      timeout-minutes: 60
+    secrets:
+      ORG_GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}

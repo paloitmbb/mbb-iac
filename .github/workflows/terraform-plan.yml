@@ -1,13 +1,13 @@
 name: Terraform Plan
 
-on:
-  pull_request:
-    paths:
-      - "environments/**/*.tfvars"
-      - "data/**/*.yaml"
-      - "data/**/*.yml"
-      - "modules/**/*.tf"
-      - "*.tf"
+# on:
+#   pull_request:
+#     paths:
+#       - "environments/**/*.tfvars"
+#       - "data/**/*.yaml"
+#       - "data/**/*.yml"
+#       - "modules/**/*.tf"
+#       - "*.tf"
 
 permissions:
   contents: read
