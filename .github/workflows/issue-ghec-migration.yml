@@ -1,18 +1,20 @@
-name: "MBB GHES to GHEC Migration Workflow"
+name: "MBB GitHub Enterprise Cloud Migration Workflow"
 
 on:
   issues:
     types: [opened]
 
-# Required secrets:
-# - GH_SOURCE_PAT: PAT with read access to source GHES repository
-# - GH_TARGET_PAT: PAT with write access to target GHEC organization
+# Uses separate PATs for source and target:
+# - GH_SOURCE_PAT: PAT with read access to source repository
+# - GH_TARGET_PAT: PAT with write access to target organization/user
 #
-# Note: GHES 3.8+ supports direct migration without blob storage.
-# GEI downloads the migration archive locally and uploads it to GitHub.com.
-# The GHES URL is provided by the user via the issue form (not a secret).
-# If you need blob storage (GHES < 3.8), add --aws-bucket-name or
-# --azure-storage-connection-string to the GEI command manually.
+# ──────────────────────────────────────────────────────────────────────
+# [GHES → GHEC] If migrating from GitHub Enterprise Server (GHES),
+# add these additional secrets:
+#   - GHES_API_URL: GHES API base URL (e.g., https://ghes.yourcompany.com/api/v3)
+# and replace GH_SOURCE_PAT with a GHES PAT that has read access.
+# Search for "[GHES → GHEC]" in this file to find all lines that need changing.
+# ──────────────────────────────────────────────────────────────────────
 
 jobs:
   # ─────────────────────────────────────────────
@@ -35,7 +37,6 @@ jobs:
       admins: ${{ steps.parse.outputs.issueparser_admins }}
       team_mappings: ${{ steps.parse.outputs.issueparser_team_mappings }}
       justification: ${{ steps.parse.outputs.issueparser_justification }}
-      ghes_api_url: ${{ steps.parse.outputs.issueparser_ghes_api_url }}
       issue_number: ${{ github.event.issue.number }}
 
     steps:
@@ -89,12 +90,7 @@ jobs:
             const admins = extractField(issueBody, 'Admins');
             const teamMappings = extractTextarea(issueBody, 'Team Access Mappings');
             const justification = extractTextarea(issueBody, 'Justification');
-
-            // Extract GHES URL and construct API URL
-            const ghesUrlRaw = extractField(issueBody, 'Source GHES URL');
-            const ghesUrl = ghesUrlRaw.replace(/\/+$/, ''); // strip trailing slashes
-            const ghesApiUrl = ghesUrl ? `${ghesUrl}/api/v3` : '';
-
+            
             // Extract migration options (checkboxes)
             const migrationOptions = extractCheckboxes(issueBody, 'Migration Options');
             const migrationOptionsStr = migrationOptions.join(', ');
@@ -109,12 +105,9 @@ jobs:
             core.setOutput('issueparser_admins', admins);
             core.setOutput('issueparser_team_mappings', teamMappings);
             core.setOutput('issueparser_justification', justification);
-            core.setOutput('issueparser_ghes_api_url', ghesApiUrl);
 
             // Log parsed values
-            core.info('Parsed GHES → GHEC Migration Request:');
-            core.info(`GHES URL: ${ghesUrl}`);
-            core.info(`GHES API URL: ${ghesApiUrl}`);
+            core.info('Parsed GHEC Migration Request:');
             core.info(`Source: ${sourceOrg}/${sourceRepo}`);
             core.info(`Target: ${targetOrg}/${targetRepo}`);
             core.info(`Visibility: ${targetVisibility}`);
@@ -123,7 +116,6 @@ jobs:
 
       - name: Display parsed values
         run: |
-          echo "GHES API URL:        ${{ steps.parse.outputs.issueparser_ghes_api_url }}"
           echo "Source Org:          ${{ steps.parse.outputs.issueparser_source_organization }}"
           echo "Source Repo:         ${{ steps.parse.outputs.issueparser_source_repo }}"
           echo "Target Org:          ${{ steps.parse.outputs.issueparser_target_organization }}"
@@ -141,9 +133,6 @@ jobs:
           fi
           if [ -z "${{ steps.parse.outputs.issueparser_source_repo }}" ]; then
             ERRORS="${ERRORS}\n- Source Repository name is empty"
-          fi
-          if [ -z "${{ steps.parse.outputs.issueparser_ghes_api_url }}" ]; then
-            ERRORS="${ERRORS}\n- Source GHES URL is empty"
           fi
           if [ -z "${{ steps.parse.outputs.issueparser_target_organization }}" ]; then
             ERRORS="${ERRORS}\n- Target Organization is empty"
@@ -168,54 +157,35 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Validate GHES API URL
-        run: |
-          GHES_API_URL="${{ steps.parse.outputs.issueparser_ghes_api_url }}"
-          echo "Validating GHES API URL: $GHES_API_URL"
-
-          HTTP_CODE=$(curl -s -k -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer ${{ secrets.GH_SOURCE_PAT }}" \
-            -H "Accept: application/vnd.github+json" \
-            "${GHES_API_URL}")
-
-          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "302" ]; then
-            echo "✅ GHES API URL is reachable (HTTP $HTTP_CODE)"
-          else
-            gh issue comment ${{ github.event.issue.number }} \
-              --body "❌ **GHES Validation Failed**
-
-          GHES API URL \`$GHES_API_URL\` returned HTTP $HTTP_CODE.
-
-          Verify:
-          - The GHES URL is correct (e.g. \`https://ghes.yourcompany.com\`)
-          - The \`GH_SOURCE_PAT\` secret has access to the GHES instance"
-            exit 1
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Validate source repository exists on GHES
+      - name: Validate source repository exists on GitHub.com
         run: |
           SRC_ORG="${{ steps.parse.outputs.issueparser_source_organization }}"
           SRC_REPO="${{ steps.parse.outputs.issueparser_source_repo }}"
-          GHES_API_URL="${{ steps.parse.outputs.issueparser_ghes_api_url }}"
 
-          echo "Checking source: ${SRC_ORG}/${SRC_REPO} on GHES"
+          echo "Checking source: ${SRC_ORG}/${SRC_REPO} on GitHub.com"
 
-          HTTP_CODE=$(curl -s -k -o /tmp/src_repo.json -w "%{http_code}" \
+          # ──────────────────────────────────────────────────────────
+          # [GHES → GHEC] Replace api.github.com with GHES API URL:
+          #   GHES_API_URL="${{ secrets.GHES_API_URL }}"
+          #   HTTP_CODE=$(curl -s -o /tmp/src_repo.json -w "%{http_code}" \
+          #     -H "Authorization: Bearer ${{ secrets.GH_SOURCE_PAT }}" \
+          #     -H "Accept: application/vnd.github+json" \
+          #     "${GHES_API_URL}/repos/${SRC_ORG}/${SRC_REPO}")
+          # ──────────────────────────────────────────────────────────
+          HTTP_CODE=$(curl -s -o /tmp/src_repo.json -w "%{http_code}" \
             -H "Authorization: Bearer ${{ secrets.GH_SOURCE_PAT }}" \
             -H "Accept: application/vnd.github+json" \
-            "${GHES_API_URL}/repos/${SRC_ORG}/${SRC_REPO}")
+            "https://api.github.com/repos/${SRC_ORG}/${SRC_REPO}")
 
           if [ "$HTTP_CODE" != "200" ]; then
             gh issue comment ${{ github.event.issue.number }} \
               --body "❌ **Source Validation Failed**
 
-          Repository \`${SRC_ORG}/${SRC_REPO}\` not found on GHES (HTTP ${HTTP_CODE}).
+          Repository \`${SRC_ORG}/${SRC_REPO}\` not found on GitHub.com (HTTP ${HTTP_CODE}).
 
           Verify:
           - Repository name is correct
-          - Organization is correct
+          - Organization/username is correct
           - The \`GH_SOURCE_PAT\` secret has read access to the source repo"
             exit 1
           fi
@@ -311,7 +281,7 @@ jobs:
 
             const allValid = sourceOrg && sourceRepo && targetOrg && targetRepo;
 
-            let commentBody = `## 🔍 GHES → GHEC Migration Request Validation\n\n`;
+            let commentBody = '## 🔍 GitHub.com → GitHub.com Migration Request Validation\n\n';
 
             if (allValid) {
               commentBody += '✅ **All validations passed!**\n\n';
@@ -420,8 +390,7 @@ jobs:
 
             | Field | Value |
             |-------|-------|
-            | **Source (GHES)** | `${{ steps.parse.outputs.issueparser_source_organization }}/${{ steps.parse.outputs.issueparser_source_repo }}` |
-            | **GHES API URL** | `${{ steps.parse.outputs.issueparser_ghes_api_url }}` |
+            | **Source (GitHub.com)** | `${{ steps.parse.outputs.issueparser_source_organization }}/${{ steps.parse.outputs.issueparser_source_repo }}` |
             | **Target (GitHub.com)** | `${{ steps.parse.outputs.issueparser_target_organization }}/${{ steps.parse.outputs.issueparser_target_repo }}` |
             | **Visibility** | `${{ steps.parse.outputs.issueparser_target_visibility }}` |
             | **Admins** | `${{ steps.parse.outputs.issueparser_admins }}` |
@@ -444,7 +413,7 @@ jobs:
 
             const allValid = sourceOrg && sourceRepo && targetOrg && targetRepo;
 
-            let summary = `# 🔍 GHES → GHEC Migration Request Validation\n\n`;
+            let summary = '# 🔍 GitHub.com → GitHub.com Migration Request Validation\n\n';
 
             if (allValid) {
               summary += '## ✅ All validations passed!\n\n';
@@ -519,6 +488,525 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Migration:
+  #   name: Migration Configuration
+  #   runs-on: ubuntu-latest
+  #   needs: validate
+  #   permissions:
+  #     contents: write
+  #     issues: write
+  #     pull-requests: write
+  #   environment:
+  #     name: "migration-approval" # Requires approval from paloitmbb-devsecops
+
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v4
+  #       with:
+  #         token: ${{ secrets.GITHUB_TOKEN }}
+
+  #     - name: Configure Git
+  #       run: |
+  #         git config user.name "github-actions[bot]"
+  #         git config user.email "github-actions[bot]@users.noreply.github.com"
+
+  #     - name: Update ghec-migration.yaml
+  #       id: update-migration
+  #       run: |
+  #         # Install yq if not available
+  #         if ! command -v yq &> /dev/null; then
+  #           sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+  #           sudo chmod +x /usr/local/bin/yq
+  #         fi
+
+  #         SOURCE_ORG="${{ needs.validate.outputs.source_organization }}"
+  #         SOURCE_REPO="${{ needs.validate.outputs.source_repo }}"
+  #         TARGET_ORG="${{ needs.validate.outputs.target_organization }}"
+  #         TARGET_REPO="${{ needs.validate.outputs.target_repo }}"
+  #         TARGET_VISIBILITY="${{ needs.validate.outputs.target_visibility }}"
+  #         ADMINS="${{ needs.validate.outputs.admins }}"
+  #         MIGRATION_OPTIONS="${{ needs.validate.outputs.migration_options }}"
+  #         TEAM_MAPPINGS="${{ needs.validate.outputs.team_mappings }}"
+  #         JUSTIFICATION="${{ needs.validate.outputs.justification }}"
+  #         ISSUE_NUMBER="${{ github.event.issue.number }}"
+  #         TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  #         # Parse migration options into flags
+  #         ARCHIVE_SOURCE="false"
+  #         if echo "$MIGRATION_OPTIONS" | grep -qi "Archive source repository"; then
+  #           ARCHIVE_SOURCE="true"
+  #         fi
+
+  #         # Parse admins into YAML array format
+  #         ADMINS_YAML=""
+  #         if [ -n "$ADMINS" ] && [ "$ADMINS" != "_No response_" ]; then
+  #           IFS=',' read -ra ADMIN_ITEMS <<< "$ADMINS"
+  #           for admin in "${ADMIN_ITEMS[@]}"; do
+  #             admin=$(echo "$admin" | xargs | sed 's/^@//')  # trim whitespace and @
+  #             if [ -n "$admin" ]; then
+  #               ADMINS_YAML="${ADMINS_YAML}      - ${admin}\n"
+  #             fi
+  #           done
+  #         fi
+
+  #         # Parse team mappings into YAML format
+  #         TEAMS_YAML=""
+  #         if [ -n "$TEAM_MAPPINGS" ] && [ "$TEAM_MAPPINGS" != "_No response_" ]; then
+  #           echo "$TEAM_MAPPINGS" | while IFS= read -r LINE; do
+  #             LINE=$(echo "$LINE" | xargs)
+  #             [ -z "$LINE" ] && continue
+  #             [[ "$LINE" == \#* ]] && continue
+
+  #             # Parse: source-team → target-team : permission
+  #             if echo "$LINE" | grep -q "→"; then
+  #               TARGET_PART=$(echo "$LINE" | sed 's/.*→//' | xargs)
+  #             elif echo "$LINE" | grep -q "->"; then
+  #               TARGET_PART=$(echo "$LINE" | sed 's/.*->//' | xargs)
+  #             else
+  #               continue
+  #             fi
+
+  #             if echo "$TARGET_PART" | grep -q ":"; then
+  #               TARGET_TEAM=$(echo "$TARGET_PART" | sed 's/:.*//' | xargs)
+  #               PERMISSION=$(echo "$TARGET_PART" | sed 's/.*://' | xargs)
+  #             else
+  #               TARGET_TEAM="$TARGET_PART"
+  #               PERMISSION="push"
+  #             fi
+
+  #             TEAMS_YAML="${TEAMS_YAML}      - team: ${TARGET_TEAM}\n"
+  #             TEAMS_YAML="${TEAMS_YAML}        permission: ${PERMISSION}\n"
+  #           done
+  #         fi
+
+  #         # Append migration entry to ghec-migration.yaml
+  #         {
+  #           echo ""
+  #           echo "  - source_organization: ${SOURCE_ORG}"
+  #           echo "    source_repository: ${SOURCE_REPO}"
+  #           echo "    target_organization: ${TARGET_ORG}"
+  #           echo "    target_repository: ${TARGET_REPO}"
+  #           echo "    target_visibility: ${TARGET_VISIBILITY}"
+  #           echo "    migration_options:"
+  #           echo "      archive_source: ${ARCHIVE_SOURCE}"
+  #           echo "    admins:"
+  #           if [ -n "$ADMINS_YAML" ]; then
+  #             echo -e "$ADMINS_YAML" | sed '/^$/d'
+  #           fi
+  #           if [ -n "$TEAMS_YAML" ]; then
+  #             echo "    teams:"
+  #             echo -e "$TEAMS_YAML" | sed '/^$/d'
+  #           fi
+  #           echo "    justification: \"${JUSTIFICATION}\""
+  #           echo "    issue_number: ${ISSUE_NUMBER}"
+  #           echo "    requested_at: ${TIMESTAMP}"
+  #           echo "    status: approved"
+  #         } >> data/ghec-migration.yaml
+
+  #         echo "✅ Successfully updated ghec-migration.yaml with migration configuration"
+
+  #     - name: Create branch and commit changes
+  #       id: create-branch
+  #       run: |
+  #         SOURCE_ORG="${{ needs.validate.outputs.source_organization }}"
+  #         SOURCE_REPO="${{ needs.validate.outputs.source_repo }}"
+  #         TARGET_ORG="${{ needs.validate.outputs.target_organization }}"
+  #         TARGET_REPO="${{ needs.validate.outputs.target_repo }}"
+  #         ADMINS="${{ needs.validate.outputs.admins }}"
+  #         TEAM_MAPPINGS="${{ needs.validate.outputs.team_mappings }}"
+  #         BRANCH_NAME="migration-request/${SOURCE_REPO}-to-${TARGET_ORG}"
+
+  #         # Delete remote branch if it exists (ignore errors)
+  #         git push origin --delete "${BRANCH_NAME}" 2>/dev/null || true
+
+  #         git checkout -b "${BRANCH_NAME}"
+  #         git add data/ghec-migration.yaml
+
+  #         # Build commit message with migration info
+  #         COMMIT_MSG="feat: 🚀 add GHEC migration config ${SOURCE_ORG}/${SOURCE_REPO} → ${TARGET_ORG}/${TARGET_REPO}
+
+  #         Migration request from issue #${{ github.event.issue.number }}
+
+  #         - Source: ${SOURCE_ORG}/${SOURCE_REPO}
+  #         - Target: ${TARGET_ORG}/${TARGET_REPO}
+  #         - Visibility: ${{ needs.validate.outputs.target_visibility }}
+  #         - Migration Options: ${{ needs.validate.outputs.migration_options }}"
+
+  #         if [ -n "$ADMINS" ] && [ "$ADMINS" != "_No response_" ]; then
+  #           COMMIT_MSG="${COMMIT_MSG}
+  #         - Admins: ${ADMINS}"
+  #         fi
+
+  #         if [ -n "$TEAM_MAPPINGS" ] && [ "$TEAM_MAPPINGS" != "_No response_" ]; then
+  #           COMMIT_MSG="${COMMIT_MSG}
+  #         - Team Mappings: Configured"
+  #         fi
+
+  #         COMMIT_MSG="${COMMIT_MSG}
+
+  #         Related to #${{ github.event.issue.number }}"
+
+  #         git commit -m "$COMMIT_MSG"
+  #         git push origin "${BRANCH_NAME}"
+
+  #         echo "branch=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+
+  #     - name: Create Pull Request
+  #       id: create-pr
+  #       uses: actions/github-script@v7
+  #       with:
+  #         script: |
+  #           const sourceOrg = '${{ needs.validate.outputs.source_organization }}';
+  #           const sourceRepo = '${{ needs.validate.outputs.source_repo }}';
+  #           const targetOrg = '${{ needs.validate.outputs.target_organization }}';
+  #           const targetRepo = '${{ needs.validate.outputs.target_repo }}';
+  #           const targetVisibility = '${{ needs.validate.outputs.target_visibility }}';
+  #           const migrationOptions = '${{ needs.validate.outputs.migration_options }}';
+  #           const admins = '${{ needs.validate.outputs.admins }}';
+  #           const teamMappings = '${{ needs.validate.outputs.team_mappings }}';
+  #           const justification = '${{ needs.validate.outputs.justification }}';
+  #           const branchName = '${{ steps.create-branch.outputs.branch }}';
+  #           const issueNumber = context.issue.number;
+
+  #           const adminsList = admins && admins !== '_No response_'
+  #             ? admins.split(',').map(a => `\`${a.trim().replace(/^@/, '')}\``).join(', ')
+  #             : 'None';
+
+  #           const optionsList = migrationOptions
+  #             ? migrationOptions.split(',').map(o => `- ✅ ${o.trim()}`).join('\n')
+  #             : '- No additional options selected';
+
+  #           const teamSection = teamMappings && teamMappings !== '_No response_'
+  #             ? teamMappings.split('\n').filter(l => l.trim()).map(l => `- \`${l.trim()}\``).join('\n')
+  #             : '- No team mappings specified';
+
+  #           const prBody = `## 🚀 GHEC Migration Request
+
+  #           ### Migration Details
+
+  #           | Field | Value |
+  #           |-------|-------|
+  #           | **Source Repository** | \`${sourceOrg}/${sourceRepo}\` |
+  #           | **Target Repository** | \`${targetOrg}/${targetRepo}\` |
+  #           | **Target Visibility** | \`${targetVisibility}\` |
+  #           | **Admins** | ${adminsList} |
+  #           | **Requested By** | @${context.payload.issue.user.login} |
+
+  #           ### Migration Options
+
+  #           ${optionsList}
+
+  #           ### Team Access Mappings
+
+  #           ${teamSection}
+
+  #           ### Justification
+
+  #           > ${justification || 'No justification provided'}
+
+  #           ### Configuration
+
+  #           This PR adds the migration entry to:
+  #           - \`data/ghec-migration.yaml\`
+
+  #           ### Next Steps
+
+  #           1. ✅ Review the YAML changes
+  #           2. ✅ Merge this PR to apply changes
+  #           3. 📊 Pre-migration state recording
+  #           4. 🚀 Execute GEI migration
+  #           5. 🔧 Post-migration setup (admins, teams, branch protection)
+  #           6. ✅ Verification checks
+  #           7. 📦 Cutover and archive (if requested)
+
+  #           ---
+
+  #           Closes #${issueNumber}`;
+
+  #           const pr = await github.rest.pulls.create({
+  #             owner: context.repo.owner,
+  #             repo: context.repo.repo,
+  #             title: `🚀 GHEC Migration: ${sourceOrg}/${sourceRepo} → ${targetOrg}/${targetRepo}`,
+  #             head: branchName,
+  #             base: 'main',
+  #             body: prBody
+  #           });
+
+  #           core.setOutput('pr-number', pr.data.number);
+  #           core.setOutput('pr-url', pr.data.html_url);
+  #           return pr.data;
+
+  #     - name: Comment migration PR created
+  #       uses: peter-evans/create-or-update-comment@v4
+  #       with:
+  #         issue-number: ${{ github.event.issue.number }}
+  #         body: |
+  #           ### ✅ Migration Configuration Created
+
+  #           The migration request has been **approved** and a Pull Request has been created.
+
+  #           | Field | Value |
+  #           |-------|-------|
+  #           | **Source** | `${{ needs.validate.outputs.source_organization }}/${{ needs.validate.outputs.source_repo }}` |
+  #           | **Target** | `${{ needs.validate.outputs.target_organization }}/${{ needs.validate.outputs.target_repo }}` |
+  #           | **Visibility** | `${{ needs.validate.outputs.target_visibility }}` |
+  #           | **Admins** | `${{ needs.validate.outputs.admins }}` |
+  #           | **Pull Request** | #${{ steps.create-pr.outputs.pr-number }} |
+
+  #           ⏳ Proceeding to pre-migration setup once PR is merged...
+
+  #     - name: Add labels to PR
+  #       uses: actions/github-script@v7
+  #       with:
+  #         script: |
+  #           await github.rest.issues.addLabels({
+  #             owner: context.repo.owner,
+  #             repo: context.repo.repo,
+  #             issue_number: ${{ steps.create-pr.outputs.pr-number }},
+  #             labels: ['migration-request', 'automated']
+  #           });
+
+  #     - name: Generate PR creation summary
+  #       if: success()
+  #       uses: actions/github-script@v7
+  #       with:
+  #         script: |
+  #           const sourceOrg = '${{ needs.validate.outputs.source_organization }}';
+  #           const sourceRepo = '${{ needs.validate.outputs.source_repo }}';
+  #           const targetOrg = '${{ needs.validate.outputs.target_organization }}';
+  #           const targetRepo = '${{ needs.validate.outputs.target_repo }}';
+  #           const targetVisibility = '${{ needs.validate.outputs.target_visibility }}';
+  #           const migrationOptions = '${{ needs.validate.outputs.migration_options }}';
+  #           const admins = '${{ needs.validate.outputs.admins }}';
+  #           const teamMappings = '${{ needs.validate.outputs.team_mappings }}';
+  #           const justification = '${{ needs.validate.outputs.justification }}';
+  #           const prUrl = '${{ steps.create-pr.outputs.pr-url }}';
+  #           const prNumber = '${{ steps.create-pr.outputs.pr-number }}';
+
+  #           const adminsList = admins && admins !== '_No response_'
+  #             ? admins.split(',').map(a => a.trim().replace(/^@/, ''))
+  #             : [];
+
+  #           const optionsList = migrationOptions
+  #             ? migrationOptions.split(',').map(o => o.trim()).filter(o => o)
+  #             : [];
+
+  #           let summary = '# ✅ Pull Request Created Successfully!\n\n';
+  #           summary += '## 🚀 GHEC Migration Configuration Ready\n\n';
+  #           summary += '| Field | Value |\n';
+  #           summary += '|-------|-------|\n';
+  #           summary += `| **Source Repository** | \`${sourceOrg}/${sourceRepo}\` |\n`;
+  #           summary += `| **Target Repository** | \`${targetOrg}/${targetRepo}\` |\n`;
+  #           summary += `| **Target Visibility** | \`${targetVisibility}\` |\n`;
+  #           summary += `| **Admins** | ${adminsList.map(a => `\`${a}\``).join(', ') || 'None'} |\n`;
+  #           summary += `| **Pull Request** | [#${prNumber}](${prUrl}) |\n\n`;
+
+  #           if (optionsList.length > 0) {
+  #             summary += '## ⚙️ Migration Options\n\n';
+  #             for (const option of optionsList) {
+  #               summary += `- ✅ ${option}\n`;
+  #             }
+  #             summary += '\n';
+  #           }
+
+  #           if (adminsList.length > 0) {
+  #             summary += '## 👤 Admins\n\n';
+  #             summary += '| Admin | Permission | Status |\n';
+  #             summary += '|-------|------------|--------|\n';
+  #             for (const admin of adminsList) {
+  #               summary += `| \`${admin}\` | admin | Will be added post-migration |\n`;
+  #             }
+  #             summary += '\n';
+  #           }
+
+  #           if (teamMappings && teamMappings !== '_No response_') {
+  #             summary += '## 👥 Team Access Mappings\n\n';
+  #             summary += '```\n';
+  #             summary += teamMappings + '\n';
+  #             summary += '```\n\n';
+  #           }
+
+  #           if (justification && justification !== '_No response_') {
+  #             summary += '## 📝 Justification\n\n';
+  #             summary += `> ${justification}\n\n`;
+  #           }
+
+  #           summary += '## 📋 Next Steps\n\n';
+  #           summary += `1. 📝 Review the PR: [#${prNumber}](${prUrl})\n`;
+  #           summary += `2. ✅ Approve and merge the PR\n`;
+  #           summary += `3. 📊 Pre-migration state recording\n`;
+  #           summary += `4. 🚀 Execute GEI migration\n`;
+  #           summary += `5. 🔧 Post-migration setup (admins, teams, branch protection)\n`;
+  #           summary += `6. ✅ Verification checks\n`;
+  #           summary += `7. 📦 Cutover and archive (if requested)\n\n`;
+
+  #           summary += '---\n\n';
+  #           summary += `*PR created for issue #${context.issue.number}*\n`;
+
+  #           await core.summary
+  #             .addRaw(summary)
+  #             .write();
+
+  #     - name: Post success comment
+  #       if: success()
+  #       uses: actions/github-script@v7
+  #       with:
+  #         script: |
+  #           const sourceOrg = '${{ needs.validate.outputs.source_organization }}';
+  #           const sourceRepo = '${{ needs.validate.outputs.source_repo }}';
+  #           const targetOrg = '${{ needs.validate.outputs.target_organization }}';
+  #           const targetRepo = '${{ needs.validate.outputs.target_repo }}';
+  #           const targetVisibility = '${{ needs.validate.outputs.target_visibility }}';
+  #           const migrationOptions = '${{ needs.validate.outputs.migration_options }}';
+  #           const admins = '${{ needs.validate.outputs.admins }}';
+  #           const teamMappings = '${{ needs.validate.outputs.team_mappings }}';
+  #           const prUrl = '${{ steps.create-pr.outputs.pr-url }}';
+  #           const prNumber = '${{ steps.create-pr.outputs.pr-number }}';
+
+  #           const adminsList = admins && admins !== '_No response_'
+  #             ? admins.split(',').map(a => a.trim().replace(/^@/, ''))
+  #             : [];
+
+  #           const optionsList = migrationOptions
+  #             ? migrationOptions.split(',').map(o => o.trim()).filter(o => o)
+  #             : [];
+
+  #           let commentBody = `## ✅ Pull Request Created!
+
+  #           A pull request has been created to add your migration configuration.
+
+  #           ### 🚀 Migration Details
+  #           - **Source Repository:** \`${sourceOrg}/${sourceRepo}\`
+  #           - **Target Repository:** \`${targetOrg}/${targetRepo}\`
+  #           - **Target Visibility:** \`${targetVisibility}\`
+  #           - **Pull Request:** [#${prNumber}](${prUrl})
+
+  #           `;
+
+  #           if (optionsList.length > 0) {
+  #             commentBody += '### ⚙️ Migration Options\n';
+  #             for (const option of optionsList) {
+  #               commentBody += `- ✅ ${option}\n`;
+  #             }
+  #             commentBody += '\n';
+  #           }
+
+  #           if (adminsList.length > 0) {
+  #             commentBody += '### 👤 Admins\n';
+  #             for (const admin of adminsList) {
+  #               commentBody += `- \`${admin}\` - Admin access (will be added post-migration)\n`;
+  #             }
+  #             commentBody += '\n';
+  #           }
+
+  #           if (teamMappings && teamMappings !== '_No response_') {
+  #             commentBody += '### 👥 Team Access Mappings\n';
+  #             commentBody += '```\n';
+  #             commentBody += teamMappings + '\n';
+  #             commentBody += '```\n\n';
+  #           }
+
+  #           commentBody += `### 📋 Next Steps
+  #           1. 📝 Review the pull request: [#${prNumber}](${prUrl})
+  #           2. ✅ Approve and merge the PR
+  #           3. 📊 Pre-migration state recording
+  #           4. 🚀 Execute GEI migration
+  #           5. 🔧 Post-migration setup (admins, teams, branch protection)
+  #           6. ✅ Verification checks
+  #           7. 📦 Cutover and archive (if requested)
+
+  #           ---
+  #           *Automated by GitHub Actions workflow*`;
+
+  #           await github.rest.issues.createComment({
+  #             issue_number: context.issue.number,
+  #             owner: context.repo.owner,
+  #             repo: context.repo.repo,
+  #             body: commentBody
+  #           });
+
+  #           // Link issue to PR (will be closed when PR is merged)
+  #           await github.rest.issues.addLabels({
+  #             issue_number: context.issue.number,
+  #             owner: context.repo.owner,
+  #             repo: context.repo.repo,
+  #             labels: ['pr-created']
+  #           });
+
+  #     - name: Generate failure summary
+  #       if: failure()
+  #       uses: actions/github-script@v7
+  #       with:
+  #         script: |
+  #           const sourceOrg = '${{ needs.validate.outputs.source_organization }}';
+  #           const sourceRepo = '${{ needs.validate.outputs.source_repo }}';
+  #           const targetOrg = '${{ needs.validate.outputs.target_organization }}';
+  #           const targetRepo = '${{ needs.validate.outputs.target_repo }}';
+
+  #           let summary = '# ❌ Migration Configuration Failed\n\n';
+  #           summary += '## 🚨 Error Information\n\n';
+  #           summary += '| Field | Value |\n';
+  #           summary += '|-------|-------|\n';
+  #           summary += `| **Source Repository** | \`${sourceOrg}/${sourceRepo}\` |\n`;
+  #           summary += `| **Target Repository** | \`${targetOrg}/${targetRepo}\` |\n`;
+  #           summary += `| **Workflow Run** | [View Logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) |\n`;
+  #           summary += `| **Issue** | #${context.issue.number} |\n\n`;
+
+  #           summary += '## 🔧 Troubleshooting Steps\n\n';
+  #           summary += '1. 📋 Check the workflow logs for detailed error messages\n';
+  #           summary += '2. 🔍 Verify that all required permissions are in place\n';
+  #           summary += '3. 🔑 Ensure GH_SOURCE_PAT and GH_TARGET_PAT secrets are valid\n';
+  #           summary += '4. 🔄 Ensure no manual changes conflict with automation\n';
+  #           summary += '5. 👥 Contact DevSecOps team for assistance\n\n';
+
+  #           summary += '---\n\n';
+  #           summary += '> ⚠️ A member of the DevSecOps team will investigate and follow up.\n';
+
+  #           await core.summary
+  #             .addRaw(summary)
+  #             .write();
+
+  #     - name: Post failure comment
+  #       if: failure()
+  #       uses: actions/github-script@v7
+  #       with:
+  #         script: |
+  #           const sourceOrg = '${{ needs.validate.outputs.source_organization }}';
+  #           const sourceRepo = '${{ needs.validate.outputs.source_repo }}';
+  #           const targetOrg = '${{ needs.validate.outputs.target_organization }}';
+  #           const targetRepo = '${{ needs.validate.outputs.target_repo }}';
+
+  #           const commentBody = `## ❌ Migration Configuration Failed
+
+  #           There was an error creating the migration configuration. Please check the workflow logs for details.
+
+  #           ### Error Details
+  #           - **Source Repository:** \`${sourceOrg}/${sourceRepo}\`
+  #           - **Target Repository:** \`${targetOrg}/${targetRepo}\`
+  #           - **Workflow Run:** [View Logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
+  #           - **Step Failed:** Check the logs above
+
+  #           ### 🔧 Troubleshooting
+  #           A member of the DevSecOps team will investigate and follow up.
+
+  #           ---
+  #           *Automated by GitHub Actions workflow*`;
+
+  #           await github.rest.issues.createComment({
+  #             issue_number: context.issue.number,
+  #             owner: context.repo.owner,
+  #             repo: context.repo.repo,
+  #             body: commentBody
+  #           });
+
+  #           // Add failure label
+  #           await github.rest.issues.addLabels({
+  #             issue_number: context.issue.number,
+  #             owner: context.repo.owner,
+  #             repo: context.repo.repo,
+  #             labels: ['migration-failed']
+  #           });
+
   # ─────────────────────────────────────────────
   # Job 2: Approval Gate - requires manual approval after validation
   # ─────────────────────────────────────────────
@@ -542,8 +1030,7 @@ jobs:
 
             | Field | Value |
             |-------|-------|
-            | **Source (GHES)** | `${{ needs.validate.outputs.source_organization }}/${{ needs.validate.outputs.source_repo }}` |
-            | **GHES API URL** | `${{ needs.validate.outputs.ghes_api_url }}` |
+            | **Source** | `${{ needs.validate.outputs.source_organization }}/${{ needs.validate.outputs.source_repo }}` |
             | **Target** | `${{ needs.validate.outputs.target_organization }}/${{ needs.validate.outputs.target_repo }}` |
             | **Visibility** | `${{ needs.validate.outputs.target_visibility }}` |
 
@@ -601,33 +1088,38 @@ jobs:
           SRC_ORG="${{ needs.validate.outputs.source_organization }}"
           SRC_REPO="${{ needs.validate.outputs.source_repo }}"
           TOKEN="${{ secrets.GH_SOURCE_PAT }}"
-          API_BASE="${{ needs.validate.outputs.ghes_api_url }}"
+
+          # ──────────────────────────────────────────────────────────
+          # [GHES → GHEC] Set API_BASE to GHES API URL instead:
+          #   API_BASE="${{ secrets.GHES_API_URL }}"
+          # Then replace all "https://api.github.com" below with "${API_BASE}"
+          # ──────────────────────────────────────────────────────────
 
           # Get repo info
-          REPO_JSON=$(curl -s -k \
+          REPO_JSON=$(curl -s \
             -H "Authorization: Bearer $TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            "${API_BASE}/repos/${SRC_ORG}/${SRC_REPO}")
+            "https://api.github.com/repos/${SRC_ORG}/${SRC_REPO}")
 
           DEFAULT_BRANCH=$(echo "$REPO_JSON" | jq -r '.default_branch // "main"')
           echo "default_branch=$DEFAULT_BRANCH" >> $GITHUB_OUTPUT
 
           # Branch count
-          BRANCHES=$(curl -s -k \
+          BRANCHES=$(curl -s \
             -H "Authorization: Bearer $TOKEN" \
-            "${API_BASE}/repos/${SRC_ORG}/${SRC_REPO}/branches?per_page=100" | jq 'length')
+            "https://api.github.com/repos/${SRC_ORG}/${SRC_REPO}/branches?per_page=100" | jq 'length')
           echo "branches=$BRANCHES" >> $GITHUB_OUTPUT
 
           # Tag count
-          TAGS=$(curl -s -k \
+          TAGS=$(curl -s \
             -H "Authorization: Bearer $TOKEN" \
-            "${API_BASE}/repos/${SRC_ORG}/${SRC_REPO}/tags?per_page=100" | jq 'length')
+            "https://api.github.com/repos/${SRC_ORG}/${SRC_REPO}/tags?per_page=100" | jq 'length')
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
 
           # HEAD SHA
-          BRANCH_JSON=$(curl -s -k \
+          BRANCH_JSON=$(curl -s \
             -H "Authorization: Bearer $TOKEN" \
-            "${API_BASE}/repos/${SRC_ORG}/${SRC_REPO}/branches/${DEFAULT_BRANCH}")
+            "https://api.github.com/repos/${SRC_ORG}/${SRC_REPO}/branches/${DEFAULT_BRANCH}")
           HEAD_SHA=$(echo "$BRANCH_JSON" | jq -r '.commit.sha // "unknown"')
           echo "head_sha=$HEAD_SHA" >> $GITHUB_OUTPUT
 
@@ -679,22 +1171,33 @@ jobs:
           TGT_ORG="${{ needs.validate.outputs.target_organization }}"
           TGT_REPO="${{ needs.validate.outputs.target_repo }}"
           VISIBILITY="${{ needs.validate.outputs.target_visibility }}"
-          GHES_API_URL="${{ needs.validate.outputs.ghes_api_url }}"
 
-          echo "🚀 Starting GEI migration (GHES → GHEC)..."
-          echo "   Source: ${SRC_ORG}/${SRC_REPO} (GHES)"
-          echo "   GHES API URL: ${GHES_API_URL}"
+          echo "🚀 Starting GEI migration..."
+          echo "   Source: ${SRC_ORG}/${SRC_REPO} (GitHub.com)"
           echo "   Target: ${TGT_ORG}/${TGT_REPO} (GitHub.com)"
           echo "   Visibility: ${VISIBILITY}"
 
+          # ──────────────────────────────────────────────────────────
+          # [GHES → GHEC] Replace the migrate-repo command below with:
+          #
+          #   gh gei migrate-repo \
+          #     --ghes-api-url "${{ secrets.GHES_API_URL }}" \
+          #     --github-source-org "$SRC_ORG" \
+          #     --source-repo "$SRC_REPO" \
+          #     --github-target-org "$TGT_ORG" \
+          #     --target-repo "$TGT_REPO" \
+          #     --target-repo-visibility "$VISIBILITY" \
+          #     --verbose 2>&1 | tee /tmp/gei_output.txt
+          #
+          # Key difference: --ghes-api-url tells GEI the source is a GHES instance.
+          # The GH_SOURCE_PAT must be a PAT from your GHES instance.
+          # ──────────────────────────────────────────────────────────
           gh gei migrate-repo \
             --github-source-org "$SRC_ORG" \
             --source-repo "$SRC_REPO" \
             --github-target-org "$TGT_ORG" \
             --target-repo "$TGT_REPO" \
             --target-repo-visibility "$VISIBILITY" \
-            --ghes-api-url "$GHES_API_URL" \
-            --no-ssl-verify \
             --verbose 2>&1 | tee /tmp/gei_output.txt
 
           GEI_EXIT=$?
@@ -853,6 +1356,248 @@ jobs:
             echo "   ⚠️ Branch protection returned HTTP $HTTP_CODE"
           fi
 
+      - name: Migrate Advanced Security permissions from source to target
+        id: migrate-ghas
+        run: |
+          SRC_ORG="${{ needs.validate.outputs.source_organization }}"
+          SRC_REPO="${{ needs.validate.outputs.source_repo }}"
+          TGT_ORG="${{ needs.validate.outputs.target_organization }}"
+          TGT_REPO="${{ needs.validate.outputs.target_repo }}"
+          SRC_TOKEN="${{ secrets.GH_SOURCE_PAT }}"
+          TGT_TOKEN="${{ secrets.GH_TARGET_PAT }}"
+
+          # ──────────────────────────────────────────────────────────
+          # [GHES → GHEC] Source API base URL:
+          # For GHES source, use the GHES API URL.
+          # For GHEC-to-GHEC, change this to https://api.github.com
+          # ──────────────────────────────────────────────────────────
+          SRC_API_BASE="https://api.github.com"
+          # [GHES → GHEC] Uncomment the line below and comment the line above:
+          # SRC_API_BASE="${{ secrets.GHES_API_URL }}"
+          TGT_API_BASE="https://api.github.com"
+
+          echo "🔒 Migrating Advanced Security (GHAS) permissions from ${SRC_ORG}/${SRC_REPO} → ${TGT_ORG}/${TGT_REPO}..."
+
+          GHAS_MANUAL_FILE=$(mktemp)
+          GHAS_STATUS="success"
+
+          # ── 1. Read source repo security settings ──
+          echo "📋 Reading source repository security settings..."
+          SRC_REPO_JSON=$(curl -s \
+            -H "Authorization: Bearer $SRC_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "${SRC_API_BASE}/repos/${SRC_ORG}/${SRC_REPO}")
+
+          # Extract security_and_analysis settings from source
+          SRC_ADVANCED_SECURITY=$(echo "$SRC_REPO_JSON" | jq -r '.security_and_analysis.advanced_security.status // "disabled"')
+          SRC_SECRET_SCANNING=$(echo "$SRC_REPO_JSON" | jq -r '.security_and_analysis.secret_scanning.status // "disabled"')
+          SRC_SECRET_SCANNING_PUSH=$(echo "$SRC_REPO_JSON" | jq -r '.security_and_analysis.secret_scanning_push_protection.status // "disabled"')
+          SRC_SECRET_SCANNING_VALIDITY=$(echo "$SRC_REPO_JSON" | jq -r '.security_and_analysis.secret_scanning_validity_checks.status // "disabled"')
+          SRC_SECRET_SCANNING_NON_PROVIDER=$(echo "$SRC_REPO_JSON" | jq -r '.security_and_analysis.secret_scanning_non_provider_patterns.status // "disabled"')
+          SRC_DEPENDABOT_ALERTS=$(echo "$SRC_REPO_JSON" | jq -r '.security_and_analysis.dependabot_security_updates.status // "disabled"')
+
+          echo "   Source GHAS settings:"
+          echo "     Advanced Security:                    $SRC_ADVANCED_SECURITY"
+          echo "     Secret Scanning:                      $SRC_SECRET_SCANNING"
+          echo "     Secret Scanning Push Protection:      $SRC_SECRET_SCANNING_PUSH"
+          echo "     Secret Scanning Validity Checks:      $SRC_SECRET_SCANNING_VALIDITY"
+          echo "     Secret Scanning Non-Provider Patterns: $SRC_SECRET_SCANNING_NON_PROVIDER"
+          echo "     Dependabot Security Updates:          $SRC_DEPENDABOT_ALERTS"
+
+          # ── 2. Enable Advanced Security on target (must be enabled first) ──
+          if [ "$SRC_ADVANCED_SECURITY" = "enabled" ]; then
+            echo "📋 Enabling GitHub Advanced Security on target..."
+            GHAS_PAYLOAD=$(jq -n '{
+              security_and_analysis: {
+                advanced_security: { status: "enabled" }
+              }
+            }')
+
+            HTTP_CODE=$(curl -s -o /tmp/ghas_response.json -w "%{http_code}" \
+              -X PATCH \
+              -H "Authorization: Bearer $TGT_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/json" \
+              -d "$GHAS_PAYLOAD" \
+              "${TGT_API_BASE}/repos/${TGT_ORG}/${TGT_REPO}")
+
+            if [[ "$HTTP_CODE" =~ ^2 ]]; then
+              echo "   ✅ GitHub Advanced Security enabled on target"
+            else
+              ERROR_MSG=$(cat /tmp/ghas_response.json | jq -r '.message // "Unknown error"')
+              echo "   ⚠️ Failed to enable Advanced Security — HTTP $HTTP_CODE — $ERROR_MSG"
+              echo "- Enable GitHub Advanced Security (GHAS)" >> "$GHAS_MANUAL_FILE"
+              GHAS_STATUS="partial"
+            fi
+          else
+            echo "   ℹ️ Advanced Security not enabled on source — skipping"
+          fi
+
+          # ── 3. Apply Secret Scanning + Push Protection + Validity Checks ──
+          echo "📋 Applying secret scanning settings on target..."
+          SEC_PAYLOAD=$(jq -n \
+            --arg ss "$SRC_SECRET_SCANNING" \
+            --arg pp "$SRC_SECRET_SCANNING_PUSH" \
+            --arg vc "$SRC_SECRET_SCANNING_VALIDITY" \
+            --arg np "$SRC_SECRET_SCANNING_NON_PROVIDER" \
+            '{
+              security_and_analysis: {
+                secret_scanning: { status: $ss },
+                secret_scanning_push_protection: { status: $pp },
+                secret_scanning_validity_checks: { status: $vc },
+                secret_scanning_non_provider_patterns: { status: $np }
+              }
+            }')
+
+          HTTP_CODE=$(curl -s -o /tmp/secret_scan_response.json -w "%{http_code}" \
+            -X PATCH \
+            -H "Authorization: Bearer $TGT_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            -d "$SEC_PAYLOAD" \
+            "${TGT_API_BASE}/repos/${TGT_ORG}/${TGT_REPO}")
+
+          if [[ "$HTTP_CODE" =~ ^2 ]]; then
+            echo "   ✅ Secret scanning settings applied"
+            [ "$SRC_SECRET_SCANNING" = "enabled" ] && echo "      • Secret scanning: enabled"
+            [ "$SRC_SECRET_SCANNING_PUSH" = "enabled" ] && echo "      • Push protection: enabled"
+            [ "$SRC_SECRET_SCANNING_VALIDITY" = "enabled" ] && echo "      • Validity checks: enabled"
+            [ "$SRC_SECRET_SCANNING_NON_PROVIDER" = "enabled" ] && echo "      • Non-provider patterns: enabled"
+          else
+            ERROR_MSG=$(cat /tmp/secret_scan_response.json | jq -r '.message // "Unknown error"')
+            echo "   ⚠️ Failed to apply secret scanning settings — HTTP $HTTP_CODE — $ERROR_MSG"
+            echo "   📋 Full response: $(cat /tmp/secret_scan_response.json)"
+            echo "- Secret scanning settings (scanning, push protection, validity checks, non-provider patterns)" >> "$GHAS_MANUAL_FILE"
+            GHAS_STATUS="partial"
+          fi
+
+          # ── 4. Enable Dependabot security updates ──
+          echo "📋 Applying Dependabot security updates setting..."
+          if [ "$SRC_DEPENDABOT_ALERTS" = "enabled" ]; then
+            # First enable vulnerability alerts (required before security updates)
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X PUT \
+              -H "Authorization: Bearer $TGT_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "${TGT_API_BASE}/repos/${TGT_ORG}/${TGT_REPO}/vulnerability-alerts")
+
+            if [[ "$HTTP_CODE" =~ ^2 ]]; then
+              echo "   ✅ Dependabot vulnerability alerts enabled"
+            else
+              echo "   ⚠️ Failed to enable vulnerability alerts — HTTP $HTTP_CODE"
+              echo "- Dependabot vulnerability alerts" >> "$GHAS_MANUAL_FILE"
+              GHAS_STATUS="partial"
+            fi
+
+            # Enable Dependabot security updates
+            DEPENDABOT_PAYLOAD=$(jq -n '{
+              security_and_analysis: {
+                dependabot_security_updates: { status: "enabled" }
+              }
+            }')
+
+            HTTP_CODE=$(curl -s -o /tmp/dependabot_response.json -w "%{http_code}" \
+              -X PATCH \
+              -H "Authorization: Bearer $TGT_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/json" \
+              -d "$DEPENDABOT_PAYLOAD" \
+              "${TGT_API_BASE}/repos/${TGT_ORG}/${TGT_REPO}")
+
+            if [[ "$HTTP_CODE" =~ ^2 ]]; then
+              echo "   ✅ Dependabot security updates enabled"
+            else
+              ERROR_MSG=$(cat /tmp/dependabot_response.json | jq -r '.message // "Unknown error"')
+              echo "   ⚠️ Failed to enable Dependabot security updates — HTTP $HTTP_CODE — $ERROR_MSG"
+              echo "- Dependabot security updates" >> "$GHAS_MANUAL_FILE"
+              GHAS_STATUS="partial"
+            fi
+          else
+            echo "   ℹ️ Dependabot security updates not enabled on source — skipping"
+          fi
+
+          # ── 5. Migrate Code Scanning default setup configuration ──
+          echo "📋 Reading code scanning default setup from source..."
+          SRC_CODE_SCANNING=$(curl -s \
+            -H "Authorization: Bearer $SRC_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "${SRC_API_BASE}/repos/${SRC_ORG}/${SRC_REPO}/code-scanning/default-setup")
+
+          CS_STATE=$(echo "$SRC_CODE_SCANNING" | jq -r '.state // "not-configured"')
+          echo "   Source code scanning default setup state: $CS_STATE"
+
+          if [ "$CS_STATE" = "configured" ]; then
+            CS_QUERY_SUITE=$(echo "$SRC_CODE_SCANNING" | jq -r '.query_suite // "default"')
+            CS_LANGUAGES=$(echo "$SRC_CODE_SCANNING" | jq -c '.languages // []')
+
+            echo "   Source code scanning: query_suite=$CS_QUERY_SUITE, languages=$CS_LANGUAGES"
+
+            CS_PAYLOAD=$(jq -n \
+              --arg state "configured" \
+              --arg query_suite "$CS_QUERY_SUITE" \
+              --argjson languages "$CS_LANGUAGES" \
+              '{
+                state: $state,
+                query_suite: $query_suite,
+                languages: $languages
+              }')
+
+            HTTP_CODE=$(curl -s -o /tmp/code_scanning_response.json -w "%{http_code}" \
+              -X PATCH \
+              -H "Authorization: Bearer $TGT_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/json" \
+              -d "$CS_PAYLOAD" \
+              "${TGT_API_BASE}/repos/${TGT_ORG}/${TGT_REPO}/code-scanning/default-setup")
+
+            if [[ "$HTTP_CODE" =~ ^2 ]]; then
+              echo "   ✅ Code scanning default setup configured (query_suite=$CS_QUERY_SUITE)"
+            else
+              ERROR_MSG=$(cat /tmp/code_scanning_response.json | jq -r '.message // "Unknown error"')
+              echo "   ⚠️ Failed to configure code scanning — HTTP $HTTP_CODE — $ERROR_MSG"
+              echo "   📋 Full response: $(cat /tmp/code_scanning_response.json)"
+              echo "- Code scanning default setup (query_suite=$CS_QUERY_SUITE, languages=$CS_LANGUAGES)" >> "$GHAS_MANUAL_FILE"
+              GHAS_STATUS="partial"
+            fi
+          else
+            echo "   ℹ️ Code scanning default setup not configured on source — skipping"
+          fi
+
+          # ── 6. Migrate security manager teams (org-level — informational only) ──
+          echo "📋 Checking security manager teams on source org..."
+          SEC_MANAGERS=$(curl -s \
+            -H "Authorization: Bearer $SRC_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "${SRC_API_BASE}/orgs/${SRC_ORG}/security-managers")
+
+          if echo "$SEC_MANAGERS" | jq -e 'type == "array" and length > 0' > /dev/null 2>&1; then
+            SM_TEAMS=$(echo "$SEC_MANAGERS" | jq -r '.[].slug' | tr '\n' ', ' | sed 's/,$//')
+            echo "   ℹ️ Source org security manager teams: $SM_TEAMS"
+            echo "   ⚠️ Security manager teams are org-level and must be configured manually on target org"
+            echo "- Security manager teams (org-level): $SM_TEAMS" >> "$GHAS_MANUAL_FILE"
+          else
+            echo "   ℹ️ No security manager teams found (or no access)"
+          fi
+
+          # ── Summary ──
+          echo ""
+          if [ -s "$GHAS_MANUAL_FILE" ]; then
+            echo "⚠️ Some GHAS settings require manual re-configuration:"
+            cat "$GHAS_MANUAL_FILE"
+            {
+              echo "GHAS_MANUAL<<EOF"
+              cat "$GHAS_MANUAL_FILE"
+              echo "EOF"
+            } >> "$GITHUB_ENV"
+          else
+            echo "✅ All Advanced Security permissions migrated successfully"
+            echo "GHAS_MANUAL=" >> "$GITHUB_ENV"
+          fi
+
+          echo "ghas_status=$GHAS_STATUS" >> $GITHUB_OUTPUT
+          rm -f "$GHAS_MANUAL_FILE"
+          echo "✅ Advanced Security permissions migration complete."
+
       - name: Comment post-migration setup
         uses: peter-evans/create-or-update-comment@v4
         with:
@@ -863,6 +1608,9 @@ jobs:
             - ✅ Admin collaborators added: `${{ needs.validate.outputs.admins }}`
             - ✅ Branch protection enabled on `${{ needs.pre-migration.outputs.source_default_branch }}`
             - ✅ Team access mappings applied (if provided)
+            - ${{ steps.migrate-ghas.outputs.ghas_status == 'success' && '✅' || '⚠️' }} Advanced Security (GHAS) permissions migrated (advanced security, secret scanning, code scanning, dependabot)
+
+            ${{ env.GHAS_MANUAL != '' && format('#### ⚠️ Advanced Security settings requiring manual re-configuration\n\nThe following GHAS settings were NOT migrated automatically:\n{0}\n\nPlease configure these in **Settings → Code security and analysis** on the target repo.', env.GHAS_MANUAL) || '' }}
 
             📋 Running verification checks...
 
@@ -979,31 +1727,104 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Archive source repo (if requested)
+      - name: Archive source repo on GitHub.com (if requested)
         if: needs.pre-migration.outputs.archive_source == 'true'
         run: |
           SRC_ORG="${{ needs.validate.outputs.source_organization }}"
           SRC_REPO="${{ needs.validate.outputs.source_repo }}"
           TGT_ORG="${{ needs.validate.outputs.target_organization }}"
           TGT_REPO="${{ needs.validate.outputs.target_repo }}"
-          SOURCE_API_BASE="${{ needs.validate.outputs.ghes_api_url }}"
 
-          echo "📦 Archiving source repository on GHES..."
+          echo "📦 Archiving source repository on GitHub.com..."
 
-          HTTP_CODE=$(curl -s -k -o /dev/null -w "%{http_code}" \
+          # ──────────────────────────────────────────────────────────
+          # [GHES → GHEC] Replace api.github.com with GHES API URL:
+          #   HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+          #     -X PATCH \
+          #     -H "Authorization: Bearer ${{ secrets.GH_SOURCE_PAT }}" \
+          #     -H "Accept: application/vnd.github+json" \
+          #     -H "Content-Type: application/json" \
+          #     -d "{\"archived\": true, \"description\": \"[MIGRATED] — see ${TGT_ORG}/${TGT_REPO} for active development\"}" \
+          #     "${{ secrets.GHES_API_URL }}/repos/${SRC_ORG}/${SRC_REPO}")
+          # ──────────────────────────────────────────────────────────
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
             -X PATCH \
             -H "Authorization: Bearer ${{ secrets.GH_SOURCE_PAT }}" \
             -H "Accept: application/vnd.github+json" \
             -H "Content-Type: application/json" \
             -d "{\"archived\": true, \"description\": \"[MIGRATED] — see ${TGT_ORG}/${TGT_REPO} for active development\"}" \
-            "${SOURCE_API_BASE}/repos/${SRC_ORG}/${SRC_REPO}")
+            "https://api.github.com/repos/${SRC_ORG}/${SRC_REPO}")
 
           if [ "$HTTP_CODE" = "200" ]; then
             echo "✅ Source repository archived"
           else
             echo "⚠️ Failed to archive source (HTTP $HTTP_CODE)"
           fi
-  
+
+      # - name: Update migration manifest YAML
+      #   run: |
+      #     pip install pyyaml
+
+      #     python3 - <<'PYEOF'
+      #     import yaml
+      #     import os
+      #     from datetime import datetime
+
+      #     manifest_path = "data/migration-manifests.yaml"
+
+      #     # Load or create manifest
+      #     if os.path.exists(manifest_path):
+      #         with open(manifest_path, "r") as f:
+      #             data = yaml.safe_load(f) or {}
+      #     else:
+      #         data = {}
+
+      #     if "migrations" not in data or data["migrations"] is None:
+      #         data["migrations"] = {}
+
+      #     source_org = "${{ needs.validate.outputs.source_organization }}"
+      #     source_repo = "${{ needs.validate.outputs.source_repo }}"
+      #     target_org = "${{ needs.validate.outputs.target_organization }}"
+      #     target_repo = "${{ needs.validate.outputs.target_repo }}"
+
+      #     key = f"{source_org}-{source_repo}"
+
+      #     data["migrations"][key] = {
+      #         "source": {
+      #             "platform": "github.com",
+      #             "organization": source_org,
+      #             "repository": source_repo,
+      #         },
+      #         "target": {
+      #             "platform": "github.com",
+      #             "organization": target_org,
+      #             "repository": target_repo,
+      #             "visibility": "${{ needs.validate.outputs.target_visibility }}",
+      #         },
+      #         "status": "completed",
+      #         "completed_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+      #         "issue_number": ${{ needs.validate.outputs.issue_number }},
+      #         "verification": {
+      #             "source_branches": int("${{ needs.pre-migration.outputs.source_branches }}"),
+      #             "source_tags": int("${{ needs.pre-migration.outputs.source_tags }}"),
+      #             "source_head_sha": "${{ needs.pre-migration.outputs.source_head_sha }}",
+      #         },
+      #     }
+
+      #     with open(manifest_path, "w") as f:
+      #         yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
+      #     print(f"✅ Migration manifest updated: {key}")
+      #     PYEOF
+
+      # - name: Commit migration manifest
+      #   run: |
+      #     git config user.name "github-actions[bot]"
+      #     git config user.email "github-actions[bot]@users.noreply.github.com"
+      #     git add data/migration-manifests.yaml
+      #     git diff --cached --quiet && echo "No changes to commit" || \
+      #       (git commit -m "Track migration: ${{ needs.validate.outputs.source_organization }}/${{ needs.validate.outputs.source_repo }} → ${{ needs.validate.outputs.target_organization }}/${{ needs.validate.outputs.target_repo }} (issue #${{ needs.validate.outputs.issue_number }})" && git push)
+
   # ─────────────────────────────────────────────
   # Job 7: Close issue
   # ─────────────────────────────────────────────
@@ -1044,7 +1865,6 @@ jobs:
             summary += '## 🎉 Migration Details\n\n';
             summary += '| Field | Value |\n';
             summary += '|-------|-------|\n';
-            summary += `| **Source Platform** | \`GHES\` |\n`;
             summary += `| **Source Repository** | \`${sourceOrg}/${sourceRepo}\` |\n`;
             summary += `| **Target Repository** | [\`${targetOrg}/${targetRepo}\`](https://github.com/${targetOrg}/${targetRepo}) |\n`;
             summary += `| **Target Visibility** | \`${targetVisibility}\` |\n`;
@@ -1141,10 +1961,9 @@ jobs:
 
             const commentBody = `## ✅ GHEC Migration Completed Successfully!
 
-            Your repository has been migrated from GHES to GitHub.com (GHEC) via GEI.
+            Your repository has been migrated from GitHub.com to GitHub.com via GEI.
 
             ### 🎉 Migration Details
-            - **Source Platform:** GHES
             - **Source Repository:** \`${sourceOrg}/${sourceRepo}\`
             - **Target Repository:** [${targetOrg}/${targetRepo}](https://github.com/${targetOrg}/${targetRepo})
             - **Target Visibility:** ${targetVisibility}
@@ -1197,15 +2016,14 @@ jobs:
 
             let archiveMsg = '';
             if (archiveSource === 'true') {
-              archiveMsg = `\n- 📦 Source repository archived on GHES`;
+              archiveMsg = '\n- 📦 Source repository archived on GitHub.com';
             }
 
             const commentBody = `### 🎉 Migration Completed Successfully!
 
             | Detail | Value |
             |--------|-------|
-            | **Source Platform** | GHES |
-            | **Source (GHES)** | \`${sourceOrg}/${sourceRepo}\` |
+            | **Source (GitHub.com)** | \`${sourceOrg}/${sourceRepo}\` |
             | **Target (GitHub.com)** | [\`${targetOrg}/${targetRepo}\`](${targetUrl}) |
             | **Branches** | ${sourceBranches} |
             | **Tags** | ${sourceTags} |
