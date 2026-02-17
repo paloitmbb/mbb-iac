@@ -1,13 +1,13 @@
 name: Automated Repository Creation Workflow
 
-on:
-  issues:
-    types: [opened]
+# on:
+#   issues:
+#     types: [opened]
 
-permissions:
-  issues: write
-  contents: write
-  pull-requests: write
+# permissions:
+#   issues: write
+#   contents: write
+#   pull-requests: write
 
 jobs:
   # ============================================================================
@@ -215,7 +215,7 @@ jobs:
               summary += `| **Teams with Access** | ${{ steps.validate-teams.outputs.teams-display }} |\n`;
               summary += `| **Default Branch** | ${{ steps.parse.outputs.default-branch }} |\n`;
               summary += `| **Business Justification** | ${{ steps.parse.outputs.justification }} |\n\n`;
-              
+
               summary += '### 👥 Teams with Access\n\n';
               summary += '| Team Name | Status |\n';
               summary += '|-----------|--------|\n';
@@ -224,7 +224,7 @@ jobs:
                 summary += `| \`${team}\` | ✅ Exists in organization |\n`;
               }
               summary += '\n';
-              
+
               summary += '### ⚙️ Default Configuration\n\n';
               summary += '> 📋 All other settings (visibility, features, security, topics, variables) will use organizational defaults from `defaults.yaml`\n\n';
               summary += '---\n\n';
@@ -234,7 +234,7 @@ jobs:
             } else {
               summary += '## ❌ Validation Failed\n\n';
               summary += '### Errors Found:\n\n';
-              
+
               if (!nameValid) {
                 summary += `- ❌ **Repository Name:** ${{ steps.validate-name.outputs.error }}\n`;
               }
@@ -244,7 +244,7 @@ jobs:
               if (repoExists) {
                 summary += `- ❌ **Repository Already Exists:** ${{ steps.check-repo.outputs.error }}\n`;
               }
-              
+
               summary += '\n---\n\n';
               summary += '⚠️ **Please fix the above errors and create a new issue.**\n';
             }
@@ -272,24 +272,24 @@ jobs:
               const teamsText = '${{ steps.validate-teams.outputs.teams-display }}';
               commentBody += `- **Teams with Access:** ${teamsText}\n`;
               commentBody += `- **Default Branch:** ${{ steps.parse.outputs.default-branch }}\n\n`;
-              
+
               commentBody += '### Teams with Access\n';
               const teams = '${{ steps.parse.outputs.teams }}'.split(',').map(t => t.trim());
               for (const team of teams) {
                 commentBody += `- \`${team}\` ✅ (Existing organization team)\n`;
               }
               commentBody += '\n';
-              
+
               commentBody += '### Default Configuration\n';
               commentBody += '📋 All other settings (visibility, features, security, topics, variables) will use organizational defaults from the repository template.\n\n';
-              
+
               commentBody += '---\n\n';
               commentBody += '⏳ **Awaiting approval from DevSecOps team...**\n';
               commentBody += 'Once approved, the repository will be created with access granted to the specified teams.';
             } else {
               commentBody += '❌ **Validation Failed**\n\n';
               commentBody += '### Errors Found:\n';
-              
+
               if (!nameValid) {
                 commentBody += `- ❌ Repository Name: ${{ steps.validate-name.outputs.error }}\n`;
               }
@@ -299,7 +299,7 @@ jobs:
               if (repoExists) {
                 commentBody += `- ❌ Repository Already Exists: ${{ steps.check-repo.outputs.error }}\n`;
               }
-              
+
               commentBody += '\n---\n\n';
               commentBody += '⚠️ **Please fix the above errors and create a new issue.**';
             }
@@ -326,7 +326,7 @@ jobs:
                 repo: context.repo.repo,
                 labels: ['validation-failed']
               });
-              
+
               // Close issue if validation failed
               await github.rest.issues.update({
                 issue_number: context.issue.number,
