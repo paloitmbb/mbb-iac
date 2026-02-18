@@ -40,10 +40,10 @@ username = "terraform"
 
 **After**:
 ```hcl
-resource_group_name  = "rg-terraform-state"
-storage_account_name = "stterraformmbbdev"
+resource_group_name  = "mbb"
+storage_account_name = "mbbtfstate"
 container_name       = "tfstate"
-key                  = "dev.terraform.tfstate"
+key                  = "github.terraform.tfstate"
 ```
 
 **Impact**: Dev environment now requires Azure authentication instead of GitHub token.
@@ -99,8 +99,8 @@ To complete the migration, follow these steps:
 
 ```bash
 # Set variables
-RESOURCE_GROUP="rg-terraform-state"
-STORAGE_ACCOUNT="stterraformmbbdev"
+RESOURCE_GROUP="mbb"
+STORAGE_ACCOUNT="mbbtfstate"
 CONTAINER_NAME="tfstate"
 LOCATION="eastus"
 
@@ -178,7 +178,7 @@ terraform plan -var-file=environments/dev/terraform.tfvars
 
 | Environment | Backend Type | State Location | Status |
 |-------------|-------------|----------------|---------|
-| **dev** | Azure Blob Storage | `stterraformmbbdev/tfstate/dev.terraform.tfstate` | ✅ Configured, pending migration |
+| **dev** | Azure Blob Storage | `mbbtfstate/tfstate/github.terraform.tfstate` | ✅ Configured, pending migration |
 | **staging** | HTTP (GitHub) | GitHub Releases `state-staging` | ✅ No changes |
 | **production** | HTTP (GitHub) | GitHub Releases `state-production` | ✅ No changes |
 

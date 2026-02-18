@@ -35,8 +35,8 @@ You can create these resources using Azure CLI, Azure Portal, or Terraform itsel
 
 ```bash
 # Set variables
-RESOURCE_GROUP="rg-terraform-state"
-STORAGE_ACCOUNT="stterraformmbbdev"
+RESOURCE_GROUP="mbb"
+STORAGE_ACCOUNT="mbbtfstate"
 CONTAINER_NAME="tfstate"
 LOCATION="eastus"
 
@@ -64,8 +64,8 @@ az storage container create \
 #### Using Azure Portal
 
 1. Navigate to [Azure Portal](https://portal.azure.com)
-2. Create a new Resource Group (e.g., `rg-terraform-state`)
-3. Create a new Storage Account (e.g., `stterraformmbbdev`)
+2. Create a new Resource Group (e.g., `mbb`)
+3. Create a new Storage Account (e.g., `mbbtfstate`)
    - Performance: Standard
    - Replication: LRS (Locally Redundant Storage)
    - Enable blob soft delete (recommended)
@@ -80,8 +80,8 @@ Azure Terraform provider supports multiple authentication methods:
 ```bash
 # Get the storage account key
 export ARM_ACCESS_KEY=$(az storage account keys list \
-  --resource-group rg-terraform-state \
-  --account-name stterraformmbbdev \
+  --resource-group mbb \
+  --account-name mbbtfstate \
   --query '[0].value' -o tsv)
 ```
 
@@ -116,10 +116,10 @@ az login
 The dev environment backend is configured in `environments/dev/backend.tfvars`:
 
 ```hcl
-resource_group_name  = "rg-terraform-state"
-storage_account_name = "stterraformmbbdev"
+resource_group_name  = "mbb"
+storage_account_name = "mbbtfstate"
 container_name       = "tfstate"
-key                  = "dev.terraform.tfstate"
+key                  = "github.terraform.tfstate"
 ```
 
 ## GitHub Actions Setup
@@ -192,9 +192,9 @@ The first time you run this, Terraform will:
 ```bash
 # Using Azure CLI
 az storage blob download \
-  --account-name stterraformmbbdev \
+  --account-name mbbtfstate \
   --container-name tfstate \
-  --name dev.terraform.tfstate \
+  --name github.terraform.tfstate \
   --file terraform.tfstate
 
 # Or use Terraform
@@ -208,12 +208,12 @@ Azure Blob Storage provides built-in versioning and soft delete:
 ```bash
 # Enable versioning on the storage account
 az storage account blob-service-properties update \
-  --account-name stterraformmbbdev \
+  --account-name mbbtfstate \
   --enable-versioning true
 
 # Enable soft delete (30 days retention)
 az storage account blob-service-properties update \
-  --account-name stterraformmbbdev \
+  --account-name mbbtfstate \
   --enable-delete-retention true \
   --delete-retention-days 30
 ```
@@ -273,7 +273,7 @@ az account show
 **Solution**: Verify storage account exists
 
 ```bash
-az storage account show --name stterraformmbbdev --resource-group rg-terraform-state
+az storage account show --name mbbtfstate --resource-group mbb
 ```
 
 ### Error: "Failed to get existing workspaces"
@@ -282,7 +282,7 @@ az storage account show --name stterraformmbbdev --resource-group rg-terraform-s
 **Solution**: Create the container
 
 ```bash
-az storage container create --name tfstate --account-name stterraformmbbdev
+az storage container create --name tfstate --account-name mbbtfstate
 ```
 
 ### Error: "Failed to lock state"
@@ -304,7 +304,7 @@ terraform force-unlock <lock-id>
 az role assignment create \
   --assignee <service-principal-id> \
   --role "Storage Blob Data Contributor" \
-  --scope /subscriptions/<subscription-id>/resourceGroups/rg-terraform-state
+  --scope /subscriptions/<subscription-id>/resourceGroups/mbb
 ```
 
 ## Migration from GitHub Backend

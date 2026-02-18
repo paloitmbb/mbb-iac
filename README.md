@@ -78,10 +78,10 @@ az login
 The dev environment backend is already configured in `environments/dev/backend.tfvars`:
 
 ```hcl
-resource_group_name  = "rg-terraform-state"
-storage_account_name = "stterraformmbbdev"
+resource_group_name  = "mbb"
+storage_account_name = "mbbtfstate"
 container_name       = "tfstate"
-key                  = "dev.terraform.tfstate"
+key                  = "github.terraform.tfstate"
 ```
 
 See [AZURE_BACKEND_SETUP.md](AZURE_BACKEND_SETUP.md) for detailed Azure backend setup instructions.

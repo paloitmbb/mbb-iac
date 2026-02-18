@@ -7,7 +7,7 @@
 # - ARM_ACCESS_KEY or ARM_SAS_TOKEN for authentication
 # - Or use Azure CLI / Managed Identity authentication
 
-resource_group_name  = "rg-terraform-state"
-storage_account_name = "stterraformmbbdev"
+resource_group_name  = "mbb"
+storage_account_name = "mbbtfstate"
 container_name       = "tfstate"
-key                  = "dev.terraform.tfstate"
+key                  = "github.terraform.tfstate"
