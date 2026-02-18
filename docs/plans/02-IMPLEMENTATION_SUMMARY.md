@@ -158,7 +158,8 @@ Implemented workflow with team validation:
 - ✅ Load default values from `defaults.yaml`
 - ✅ Validate repository name format (lowercase, hyphens only)
 - ✅ **Validate teams exist in organization using GitHub API**
-- ✅ Check repository doesn't already exist
+- ✅ Check repository doesn't already exist in GitHub
+- ✅ **Check repository doesn't already exist in data/repositories.yaml** (NEW)
 - ✅ Post validation results comment to issue
 - ✅ Add validation status labels
 - ✅ Close issue if validation fails
@@ -284,7 +285,8 @@ User Creates Issue (Simplified Form)
 Validation Job (automatic)
    ✅ Validate name
    ✅ Validate teams exist in org
-   ✅ Check repository existence
+   ✅ Check repository existence in GitHub
+   ✅ Check repository existence in YAML
    ✅ Load defaults from defaults.yaml
    ✅ Post results
        ↓
@@ -374,7 +376,8 @@ repository_defaults:
 ✅ **Input Validation:** All user inputs validated before processing
 ✅ **Approval Required:** DevSecOps team must approve before creation
 ✅ **Team Validation:** Team existence validated against organization
-✅ **Repository Checks:** Ensures no duplicate repositories
+✅ **Repository Checks:** Ensures no duplicate repositories in both GitHub and YAML
+✅ **YAML Duplicate Prevention:** Validates repository name doesn't exist in data/repositories.yaml
 ✅ **Audit Trail:** All changes committed to Git history
 ✅ **Least Privilege:** Workflow uses minimum required permissions
 
@@ -390,6 +393,7 @@ repository_defaults:
 8. **Team Validation:** Prevents typos and non-existent team references
 9. **Simplified Management:** No team creation/deletion needed in workflow
 10. **Flexibility:** Teams can be managed independently of repositories
+11. **Duplicate Prevention:** Validates against both GitHub and YAML to prevent conflicts
 
 ## Rollback Procedure
 
