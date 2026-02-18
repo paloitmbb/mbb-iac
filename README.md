@@ -27,6 +27,7 @@ mbb-iac/
 - 🤖 **Copilot**: GitHub Copilot seat and policy management
 - 🔄 **GitOps**: Automated repository creation via GitHub Issues
 - 🌍 **Multi-Environment**: Separate configurations for dev, staging, and production
+- ☁️ **Flexible Backend**: Azure Storage (dev) and GitHub Releases (staging/production)
 
 ## Prerequisites
 
@@ -48,25 +49,65 @@ cd mbb-iac
 
 ### 2. Configure Authentication
 
+#### For GitHub Resources
+
 ```bash
 export GITHUB_TOKEN="your-github-token"
-# TF_HTTP_PASSWORD will be automatically set from GITHUB_TOKEN by init script
 ```
+
+#### For Backend (Dev Environment uses Azure)
+
+**GitHub Actions**: Uses OIDC authentication (no secrets required)
+- Configured via `azure/login@v2` action in workflows
+- Requires federated credentials setup in Azure AD
+
+**Local Development**:
+
+```bash
+# Option 1: Using Azure Storage Account Access Key
+export ARM_ACCESS_KEY="your-storage-account-access-key"
+
+# Option 2: Using Service Principal (with OIDC)
+export ARM_CLIENT_ID="your-client-id"
+export ARM_SUBSCRIPTION_ID="your-subscription-id"
+export ARM_TENANT_ID="your-tenant-id"
+export ARM_USE_OIDC=true
+
+# Option 3: Using Azure CLI
+az login
+```
+
+**Note**: GitHub Actions workflows use OIDC authentication for secretless Azure login. No `ARM_CLIENT_SECRET` is needed in CI/CD.
 
 ### 3. Configure Backend
 
-Edit `environments/dev/backend.tfvars` with your GitHub organization details:
+**Dev Environment**: Uses Azure Blob Storage for state management.
+
+The dev environment backend is already configured in `environments/dev/backend.tfvars`:
+
+```hcl
+resource_group_name  = "mbb"
+storage_account_name = "mbbtfstate"
+container_name       = "tfstate"
+key                  = "github.terraform.tfstate"
+```
+
+See [AZURE_BACKEND_SETUP.md](AZURE_BACKEND_SETUP.md) for detailed Azure backend setup instructions.
+
+**Staging/Production Environments**: Use GitHub Releases for state management (HTTP backend).
+
+Edit `environments/<env>/backend.tfvars` with your GitHub organization details:
 
 ```hcl
 # Replace 'your-org' with your GitHub organization name
-address        = "https://github.com/your-org/mbb-iac/releases/download/state-dev/terraform.tfstate"
-lock_address   = "https://api.github.com/repos/your-org/mbb-iac/git/refs/locks/dev"
-unlock_address = "https://api.github.com/repos/your-org/mbb-iac/git/refs/locks/dev"
+address        = "https://github.com/your-org/mbb-iac/releases/download/state-<env>/terraform.tfstate"
+lock_address   = "https://api.github.com/repos/your-org/mbb-iac/git/refs/locks/<env>"
+unlock_address = "https://api.github.com/repos/your-org/mbb-iac/git/refs/locks/<env>"
 username       = "terraform"
 # password set via TF_HTTP_PASSWORD environment variable (uses GITHUB_TOKEN)
 ```
 
-**Note**: The HTTP backend uses GitHub Releases to store state files. The init script will automatically use your `GITHUB_TOKEN` for authentication.
+See [HTTP_BACKEND_SETUP.md](HTTP_BACKEND_SETUP.md) for GitHub backend setup instructions.
 
 ### 4. Initialize Terraform
 
@@ -231,12 +272,15 @@ terraform force-unlock <lock-id>
 
 ### Backend Configuration
 
-The project uses HTTP backend with GitHub Releases for state storage. See [HTTP_BACKEND_SETUP.md](HTTP_BACKEND_SETUP.md) for detailed setup instructions.
+The project supports multiple backend types:
+
+- **Dev Environment**: Uses Azure Blob Storage for state management. See [AZURE_BACKEND_SETUP.md](AZURE_BACKEND_SETUP.md) for setup instructions.
+- **Staging/Production**: Use HTTP backend with GitHub Releases. See [HTTP_BACKEND_SETUP.md](HTTP_BACKEND_SETUP.md) for setup instructions.
 
 Verify backend is properly configured:
 
 ```bash
-terraform init -backend-config=backend.tfvars -reconfigure
+terraform init -backend-config=environments/<env>/backend.tfvars -reconfigure
 ```
 
 ## Contributing

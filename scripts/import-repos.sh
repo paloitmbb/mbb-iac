@@ -12,11 +12,6 @@ cd "$PROJECT_ROOT"
 
 echo "Importing existing repositories into Terraform state for environment: $ENVIRONMENT"
 
-# Set HTTP backend password from GITHUB_TOKEN if not already set
-if [ -z "$TF_HTTP_PASSWORD" ] && [ -n "$GITHUB_TOKEN" ]; then
-    export TF_HTTP_PASSWORD="$GITHUB_TOKEN"
-fi
-
 # Import each repository
 echo "Importing mbb-api-gateway..."
 terraform import -lock=false -var-file="environments/$ENVIRONMENT/terraform.tfvars" \
