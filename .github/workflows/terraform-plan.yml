@@ -38,6 +38,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
           TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
+          # Azure authentication (only used for dev environment with Azure backend)
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
 
       - name: Terraform Validate
         run: |
@@ -67,6 +72,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
           TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
+          # Azure authentication (only used for dev environment with Azure backend)
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
         continue-on-error: true
 
       - name: Comment Plan on PR

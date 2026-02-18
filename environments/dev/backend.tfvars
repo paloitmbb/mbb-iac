@@ -1,8 +1,13 @@
-# HTTP Backend with GitHub Releases
-# State storage: GitHub Releases
-# State locking: Disabled (GitHub Issues API doesn't work reliably)
+# Azure Storage Backend
+# State storage: Azure Blob Storage
+# State locking: Azure Blob Lease
 
-address  = "https://github.com/paloitmbb/mbb-iac/releases/download/state-dev/terraform.tfstate"
-username = "terraform"
-# password set via TF_HTTP_PASSWORD environment variable (uses GITHUB_TOKEN)
-# Note: Locking disabled - ensure only one person runs terraform at a time
+# Azure Storage Account configuration
+# These values should be set via environment variables:
+# - ARM_ACCESS_KEY or ARM_SAS_TOKEN for authentication
+# - Or use Azure CLI / Managed Identity authentication
+
+resource_group_name  = "rg-terraform-state"
+storage_account_name = "stterraformmbbdev"
+container_name       = "tfstate"
+key                  = "dev.terraform.tfstate"
