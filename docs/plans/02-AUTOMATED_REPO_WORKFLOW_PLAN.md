@@ -39,6 +39,8 @@ Implement a GitHub issue-driven automated workflow that allows end users to requ
 │  Post Issue Summary     │
 │  - Validate repo name   │
 │  - Validate teams exist │
+│  - Check GitHub repos   │
+│  - Check YAML file      │
 └────────┬────────────────┘
          │
          ▼
@@ -604,14 +606,41 @@ jobs:
               }
             }
 
+      - name: Check repository in YAML file
+        id: check-yaml
+        run: |
+          REPO_NAME="${{ steps.parse.outputs.repo-name }}"
+          
+          # Install yq if not available
+          if ! command -v yq &> /dev/null; then
+            wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            chmod +x /usr/local/bin/yq
+          fi
+          
+          # Check if repository exists in data/repositories.yaml
+          if [ -f "data/repositories.yaml" ]; then
+            # Search for the repository name in the YAML file
+            REPO_FOUND=$(yq eval ".repositories[] | select(.name == \"$REPO_NAME\") | .name" data/repositories.yaml)
+            
+            if [ -n "$REPO_FOUND" ]; then
+              echo "exists=true" >> $GITHUB_OUTPUT
+              echo "error=Repository entry for '$REPO_NAME' already exists in data/repositories.yaml" >> $GITHUB_OUTPUT
+            else
+              echo "exists=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Consolidate validation
         id: validate
         run: |
           NAME_VALID="${{ steps.validate-name.outputs.valid }}"
           TEAMS_VALID="${{ steps.validate-teams.outputs.valid }}"
           REPO_EXISTS="${{ steps.check-repo.outputs.exists }}"
+          YAML_EXISTS="${{ steps.check-yaml.outputs.exists }}"
 
-          if [[ "$NAME_VALID" == "true" && "$TEAMS_VALID" == "true" && "$REPO_EXISTS" != "true" ]]; then
+          if [[ "$NAME_VALID" == "true" && "$TEAMS_VALID" == "true" && "$REPO_EXISTS" != "true" && "$YAML_EXISTS" != "true" ]]; then
             echo "passed=true" >> $GITHUB_OUTPUT
           else
             echo "passed=false" >> $GITHUB_OUTPUT
@@ -625,6 +654,7 @@ jobs:
             const nameValid = '${{ steps.validate-name.outputs.valid }}' === 'true';
             const teamsValid = '${{ steps.validate-teams.outputs.valid }}' === 'true';
             const repoExists = '${{ steps.check-repo.outputs.exists }}' === 'true';
+            const yamlExists = '${{ steps.check-yaml.outputs.exists }}' === 'true';
 
             let commentBody = '## 🔍 Repository Request Validation\n\n';
 
@@ -658,6 +688,9 @@ jobs:
               }
               if (repoExists) {
                 commentBody += `- ❌ Repository Already Exists: ${{ steps.check-repo.outputs.error }}\n`;
+              }
+              if (yamlExists) {
+                commentBody += `- ❌ Repository Entry in YAML: ${{ steps.check-yaml.outputs.error }}\n`;
               }
 
               commentBody += '\n---\n\n';
