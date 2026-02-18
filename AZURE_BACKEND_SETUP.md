@@ -85,10 +85,64 @@ export ARM_ACCESS_KEY=$(az storage account keys list \
   --query '[0].value' -o tsv)
 ```
 
-### Method 2: Service Principal (Recommended for CI/CD)
+### Method 2: OIDC (OpenID Connect) - Recommended for CI/CD
+
+OIDC provides secretless authentication for GitHub Actions workflows.
+
+#### Setup OIDC Federated Credentials
 
 ```bash
+# Get your GitHub repository information
+GITHUB_ORG="paloitmbb"
+GITHUB_REPO="mbb-iac"
+APP_NAME="github-actions-oidc"
+
+# Create an Azure AD application
+az ad app create --display-name $APP_NAME
+
+# Get the application ID
+APP_ID=$(az ad app list --display-name $APP_NAME --query '[0].appId' -o tsv)
+
 # Create a service principal
+az ad sp create --id $APP_ID
+
+# Get the service principal object ID
+SP_OBJECT_ID=$(az ad sp list --display-name $APP_NAME --query '[0].id' -o tsv)
+
+# Create federated credential for main branch
+az ad app federated-credential create \
+  --id $APP_ID \
+  --parameters '{
+    "name": "github-actions-main",
+    "issuer": "https://token.actions.githubusercontent.com",
+    "subject": "repo:'$GITHUB_ORG'/'$GITHUB_REPO':ref:refs/heads/main",
+    "audiences": ["api://AzureADTokenExchange"]
+  }'
+
+# Create federated credential for pull requests
+az ad app federated-credential create \
+  --id $APP_ID \
+  --parameters '{
+    "name": "github-actions-pr",
+    "issuer": "https://token.actions.githubusercontent.com",
+    "subject": "repo:'$GITHUB_ORG'/'$GITHUB_REPO':pull_request",
+    "audiences": ["api://AzureADTokenExchange"]
+  }'
+
+# Assign appropriate roles
+SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+az role assignment create \
+  --assignee $APP_ID \
+  --role "Storage Blob Data Contributor" \
+  --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/mbb"
+```
+
+### Method 3: Service Principal with Client Secret (Legacy)
+
+**Note**: This method is deprecated for GitHub Actions. Use OIDC instead.
+
+```bash
+# Create a service principal (for local development only)
 az ad sp create-for-rbac --name "terraform-backend-sp" --role Contributor
 
 # Set environment variables
@@ -98,11 +152,11 @@ export ARM_SUBSCRIPTION_ID="<subscriptionId>"
 export ARM_TENANT_ID="<tenant>"
 ```
 
-### Method 3: Managed Identity (For Azure VMs/Containers)
+### Method 4: Managed Identity (For Azure VMs/Containers)
 
 When running Terraform from Azure resources (VMs, Container Instances, etc.), you can use Managed Identity without any credentials.
 
-### Method 4: Azure CLI (For Local Development)
+### Method 5: Azure CLI (For Local Development)
 
 ```bash
 # Login to Azure CLI
@@ -122,23 +176,23 @@ container_name       = "tfstate"
 key                  = "github.terraform.tfstate"
 ```
 
-## GitHub Actions Setup
+## GitHub Actions Setup with OIDC
 
 ### Required Secrets
 
-For GitHub Actions workflows, configure these secrets in your repository:
+For GitHub Actions workflows using OIDC authentication, configure these secrets:
 
 1. **ARM_CLIENT_ID**: Service Principal Application ID
-2. **ARM_CLIENT_SECRET**: Service Principal Password/Secret
-3. **ARM_SUBSCRIPTION_ID**: Azure Subscription ID
-4. **ARM_TENANT_ID**: Azure Active Directory Tenant ID
+2. **ARM_SUBSCRIPTION_ID**: Azure Subscription ID
+3. **ARM_TENANT_ID**: Azure Active Directory Tenant ID
+
+**Note**: `ARM_CLIENT_SECRET` is NOT required when using OIDC authentication.
 
 ### Setting Secrets
 
 ```bash
 # Using GitHub CLI
 gh secret set ARM_CLIENT_ID --body "your-client-id"
-gh secret set ARM_CLIENT_SECRET --body "your-client-secret"
 gh secret set ARM_SUBSCRIPTION_ID --body "your-subscription-id"
 gh secret set ARM_TENANT_ID --body "your-tenant-id"
 ```
@@ -147,6 +201,25 @@ Or via GitHub UI:
 1. Navigate to Repository Settings → Secrets and variables → Actions
 2. Click "New repository secret"
 3. Add each secret listed above
+
+### How OIDC Works
+
+The GitHub Actions workflows use the `azure/login@v2` action with OIDC:
+
+```yaml
+- name: Azure Login with OIDC
+  uses: azure/login@v2
+  with:
+    client-id: ${{ secrets.ARM_CLIENT_ID }}
+    tenant-id: ${{ secrets.ARM_TENANT_ID }}
+    subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+```
+
+This provides:
+- ✅ **Secretless authentication** - No client secrets to manage
+- ✅ **Short-lived tokens** - Automatically rotated
+- ✅ **Enhanced security** - Reduces secret sprawl
+- ✅ **Audit trail** - Better tracking of authentication events
 
 ## Local Development Setup
 

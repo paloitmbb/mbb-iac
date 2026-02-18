@@ -61,24 +61,31 @@ key                  = "github.terraform.tfstate"
 
 ### 4. GitHub Actions Workflows
 
-**Changed**: Added Azure authentication environment variables to all Terraform operations
+**Changed**: Implemented OIDC authentication for Azure with `azure/login@v2` action
 
 **Modified Workflows**:
 - `.github/workflows/terraform-apply.yml`
 - `.github/workflows/terraform-apply-repo.yml`
 - `.github/workflows/terraform-plan.yml`
 
-**Added Environment Variables**:
+**Added**:
+- `id-token: write` permission for OIDC token generation
+- `azure/login@v2` step for secretless authentication
+- `ARM_USE_OIDC: true` environment variable
+
+**Environment Variables** (using OIDC):
 ```yaml
 ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
 ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
 ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+ARM_USE_OIDC: true
 ```
 
-**Removed**: GitHub-specific state recovery logic from terraform apply steps (not needed with Azure backend)
+**Removed**: 
+- `ARM_CLIENT_SECRET` - No longer needed with OIDC
+- GitHub-specific state recovery logic from terraform apply steps
 
-**Impact**: Workflows now support both Azure (dev) and GitHub (staging/production) backends.
+**Impact**: Workflows now use secretless OIDC authentication for Azure and support both Azure (dev) and GitHub (staging/production) backends.
 
 ### 5. Documentation
 
@@ -125,15 +132,55 @@ az storage container create \
   --account-name $STORAGE_ACCOUNT
 ```
 
-### 2. Configure GitHub Secrets (for CI/CD)
+### 2. Configure GitHub Secrets and OIDC (for CI/CD)
 
-Add these secrets to your GitHub repository:
+#### Step 2a: Setup OIDC Federated Credentials in Azure
 
 ```bash
-gh secret set ARM_CLIENT_ID --body "your-client-id"
-gh secret set ARM_CLIENT_SECRET --body "your-client-secret"
-gh secret set ARM_SUBSCRIPTION_ID --body "your-subscription-id"
-gh secret set ARM_TENANT_ID --body "your-tenant-id"
+GITHUB_ORG="paloitmbb"
+GITHUB_REPO="mbb-iac"
+APP_NAME="github-actions-oidc"
+
+# Create Azure AD application and service principal
+az ad app create --display-name $APP_NAME
+APP_ID=$(az ad app list --display-name $APP_NAME --query '[0].appId' -o tsv)
+az ad sp create --id $APP_ID
+
+# Create federated credentials for GitHub Actions
+az ad app federated-credential create \
+  --id $APP_ID \
+  --parameters '{
+    "name": "github-actions-main",
+    "issuer": "https://token.actions.githubusercontent.com",
+    "subject": "repo:'$GITHUB_ORG'/'$GITHUB_REPO':ref:refs/heads/main",
+    "audiences": ["api://AzureADTokenExchange"]
+  }'
+
+az ad app federated-credential create \
+  --id $APP_ID \
+  --parameters '{
+    "name": "github-actions-pr",
+    "issuer": "https://token.actions.githubusercontent.com",
+    "subject": "repo:'$GITHUB_ORG'/'$GITHUB_REPO':pull_request",
+    "audiences": ["api://AzureADTokenExchange"]
+  }'
+
+# Assign Storage Blob Data Contributor role
+SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+az role assignment create \
+  --assignee $APP_ID \
+  --role "Storage Blob Data Contributor" \
+  --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/mbb"
+```
+
+#### Step 2b: Configure GitHub Secrets
+
+Add these secrets to your GitHub repository (note: no client secret needed):
+
+```bash
+gh secret set ARM_CLIENT_ID --body "$APP_ID"
+gh secret set ARM_SUBSCRIPTION_ID --body "$SUBSCRIPTION_ID"
+gh secret set ARM_TENANT_ID --body "$(az account show --query tenantId -o tsv)"
 ```
 
 ### 3. Backup Current State
@@ -148,13 +195,12 @@ curl -L -H "Authorization: token $GITHUB_TOKEN" \
 ### 4. Migrate State to Azure
 
 ```bash
-# Set Azure authentication (choose one method)
+# Set Azure authentication (for local migration)
+# Option 1: Using Azure CLI
+az login
+
+# Option 2: Using Storage Account Access Key
 export ARM_ACCESS_KEY="your-storage-account-access-key"
-# OR
-export ARM_CLIENT_ID="your-client-id"
-export ARM_CLIENT_SECRET="your-client-secret"
-export ARM_SUBSCRIPTION_ID="your-subscription-id"
-export ARM_TENANT_ID="your-tenant-id"
 
 # Initialize with state migration
 terraform init -migrate-state -backend-config=environments/dev/backend.tfvars
@@ -163,6 +209,8 @@ terraform init -migrate-state -backend-config=environments/dev/backend.tfvars
 terraform state list
 terraform plan -var-file=environments/dev/terraform.tfvars
 ```
+
+**Note**: GitHub Actions will use OIDC authentication automatically (no secrets needed).
 
 ### 5. Test the New Backend
 
@@ -184,15 +232,16 @@ terraform plan -var-file=environments/dev/terraform.tfvars
 
 ## Required GitHub Secrets
 
-For GitHub Actions to work with the dev environment:
+For GitHub Actions OIDC authentication with Azure (dev environment):
 
 | Secret | Purpose | Required |
 |--------|---------|----------|
 | `ARM_CLIENT_ID` | Azure Service Principal App ID | ✅ Yes |
-| `ARM_CLIENT_SECRET` | Azure Service Principal Secret | ✅ Yes |
 | `ARM_SUBSCRIPTION_ID` | Azure Subscription ID | ✅ Yes |
 | `ARM_TENANT_ID` | Azure AD Tenant ID | ✅ Yes |
 | `ORG_GITHUB_TOKEN` | GitHub organization token | ✅ Yes (existing) |
+
+**Note**: `ARM_CLIENT_SECRET` is NOT required when using OIDC authentication.
 
 ## Benefits of Azure Backend
 

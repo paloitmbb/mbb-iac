@@ -57,19 +57,27 @@ export GITHUB_TOKEN="your-github-token"
 
 #### For Backend (Dev Environment uses Azure)
 
+**GitHub Actions**: Uses OIDC authentication (no secrets required)
+- Configured via `azure/login@v2` action in workflows
+- Requires federated credentials setup in Azure AD
+
+**Local Development**:
+
 ```bash
 # Option 1: Using Azure Storage Account Access Key
 export ARM_ACCESS_KEY="your-storage-account-access-key"
 
-# Option 2: Using Service Principal
+# Option 2: Using Service Principal (with OIDC)
 export ARM_CLIENT_ID="your-client-id"
-export ARM_CLIENT_SECRET="your-client-secret"
 export ARM_SUBSCRIPTION_ID="your-subscription-id"
 export ARM_TENANT_ID="your-tenant-id"
+export ARM_USE_OIDC=true
 
 # Option 3: Using Azure CLI
 az login
 ```
+
+**Note**: GitHub Actions workflows use OIDC authentication for secretless Azure login. No `ARM_CLIENT_SECRET` is needed in CI/CD.
 
 ### 3. Configure Backend
 
