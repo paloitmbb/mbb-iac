@@ -1,7 +1,66 @@
 # Automated Repository Workflow - Implementation Summary
 
 **Date:** 12 February 2026  
-**Status:** ✅ Implementation Complete (Updated - Team Access Model)
+**Last Updated:** 18 February 2026  
+**Status:** ✅ Implementation Complete (Updated - Backend Migration & OIDC)
+
+## Recent Updates (February 2026)
+
+### Backend Migration to Azure Storage
+
+**Date:** 18 February 2026
+
+The project has been migrated from GitHub HTTP backend to Azure Blob Storage for the dev environment:
+
+- ✅ **Dev Environment**: Now uses Azure Storage (`mbbtfstate/tfstate/github.terraform.tfstate`)
+- ✅ **OIDC Authentication**: Workflows use `azure/login@v2` for secretless authentication
+- ✅ **Backend Simplification**: Removed HTTP backend fallback logic from all scripts
+- ✅ **Updated Configuration**: Backend configs reflect new Azure storage account names
+
+**Key Changes:**
+- Azure Storage Account: `mbbtfstate` (resource group: `mbb`)
+- Container: `tfstate`
+- State file: `github.terraform.tfstate`
+- Authentication: OIDC via GitHub Actions (no client secrets required)
+
+### OIDC Authentication Implementation
+
+**Date:** 18 February 2026
+
+All GitHub Actions workflows now use OIDC for Azure authentication:
+
+- ✅ **Secretless Authentication**: No `ARM_CLIENT_SECRET` required
+- ✅ **Short-lived Tokens**: Automatic token rotation via Azure AD
+- ✅ **Enhanced Security**: Federated credentials instead of long-lived secrets
+- ✅ **Workflow Updates**: All Terraform workflows use `azure/login@v2`
+
+**Required GitHub Secrets (reduced from 4 to 3):**
+- `ARM_CLIENT_ID` - Azure Service Principal Application ID
+- `ARM_SUBSCRIPTION_ID` - Azure Subscription ID
+- `ARM_TENANT_ID` - Azure AD Tenant ID
+
+**Removed:**
+- ❌ `ARM_CLIENT_SECRET` - No longer required with OIDC
+
+**Modified Workflows:**
+- `.github/workflows/terraform-apply.yml` - Added OIDC login step
+- `.github/workflows/terraform-plan.yml` - Added OIDC login step
+- `.github/workflows/terraform-apply-repo.yml` - Added OIDC login step
+
+### Script Simplification
+
+**Date:** 18 February 2026
+
+Removed HTTP backend fallback logic from all helper scripts:
+
+- ✅ **scripts/init.sh**: Simplified to Azure-only backend detection
+- ✅ **scripts/apply.sh**: Removed GitHub release state recovery logic
+- ✅ **scripts/plan.sh**: Removed TF_HTTP_PASSWORD exports
+- ✅ **scripts/import-repos.sh**: Removed HTTP backend authentication
+
+**Result:** 44 lines of legacy code removed across 4 scripts.
+
+---
 
 ## What Was Implemented
 
@@ -235,7 +294,7 @@ Success! The configuration is valid.
 
 ### 4. Configure GitHub Token (Manual)
 
-⚠️ **Required for all workflows:**
+⚠️ **Required for GitHub API workflows:**
 
 1. Create a GitHub Personal Access Token (classic) with scopes:
    - `repo` - Full control of private repositories
@@ -244,10 +303,58 @@ Success! The configuration is valid.
 2. Add as repository secret: `ORG_GITHUB_TOKEN`
 3. This token is used for:
    - Team existence validation in repo-request workflow
-   - Terraform operations (provider authentication)
-   - HTTP backend state management
+   - Terraform GitHub provider authentication
+   - Repository management operations
 
-### 4. Test the Workflow
+### 5. Configure Azure OIDC (Manual)
+
+⚠️ **Required for Azure backend authentication:**
+
+1. **Create Azure AD Application and Service Principal:**
+   ```bash
+   az ad app create --display-name "github-actions-oidc"
+   APP_ID=$(az ad app list --display-name "github-actions-oidc" --query '[0].appId' -o tsv)
+   az ad sp create --id $APP_ID
+   ```
+
+2. **Create Federated Credentials for GitHub Actions:**
+   ```bash
+   # For main branch
+   az ad app federated-credential create --id $APP_ID --parameters '{
+     "name": "github-actions-main",
+     "issuer": "https://token.actions.githubusercontent.com",
+     "subject": "repo:paloitmbb/mbb-iac:ref:refs/heads/main",
+     "audiences": ["api://AzureADTokenExchange"]
+   }'
+   
+   # For pull requests
+   az ad app federated-credential create --id $APP_ID --parameters '{
+     "name": "github-actions-pr",
+     "issuer": "https://token.actions.githubusercontent.com",
+     "subject": "repo:paloitmbb/mbb-iac:pull_request",
+     "audiences": ["api://AzureADTokenExchange"]
+   }'
+   ```
+
+3. **Assign Storage Blob Data Contributor Role:**
+   ```bash
+   SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+   az role assignment create \
+     --assignee $APP_ID \
+     --role "Storage Blob Data Contributor" \
+     --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/mbb"
+   ```
+
+4. **Configure GitHub Secrets:**
+   ```bash
+   gh secret set ARM_CLIENT_ID --body "$APP_ID"
+   gh secret set ARM_SUBSCRIPTION_ID --body "$SUBSCRIPTION_ID"
+   gh secret set ARM_TENANT_ID --body "$(az account show --query tenantId -o tsv)"
+   ```
+
+**Note:** No `ARM_CLIENT_SECRET` is needed with OIDC authentication.
+
+### 6. Test the Workflow
 
 After environment and team setup:
 

@@ -1,6 +1,7 @@
 # Automated Repository Creation Workflow - Implementation Plan
 
 **Created:** 11 February 2026  
+**Last Updated:** 18 February 2026  
 **Owner:** DevSecOps Team  
 **Status:** Implemented
 
@@ -16,6 +17,28 @@
 > - Users must use existing organization teams, not create new ones
 >
 > This document retains the original plan for reference. See [02-IMPLEMENTATION_SUMMARY.md](./02-IMPLEMENTATION_SUMMARY.md) for the current architecture.
+
+---
+
+> **🔄 RECENT UPDATES (February 2026):**
+>
+> **Backend Migration:**
+> - ✅ Migrated dev environment to **Azure Blob Storage** backend
+> - ✅ Removed HTTP backend (GitHub Releases) fallback logic
+> - ✅ Simplified scripts to Azure-only backend
+>
+> **OIDC Authentication:**
+> - ✅ Implemented **OIDC authentication** for Azure (secretless)
+> - ✅ Removed `ARM_CLIENT_SECRET` requirement from workflows
+> - ✅ Updated all Terraform workflows with `azure/login@v2`
+> - ✅ Reduced GitHub secrets from 4 to 3
+>
+> **Backend Configuration:**
+> - Storage Account: `mbbtfstate` (resource group: `mbb`)
+> - Container: `tfstate`
+> - State file: `github.terraform.tfstate`
+>
+> See [AZURE_BACKEND_SETUP.md](../../AZURE_BACKEND_SETUP.md) for Azure backend details.
 
 ---
 
