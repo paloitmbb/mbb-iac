@@ -85,8 +85,6 @@ Edit `repositories.yaml` and add:
     require_signed_commits: false
     enforce_admins: false
   teams: []
-  secrets: {}
-  variables: {}
 ```
 
 ### Remove a Repository

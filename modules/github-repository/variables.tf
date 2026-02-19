@@ -148,22 +148,6 @@ variable "teams" {
   default = []
 }
 
-variable "repository_secrets" {
-  description = "Repository secrets"
-  type = map(object({
-    value = string
-  }))
-  default = {}
-}
-
-variable "repository_variables" {
-  description = "Repository variables"
-  type = map(object({
-    value = string
-  }))
-  default = {}
-}
-
 variable "webhooks" {
   description = "Repository webhooks"
   type = list(object({

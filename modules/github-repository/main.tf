@@ -102,26 +102,6 @@ resource "github_team_repository" "this" {
   depends_on = [github_repository.this]
 }
 
-resource "github_actions_secret" "this" {
-  for_each = var.repository_secrets != null ? var.repository_secrets : {}
-
-  repository      = github_repository.this.name
-  secret_name     = each.key
-  plaintext_value = each.value.value
-
-  depends_on = [github_repository.this]
-}
-
-resource "github_actions_variable" "this" {
-  for_each = var.repository_variables != null ? var.repository_variables : {}
-
-  repository    = github_repository.this.name
-  variable_name = each.key
-  value         = each.value.value
-
-  depends_on = [github_repository.this]
-}
-
 resource "github_repository_webhook" "this" {
   for_each = var.webhooks != null ? { for idx, webhook in var.webhooks : idx => webhook } : {}
 
