@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - "environments/**/*.tfvars"
+      - "data/**/*.yaml"
+      - "data/**/*.yml"
       - "modules/**/*.tf"
       - "*.tf"
   workflow_dispatch:
