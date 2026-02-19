@@ -118,7 +118,7 @@ The workflow consists of **7 sequential jobs** with dependency gates:
 | 7 | Validate target org exists | `GET https://api.github.com/orgs/{org}` (falls back to `/users/{org}`) | Uses `GH_TARGET_PAT` |
 | 8 | Check target repo name available | `GET https://api.github.com/repos/{org}/{repo}` | HTTP 200 means name is taken → fail |
 | 9 | Post validation results | Post detailed comment to issue | `actions/github-script@v7` — adds labels (`validation-passed` or `validation-failed`) |
-| 10 | Comment validation passed | Summary table posted to issue | `peter-evans/create-or-update-comment@v4` |
+| 10 | Comment validation passed | Summary table posted to issue | `gh issue comment` (GH CLI) |
 | 11 | Generate validation summary | Write GitHub Actions job summary | `core.summary.addRaw().write()` |
 | 12 | Label as in-progress | Add `in-progress` label to issue | `gh issue edit --add-label` |
 
@@ -156,7 +156,7 @@ The workflow consists of **7 sequential jobs** with dependency gates:
 |---|------|-------------|---------------------|
 | 1 | Parse migration options | Extract `archive_source` flag from checkboxes | String match on `"Archive source repository"` |
 | 2 | Record source state | Capture branch count, tag count, HEAD SHA, default branch | `GET /repos/{org}/{repo}`, `/branches`, `/tags`, `/branches/{default}` |
-| 3 | Comment pre-migration state | Post metrics table to issue | `peter-evans/create-or-update-comment@v4` |
+| 3 | Comment pre-migration state | Post metrics table to issue | `gh issue comment` (GH CLI) |
 
 **Outputs:**
 
@@ -207,7 +207,7 @@ gh gei migrate-repo \
 | 3 | Apply team access mappings | Parse `source → target : permission` format, apply each | `PUT /orgs/{org}/teams/{team}/repos/{org}/{repo}` |
 | 4 | Enable branch protection | Set branch protection on default branch (require PR reviews, dismiss stale reviews, enforce on admins) | `PUT /repos/{org}/{repo}/branches/{branch}/protection` |
 | 5 | Migrate GHAS permissions | Multi-step security migration (see §4.7.1) | Multiple GHES & GHEC API calls |
-| 6 | Comment results | Post summary with GHAS status | `peter-evans/create-or-update-comment@v4` |
+| 6 | Comment results | Post summary with GHAS status | `gh issue comment` (GH CLI) |
 
 #### 4.7.1 Advanced Security (GHAS) Migration Sub-steps
 
