@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - "environments/**/*.tfvars"
+      - "data/*.yaml"
+      - "data/*.yml"
       - "data/**/*.yaml"
       - "data/**/*.yml"
       - "modules/**/*.tf"
@@ -31,7 +33,7 @@ jobs:
   terraform-apply:
     runs-on: ubuntu-latest
     # Skip if this is a repo-request PR merge (handled by terraform-apply-repo.yml)
-    if: ${{ !contains(github.event.head_commit.message, 'repo-request') && !contains(github.event.head_commit.message, 'add repository') }}
+    # if: ${{ !contains(github.event.head_commit.message, 'repo-request') && !contains(github.event.head_commit.message, 'add repository') }}
     strategy:
       matrix:
         environment: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.environment)) || fromJSON('["dev"]') }}
