@@ -1,0 +1,410 @@
+name: Issue Triggered Repository Creation Workflow
+
+on:
+  issues:
+    types: [opened]
+
+# Note: This workflow uses ORG_GITHUB_TOKEN instead of GITHUB_TOKEN for:
+# - Team validation (requires read:org permission)
+# - PR creation (GITHUB_TOKEN is restricted from creating PRs in this repository)
+# - Issue comments and label management
+# Ensure ORG_GITHUB_TOKEN has: repo, read:org permissions
+permissions:
+  issues: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  # ============================================================================
+  # Job 1: Validate Repository Request
+  # ============================================================================
+  validate-request:
+    name: Validate Repository Request
+    runs-on: ubuntu-latest
+    if: startsWith(github.event.issue.title, '[REPO REQUEST]')
+    outputs:
+      # Parsed fields
+      repo-name: ${{ steps.parse.outputs.repo-name }}
+      tech-stack: ${{ steps.compute-tech-stack.outputs.final-tech-stack }}
+      justification: ${{ steps.parse.outputs.justification }}
+      teams: ${{ steps.parse.outputs.teams }}
+      validated-teams: ${{ steps.validate.outputs.validated-teams }}
+      teams-display: ${{ steps.validate.outputs.teams-display }}
+      default-branch: ${{ steps.parse.outputs.default-branch }}
+      # Validation results
+      validation-passed: ${{ steps.validate.outputs.validation-passed }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Parse issue form
+        id: parse
+        uses: paloitmbb/mbb-tf-actions/actions/parse-issue-form@main # Pin to commit with explicit outputs
+        with:
+          issue-body: ${{ github.event.issue.body }}
+          field-mapping: |
+            {
+              "repo-name": "Repository Name",
+              "tech-stack": "Tech Stack",
+              "tech-stack-other": "Other Tech Stack",
+              "justification": "Business Justification",
+              "teams": "Team Access",
+              "default-branch": "Default Branch Name"
+            }
+          fallback-values: |
+            {
+              "tech-stack": "${tech-stack-other}",
+              "default-branch": "main"
+            }
+
+      - name: Compute final tech stack
+        id: compute-tech-stack
+        shell: bash
+        run: |
+          TECH_STACK="${{ steps.parse.outputs.tech-stack }}"
+          TECH_STACK_OTHER="${{ steps.parse.outputs.tech-stack-other }}"
+
+          # Use "Other Tech Stack" if user selected "Others (specify below)"
+          if [[ "$TECH_STACK" == "Others (specify below)" && -n "$TECH_STACK_OTHER" ]]; then
+            FINAL_TECH_STACK="$TECH_STACK_OTHER"
+          else
+            FINAL_TECH_STACK="$TECH_STACK"
+          fi
+
+          echo "final-tech-stack=$FINAL_TECH_STACK" >> $GITHUB_OUTPUT
+
+      - name: Load default values from defaults.yaml
+        id: load-defaults
+        uses: paloitmbb/mbb-tf-actions/actions/load-repository-defaults@main
+        with:
+          defaults-file: 'data/defaults.yaml'
+
+      - name: Validate repository request
+        id: validate
+        uses: paloitmbb/mbb-tf-actions/actions/validate-repository-request@main
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          organization: ${{ github.repository_owner }}
+          repository-name: ${{ steps.parse.outputs.repo-name }}
+          teams: ${{ steps.parse.outputs.teams }}
+
+      - name: Build validation details
+        if: always()
+        id: build-details
+        shell: bash
+        run: |
+          REPO_NAME="${{ steps.parse.outputs.repo-name }}"
+          TECH_STACK="${{ steps.compute-tech-stack.outputs.final-tech-stack }}"
+          TEAMS="${{ steps.parse.outputs.teams }}"
+          TEAMS_DISPLAY="${{ steps.validate.outputs.teams-display }}"
+          DEFAULT_BRANCH="${{ steps.parse.outputs.default-branch }}"
+          VALIDATION_PASSED="${{ steps.validate.outputs.validation-passed }}"
+
+          # Build Request Summary using heredoc
+          REQUEST_SUMMARY=$(cat <<SUMMARY
+          **Repository Name:** \`${REPO_NAME}\`
+          **Tech Stack:** ${TECH_STACK}
+          **Teams with Access:** ${TEAMS_DISPLAY:-None}
+          **Default Branch:** \`${DEFAULT_BRANCH}\`
+          SUMMARY
+          )
+
+          # Build Teams section using validated teams-display
+          if [[ -n "$TEAMS_DISPLAY" && "$TEAMS_DISPLAY" != "None" ]]; then
+            # Split the validated teams-display instead of raw teams
+            TEAMS_SECTION=""
+            IFS=',' read -ra TEAM_ARRAY <<< "$TEAMS_DISPLAY"
+            for team in "${TEAM_ARRAY[@]}"; do
+              team_trim=$(echo "$team" | xargs)
+              if [[ -n "$team_trim" ]]; then
+                TEAMS_SECTION="${TEAMS_SECTION}- \`${team_trim}\` ✅ (Existing organization team)"$'\n'
+              fi
+            done
+          else
+            TEAMS_SECTION="_No teams specified - repository will be created without team access_"
+          fi
+
+          # Build Default Configuration using heredoc
+          DEFAULT_CONFIG=$(cat <<CONFIG
+          📋 All other settings (visibility, features, security, topics, variables) will use organizational defaults from \`defaults.yaml\`:
+          - **Visibility:** private
+          - **Features:** Issues, Projects (Wiki disabled)
+          - **Security:** Vulnerability alerts, Dependabot enabled
+          - **Topics:** maybank, mbb, ${TECH_STACK,,}
+          CONFIG
+          )
+
+          # Build Next Steps section
+          if [[ "$VALIDATION_PASSED" == "true" ]]; then
+            NEXT_STEPS=$(cat <<STEPS
+          - Awaiting approval from **DevSecOps team**
+          - Once approved, a pull request will be created to add repository configuration
+          - After PR is merged, run \`terraform apply\` to create the repository
+          STEPS
+          )
+          else
+            NEXT_STEPS="Please fix the validation errors above and create a new repository request issue."
+          fi
+
+          # Build validation results table
+          VALIDATION_TABLE="${{ steps.validate.outputs.validation-summary }}"
+
+          # Create JSON array for details-sections and minify
+          DETAILS_JSON=$(jq -nc \
+            --arg summary "$REQUEST_SUMMARY" \
+            --arg teams "$TEAMS_SECTION" \
+            --arg defaults "$DEFAULT_CONFIG" \
+            --arg nextsteps "$NEXT_STEPS" \
+            --arg validation "$VALIDATION_TABLE" \
+            '[
+              {heading: "📋 Request Summary", body: $summary},
+              {heading: "🔍 Validation Results", body: $validation},
+              {heading: "👥 Teams with Access", body: $teams},
+              {heading: "⚙️ Default Configuration", body: $defaults},
+              {heading: "📝 Next Steps", body: $nextsteps}
+            ]')
+
+          # Use delimiter format for multiline JSON output
+          echo "details-json<<JSONEOF" >> $GITHUB_OUTPUT
+          echo "$DETAILS_JSON" >> $GITHUB_OUTPUT
+          echo "JSONEOF" >> $GITHUB_OUTPUT
+
+      - name: Notify validation result
+        if: always()
+        uses: paloitmbb/mbb-tf-actions/actions/notify-issue-status@main
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          issue-number: ${{ github.event.issue.number }}
+          status: ${{ steps.validate.outputs.validation-passed == 'true' && 'validation-passed' || 'validation-failed' }}
+          details-sections: ${{ steps.build-details.outputs.details-json }}
+          labels-add: ${{ steps.validate.outputs.validation-passed == 'true' && 'validation-passed' || 'validation-failed' }}
+          close-issue: ${{ steps.validate.outputs.validation-passed != 'true' }}
+          close-reason: 'not_planned'
+
+  # ============================================================================
+  # Job 2: Create Repository Configuration PR (Requires Approval)
+  # ============================================================================
+  create-repository-pr:
+    name: Create Repository Configuration PR
+    runs-on: ubuntu-latest
+    needs: validate-request
+    if: needs.validate-request.outputs.validation-passed == 'true'
+    environment: repo-creation-approval
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          token: ${{ secrets.ORG_GITHUB_TOKEN }}
+
+      - name: Update YAML configuration
+        id: update-yaml
+        uses: paloitmbb/mbb-tf-actions/actions/update-yaml-config@main
+        with:
+          config-file: 'data/repositories.yaml'
+          defaults-file: 'data/defaults.yaml'
+          repository-name: ${{ needs.validate-request.outputs.repo-name }}
+          tech-stack: ${{ needs.validate-request.outputs.tech-stack }}
+          default-branch: ${{ needs.validate-request.outputs.default-branch }}
+          teams: ${{ needs.validate-request.outputs.validated-teams }}
+
+      - name: Create pull request
+        id: create-pr
+        uses: paloitmbb/mbb-tf-actions/actions/create-config-pull-request@main
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          branch-prefix: 'repo-request'
+          branch-suffix: ${{ needs.validate-request.outputs.repo-name }}
+          commit-title: "feat: ✨ add repository ${{ needs.validate-request.outputs.repo-name }}"
+          commit-body: |
+            Repository request from issue #${{ github.event.issue.number }}
+
+            - Repository: ${{ needs.validate-request.outputs.repo-name }}
+            - Tech Stack: ${{ needs.validate-request.outputs.tech-stack }}
+            - Default Branch: ${{ needs.validate-request.outputs.default-branch }}
+            - Configuration: Using organizational defaults
+            ${{ needs.validate-request.outputs.teams-display != 'None' && needs.validate-request.outputs.teams-display != '' && format('- Teams with Access: {0}', needs.validate-request.outputs.teams-display) || '' }}
+
+            Related to #${{ github.event.issue.number }}
+          pr-title: "🆕 Add repository: ${{ needs.validate-request.outputs.repo-name }}"
+          pr-body: |
+            ## 🎉 New Repository Request
+
+            ### Repository Details
+
+            | Field | Value |
+            |-------|-------|
+            | **Repository Name** | `${{ needs.validate-request.outputs.repo-name }}` |
+            | **Tech Stack** | ${{ needs.validate-request.outputs.tech-stack }} |
+            | **Default Branch** | `${{ needs.validate-request.outputs.default-branch }}` |
+            | **Teams with Access** | ${{ needs.validate-request.outputs.teams-display || 'None' }} |
+            | **Requested By** | @${{ github.event.issue.user.login }} |
+
+            ### Team Access
+
+            ${{ needs.validate-request.outputs.teams-display != 'None' && needs.validate-request.outputs.teams-display != '' && format('Teams with write access: `{0}`', needs.validate-request.outputs.teams-display) || 'No teams specified' }}
+
+            ### Configuration
+
+            This PR adds the repository definition to `data/repositories.yaml`.
+
+            **Default settings** from `data/defaults.yaml` will be applied:
+            - Visibility: private
+            - Features: Issues, Projects (Wiki disabled)
+            - Security: Vulnerability alerts, Dependabot enabled
+            - Topics: maybank, mbb, ${{ needs.validate-request.outputs.tech-stack }}
+
+            ### Next Steps
+
+            1. ✅ Review the YAML changes
+            2. ✅ Merge this PR to apply changes
+            3. 🚀 Run Terraform to create the repository and grant team access
+
+            ---
+
+            Closes #${{ github.event.issue.number }}
+          pr-labels: 'repo-request,automated'
+          file-paths: 'data/repositories.yaml'
+          linked-issue: ${{ github.event.issue.number }}
+
+      - name: Generate PR creation job summary
+        if: success()
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const repoName = '${{ needs.validate-request.outputs.repo-name }}';
+            const techStack = '${{ needs.validate-request.outputs.tech-stack }}';
+            const defaultBranch = '${{ needs.validate-request.outputs.default-branch }}';
+            const teamsDisplay = '${{ needs.validate-request.outputs.teams-display }}';
+            const prUrl = '${{ steps.create-pr.outputs.pr-url }}';
+            const prNumber = '${{ steps.create-pr.outputs.pr-number }}';
+
+            let summary = '# ✅ Pull Request Created Successfully!\n\n';
+            summary += `## 🎉 Repository Configuration Ready\n\n`;
+            summary += '| Field | Value |\n';
+            summary += '|-------|-------|\n';
+            summary += `| **Repository Name** | \`${repoName}\` |\n`;
+            summary += `| **Tech Stack** | ${techStack} |\n`;
+            summary += `| **Default Branch** | \`${defaultBranch}\` |\n`;
+            summary += `| **Teams with Access** | ${teamsDisplay || 'None'} |\n`;
+            summary += `| **Pull Request** | [#${prNumber}](${prUrl}) |\n\n`;
+
+            summary += '## 📋 Next Steps\n\n';
+            summary += `1. 📝 Review the PR: [#${prNumber}](${prUrl})\n`;
+            summary += `2. ✅ Approve and merge the PR\n`;
+            summary += `3. 🚀 Run Terraform apply to create repository and grant team access\n\n`;
+
+            summary += '---\n\n';
+            summary += `*PR created for issue #${{ github.event.issue.number }}*\n`;
+
+            await core.summary
+              .addRaw(summary)
+              .write();
+
+      - name: Build PR success notification
+        if: success()
+        id: build-pr-success
+        shell: bash
+        run: |
+          REPO_NAME='${{ needs.validate-request.outputs.repo-name }}'
+          TECH_STACK='${{ needs.validate-request.outputs.tech-stack }}'
+          DEFAULT_BRANCH='${{ needs.validate-request.outputs.default-branch }}'
+          TEAMS_DISPLAY='${{ needs.validate-request.outputs.teams-display }}'
+          PR_NUMBER='${{ steps.create-pr.outputs.pr-number }}'
+          PR_URL='${{ steps.create-pr.outputs.pr-url }}'
+
+          # Build summary table JSON (use -c for compact single-line output)
+          SUMMARY_JSON=$(jq -nc \
+            --arg repo "\`${REPO_NAME}\`" \
+            --arg tech "${TECH_STACK}" \
+            --arg branch "\`${DEFAULT_BRANCH}\`" \
+            --arg teams "${TEAMS_DISPLAY:-None}" \
+            --arg pr "[#${PR_NUMBER}](${PR_URL})" \
+            '[
+              {field: "Repository Name", value: $repo},
+              {field: "Tech Stack", value: $tech},
+              {field: "Default Branch", value: $branch},
+              {field: "Teams with Access", value: $teams},
+              {field: "Pull Request", value: $pr}
+            ]'
+          )
+
+          echo "summary-json=$SUMMARY_JSON" >> $GITHUB_OUTPUT
+
+          # Build next steps using heredoc
+          echo "next-steps<<STEPSEOF" >> $GITHUB_OUTPUT
+          echo "1. 📝 Review the pull request: [#${PR_NUMBER}](${PR_URL})" >> $GITHUB_OUTPUT
+          echo "2. ✅ Approve and merge the PR" >> $GITHUB_OUTPUT
+          echo "3. 🚀 Run \`terraform apply\` to create the repository and grant team access" >> $GITHUB_OUTPUT
+          echo "STEPSEOF" >> $GITHUB_OUTPUT
+
+      - name: Notify PR creation success
+        if: success()
+        uses: paloitmbb/mbb-tf-actions/actions/notify-issue-status@main
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          issue-number: ${{ github.event.issue.number }}
+          status: 'success'
+          title: 'Pull Request Created!'
+          summary-table: ${{ steps.build-pr-success.outputs.summary-json }}
+          next-steps: ${{ steps.build-pr-success.outputs.next-steps }}
+          labels-add: 'pr-created'
+
+      - name: Generate failure job summary
+        if: failure()
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const repoName = '${{ needs.validate-request.outputs.repo-name }}';
+
+            let summary = '# ❌ Repository Creation Failed\n\n';
+            summary += `## 🚨 Error Information\n\n`;
+            summary += '| Field | Value |\n';
+            summary += '|-------|-------|\n';
+            summary += `| **Repository Name** | \`${repoName}\` |\n`;
+            summary += `| **Workflow Run** | [View Logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |\n`;
+            summary += `| **Issue** | #${{ github.event.issue.number }} |\n\n`;
+
+            summary += '## 🔧 Troubleshooting Steps\n\n';
+            summary += '1. 📋 Check the workflow logs for detailed error messages\n';
+            summary += '2. 🔍 Verify that all required permissions are in place\n';
+            summary += '3. 🔄 Ensure no manual changes conflict with automation\n\n';
+
+            summary += '---\n\n';
+
+            await core.summary
+              .addRaw(summary)
+              .write();
+
+      - name: Build PR failure notification
+        if: failure()
+        id: build-pr-failure
+        shell: bash
+        run: |
+          REPO_NAME='${{ needs.validate-request.outputs.repo-name }}'
+          RUN_ID='${{ github.run_id }}'
+          REPO='${{ github.repository }}'
+
+          # Build error details using heredoc
+          echo "error-details<<ERROREOF" >> $GITHUB_OUTPUT
+          echo "There was an error creating the pull request." >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "**Workflow Run:** [View Logs](https://github.com/${REPO}/actions/runs/${RUN_ID})" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "### 🔧 Troubleshooting Steps" >> $GITHUB_OUTPUT
+          echo "1. 📋 Check the workflow logs for detailed error messages" >> $GITHUB_OUTPUT
+          echo "2. 🔍 Verify that all required permissions are in place" >> $GITHUB_OUTPUT
+          echo "3. 🔄 Ensure no manual changes conflict with automation" >> $GITHUB_OUTPUT
+          echo "ERROREOF" >> $GITHUB_OUTPUT
+
+      - name: Notify PR creation failure
+        if: failure()
+        uses: paloitmbb/mbb-tf-actions/actions/notify-issue-status@main
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          issue-number: ${{ github.event.issue.number }}
+          status: 'failure'
+          title: 'Pull Request Creation Failed'
+          error-details: ${{ steps.build-pr-failure.outputs.error-details }}
+          labels-add: 'creation-failed'

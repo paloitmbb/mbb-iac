@@ -1,14 +1,13 @@
 name: Terraform Apply Repository
 
-on:
-  pull_request:
-    types: [closed]
+# on:
+#   pull_request:
+#     types: [closed]
 
-permissions:
-  contents: write
-  pull-requests: write
-  issues: write
-  id-token: write  # Required for OIDC authentication with Azure
+# permissions:
+#   contents: write
+#   pull-requests: write
+#   issues: write
 
 jobs:
   apply-repository:
@@ -185,7 +184,7 @@ jobs:
                   org: context.repo.owner,
                   team_slug: teamSlug
                 });
-                
+
                 // Check if team has access to repository
                 try {
                   const repoAccess = await github.rest.teams.checkPermissionsForRepoInOrg({
@@ -194,7 +193,7 @@ jobs:
                     owner: context.repo.owner,
                     repo: repoName
                   });
-                  
+
                   results.push('✅ Team `' + teamSlug + '` has `' + repoAccess.data.permission + '` access');
                 } catch (error) {
                   // Team exists but doesn't have access - grant it now
