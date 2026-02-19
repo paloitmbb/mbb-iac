@@ -694,6 +694,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+    outputs:
+      secret_names: ${{ steps.list-repo-secrets.outputs.secret_names }}
+      secret_count: ${{ steps.list-repo-secrets.outputs.secret_count }}
+      secret_error: ${{ steps.list-repo-secrets.outputs.secret_error }}
 
     steps:
       - name: Wait for GitHub.com to finalize
@@ -2185,7 +2189,7 @@ jobs:
   # ─────────────────────────────────────────────
   close-issue:
     name: "Close Issue"
-    needs: [validate, pre-migration, verify, cutover]
+    needs: [validate, pre-migration, verify, cutover, post-migration]
     if: |
       always() &&
       needs.verify.outputs.verification_passed == 'true' &&
@@ -2258,6 +2262,34 @@ jobs:
             summary += `- ${archiveSource === 'true' ? '✅ Source repository archived after migration' : '⏭️ Source repository archiving was not requested'}\n`;
             summary += `- ✅ Branch protection rules migrated from source\n`;
             summary += `- ✅ Migration manifest updated\n\n`;
+
+            const secretNames = '${{ needs.post-migration.outputs.secret_names }}';
+            const secretCount = '${{ needs.post-migration.outputs.secret_count }}';
+            const secretError = '${{ needs.post-migration.outputs.secret_error }}';
+
+            if (secretError) {
+              summary += '## ⚠️ Secrets\n\n';
+              summary += `Could not list secrets: ${secretError}\n\n`;
+            } else if (secretCount && secretCount !== '0') {
+              summary += '## 🔑 Secrets Requiring Manual Re-creation\n\n';
+              summary += 'The following secret **names** were found in the source repo. Values cannot be read via API — you must re-create them manually.\n\n';
+              summary += '| Secret Name | Scope |\n';
+              summary += '|-------------|-------|\n';
+              const parts = secretNames.split(' | ');
+              for (const part of parts) {
+                const [scope, ...names] = part.split(': ');
+                if (names.length > 0) {
+                  const nameList = names.join(': ').split(', ');
+                  for (const name of nameList) {
+                    summary += `| \`${name.trim()}\` | ${scope} |\n`;
+                  }
+                }
+              }
+              summary += `\n> **Total: ${secretCount} secret(s)**\n\n`;
+              summary += `Use \`gh secret set <NAME> --repo ${targetOrg}/${targetRepo}\` or the GitHub UI to set them.\n\n`;
+            } else {
+              summary += '## ✅ Secrets\n\nNo repository-level secrets to re-create.\n\n';
+            }
 
             summary += '## 📋 Next Steps\n\n';
             summary += `1. 🔗 Visit your migrated repository: https://github.com/${targetOrg}/${targetRepo}\n`;
@@ -2337,12 +2369,33 @@ jobs:
             - ✅ Branch protection rules migrated from source
             - ✅ Migration manifest updated${adminsSection}${optionsSection}
 
+            ### � Secrets Requiring Manual Re-creation
+            ${(() => {
+              const sn = '${{ needs.post-migration.outputs.secret_names }}';
+              const sc = '${{ needs.post-migration.outputs.secret_count }}';
+              const se = '${{ needs.post-migration.outputs.secret_error }}';
+              if (se) return `⚠️ Could not list secrets: ${se}`;
+              if (!sc || sc === '0') return '✅ No repository-level secrets to re-create.';
+              let table = '| Secret Name | Scope |\n|-------------|-------|\n';
+              const parts = sn.split(' | ');
+              for (const part of parts) {
+                const [scope, ...names] = part.split(': ');
+                if (names.length > 0) {
+                  for (const name of names.join(': ').split(', ')) {
+                    table += `| \`${name.trim()}\` | ${scope} |\n`;
+                  }
+                }
+              }
+              return table + `\n> **Total: ${sc} secret(s)** — Use \`gh secret set <NAME> --repo ${targetOrg}/${targetRepo}\` to re-create them.`;
+            })()}
+
             ### 📋 Next Steps
             1. Visit your migrated repository: https://github.com/${targetOrg}/${targetRepo}
             2. Verify repository contents and settings
             3. Review actor-specific branch protection settings (push restrictions, dismissal restrictions, bypass allowances, lock branch, deployments)
             4. Verify team access and collaborator permissions
-            5. Start developing! 🚀
+            5. Re-create any secrets listed above
+            6. Start developing! 🚀
 
             ---
             *Automated by GitHub Actions workflow — GEI migration applied successfully*`;
