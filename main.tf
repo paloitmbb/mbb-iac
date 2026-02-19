@@ -6,8 +6,6 @@ locals {
   # Normalize YAML repositories to ensure all optional attributes exist
   yaml_repositories = [
     for repo in local.repositories_data.repositories : merge(repo, {
-      secrets           = try(repo.secrets, null)
-      variables         = try(repo.variables, null)
       security          = try(repo.security, null)
       branch_protection = try(repo.branch_protection, null)
       teams             = try(repo.teams, null)
@@ -47,8 +45,6 @@ module "github_repositories" {
   topics                  = each.value.topics
   branch_protection_rules = each.value.branch_protection
   teams                   = each.value.teams
-  repository_secrets      = try(each.value.secrets, {})
-  repository_variables    = try(each.value.variables, {})
 
   # Security settings
   enable_advanced_security               = try(each.value.security.enable_advanced_security, false)
