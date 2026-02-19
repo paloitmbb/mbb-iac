@@ -88,16 +88,6 @@ repositories:
         permission: push
       - team: platform
         permission: admin
-    secrets:
-      DATABASE_URL:
-        description: Database connection string
-      API_KEY:
-        description: Third-party API key
-    variables:
-      LOG_LEVEL:
-        value: info
-      MAX_CONNECTIONS:
-        value: "100"
 ```
 
 #### HCL Format (`environments/dev/terraform.tfvars`)
@@ -147,24 +137,6 @@ repositories = [
         permission = "admin"
       }
     ]
-
-    secrets = {
-      DATABASE_URL = {
-        description = "Database connection string"
-      }
-      API_KEY = {
-        description = "Third-party API key"
-      }
-    }
-
-    variables = {
-      LOG_LEVEL = {
-        value = "info"
-      }
-      MAX_CONNECTIONS = {
-        value = "100"
-      }
-    }
   }
 ]
 ```
