@@ -12,11 +12,6 @@ echo "Running Terraform plan for environment: $ENVIRONMENT"
 
 cd "$PROJECT_ROOT"
 
-# Set HTTP backend password from GITHUB_TOKEN if not already set
-if [ -z "$TF_HTTP_PASSWORD" ] && [ -n "$GITHUB_TOKEN" ]; then
-    export TF_HTTP_PASSWORD="$GITHUB_TOKEN"
-fi
-
 terraform plan -var-file="environments/$ENVIRONMENT/terraform.tfvars" -lock=false -out="environments/$ENVIRONMENT/tfplan"
 
 echo "✅ Terraform plan completed for $ENVIRONMENT environment"

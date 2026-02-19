@@ -1,6 +1,7 @@
 # Automated Repository Creation Workflow - Implementation Plan
 
 **Created:** 11 February 2026  
+**Last Updated:** 18 February 2026  
 **Owner:** DevSecOps Team  
 **Status:** Implemented
 
@@ -16,6 +17,28 @@
 > - Users must use existing organization teams, not create new ones
 >
 > This document retains the original plan for reference. See [02-IMPLEMENTATION_SUMMARY.md](./02-IMPLEMENTATION_SUMMARY.md) for the current architecture.
+
+---
+
+> **🔄 RECENT UPDATES (February 2026):**
+>
+> **Backend Migration:**
+> - ✅ Migrated dev environment to **Azure Blob Storage** backend
+> - ✅ Removed HTTP backend (GitHub Releases) fallback logic
+> - ✅ Simplified scripts to Azure-only backend
+>
+> **OIDC Authentication:**
+> - ✅ Implemented **OIDC authentication** for Azure (secretless)
+> - ✅ Removed `ARM_CLIENT_SECRET` requirement from workflows
+> - ✅ Updated all Terraform workflows with `azure/login@v2`
+> - ✅ Reduced GitHub secrets from 4 to 3
+>
+> **Backend Configuration:**
+> - Storage Account: `mbbtfstate` (resource group: `mbb`)
+> - Container: `tfstate`
+> - State file: `github.terraform.tfstate`
+>
+> See [AZURE_BACKEND_SETUP.md](../../AZURE_BACKEND_SETUP.md) for Azure backend details.
 
 ---
 
@@ -39,6 +62,8 @@ Implement a GitHub issue-driven automated workflow that allows end users to requ
 │  Post Issue Summary     │
 │  - Validate repo name   │
 │  - Validate teams exist │
+│  - Check GitHub repos   │
+│  - Check YAML file      │
 └────────┬────────────────┘
          │
          ▼
@@ -604,14 +629,41 @@ jobs:
               }
             }
 
+      - name: Check repository in YAML file
+        id: check-yaml
+        run: |
+          REPO_NAME="${{ steps.parse.outputs.repo-name }}"
+          
+          # Install yq if not available
+          if ! command -v yq &> /dev/null; then
+            wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            chmod +x /usr/local/bin/yq
+          fi
+          
+          # Check if repository exists in data/repositories.yaml
+          if [ -f "data/repositories.yaml" ]; then
+            # Search for the repository name in the YAML file
+            REPO_FOUND=$(yq eval ".repositories[] | select(.name == \"$REPO_NAME\") | .name" data/repositories.yaml)
+            
+            if [ -n "$REPO_FOUND" ]; then
+              echo "exists=true" >> $GITHUB_OUTPUT
+              echo "error=Repository entry for '$REPO_NAME' already exists in data/repositories.yaml" >> $GITHUB_OUTPUT
+            else
+              echo "exists=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Consolidate validation
         id: validate
         run: |
           NAME_VALID="${{ steps.validate-name.outputs.valid }}"
           TEAMS_VALID="${{ steps.validate-teams.outputs.valid }}"
           REPO_EXISTS="${{ steps.check-repo.outputs.exists }}"
+          YAML_EXISTS="${{ steps.check-yaml.outputs.exists }}"
 
-          if [[ "$NAME_VALID" == "true" && "$TEAMS_VALID" == "true" && "$REPO_EXISTS" != "true" ]]; then
+          if [[ "$NAME_VALID" == "true" && "$TEAMS_VALID" == "true" && "$REPO_EXISTS" != "true" && "$YAML_EXISTS" != "true" ]]; then
             echo "passed=true" >> $GITHUB_OUTPUT
           else
             echo "passed=false" >> $GITHUB_OUTPUT
@@ -625,6 +677,7 @@ jobs:
             const nameValid = '${{ steps.validate-name.outputs.valid }}' === 'true';
             const teamsValid = '${{ steps.validate-teams.outputs.valid }}' === 'true';
             const repoExists = '${{ steps.check-repo.outputs.exists }}' === 'true';
+            const yamlExists = '${{ steps.check-yaml.outputs.exists }}' === 'true';
 
             let commentBody = '## 🔍 Repository Request Validation\n\n';
 
@@ -658,6 +711,9 @@ jobs:
               }
               if (repoExists) {
                 commentBody += `- ❌ Repository Already Exists: ${{ steps.check-repo.outputs.error }}\n`;
+              }
+              if (yamlExists) {
+                commentBody += `- ❌ Repository Entry in YAML: ${{ steps.check-yaml.outputs.error }}\n`;
               }
 
               commentBody += '\n---\n\n';

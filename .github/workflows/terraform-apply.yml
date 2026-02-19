@@ -23,6 +23,7 @@ permissions:
   contents: write
   issues: write
   actions: write
+  id-token: write  # Required for OIDC authentication with Azure
 
 jobs:
   terraform-apply:
@@ -40,6 +41,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Azure Login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -52,6 +60,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
           TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
+          # Azure authentication via OIDC (azure/login@v2 handles token)
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true
 
       - name: Terraform Plan
         run: |
@@ -59,32 +72,20 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
           TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
+          # Azure authentication via OIDC (azure/login@v2 handles token)
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true
 
       - name: Terraform Apply
         run: |
-          # Run terraform apply and capture exit code, suppress wrapper output to prevent annotations
-          terraform apply -auto-approve environments/${{ matrix.environment }}/tfplan 2>&1 || APPLY_EXIT_CODE=$?
-          APPLY_EXIT_CODE=${APPLY_EXIT_CODE:-0}
-
-          if [ $APPLY_EXIT_CODE -ne 0 ]; then
-            if [ -f "errored.tfstate" ]; then
-              echo "⚠️  Error saving state detected. Attempting manual state upload..."
-              if gh release upload state-${{ matrix.environment }} errored.tfstate --clobber && \
-                 gh release download state-${{ matrix.environment }} -p "errored.tfstate" -O terraform.tfstate && \
-                 gh release upload state-${{ matrix.environment }} terraform.tfstate --clobber && \
-                 rm terraform.tfstate errored.tfstate; then
-                echo "✅ State manually uploaded to GitHub release - recovery successful"
-                exit 0
-              else
-                echo "❌ State recovery failed"
-                exit 1
-              fi
-            else
-              echo "❌ Terraform apply failed without state error"
-              exit 1
-            fi
-          fi
-          echo "✅ Terraform apply completed successfully"
+          terraform apply -auto-approve environments/${{ matrix.environment }}/tfplan
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
           TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
+          # Azure authentication via OIDC (azure/login@v2 handles token)
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true

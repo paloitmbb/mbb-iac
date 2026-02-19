@@ -23,15 +23,18 @@ if [ ! -f "environments/$ENVIRONMENT/backend.tfvars" ]; then
     exit 1
 fi
 
-# Set HTTP backend password from GITHUB_TOKEN if not already set
-if [ -z "$TF_HTTP_PASSWORD" ] && [ -n "$GITHUB_TOKEN" ]; then
-    export TF_HTTP_PASSWORD="$GITHUB_TOKEN"
-    echo "Using GITHUB_TOKEN for HTTP backend authentication"
-fi
+echo "Using Azure Storage backend"
 
-if [ -z "$TF_HTTP_PASSWORD" ]; then
-    echo "⚠️  Warning: Neither TF_HTTP_PASSWORD nor GITHUB_TOKEN is set"
-    echo "   Backend authentication may fail"
+# Check for Azure authentication
+if [ -z "$ARM_ACCESS_KEY" ] && [ -z "$ARM_SAS_TOKEN" ] && [ -z "$ARM_CLIENT_ID" ]; then
+    echo "⚠️  Warning: No Azure authentication detected"
+    echo "   Please ensure one of the following is set:"
+    echo "   - ARM_ACCESS_KEY (Storage Account Access Key)"
+    echo "   - ARM_SAS_TOKEN (SAS Token)"
+    echo "   - ARM_CLIENT_ID + ARM_TENANT_ID + ARM_SUBSCRIPTION_ID (OIDC/Service Principal)"
+    echo "   - Or authenticate via Azure CLI (az login)"
+else
+    echo "✓ Azure authentication detected"
 fi
 
 terraform init -backend-config="environments/$ENVIRONMENT/backend.tfvars"

@@ -8,10 +8,10 @@ terraform {
     }
   }
 
-  backend "http" {
+  backend "azurerm" {
     # Configuration loaded from backend.tfvars
-    # Uses GitHub Releases for state storage
-    # and GitHub Issues API for state locking
+    # Uses Azure Blob Storage for state storage
+    # and Azure Blob Lease for state locking
   }
 }
 
