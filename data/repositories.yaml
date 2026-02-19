@@ -23,11 +23,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-    variables:
-      ENVIRONMENT:
-        value: production
-      API_BASE_URL:
-        value: https://api.paloitmbb.com
 
   - name: mbb-api-gateway
     description: API Gateway for microservices orchestration
@@ -49,11 +44,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-    variables:
-      NODE_ENV:
-        value: production
-      LOG_LEVEL:
-        value: info
 
   - name: mbb-mobile-app
     description: Mobile banking application (iOS & Android)
@@ -76,11 +66,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-    variables:
-      APP_VERSION:
-        value: 1.0.0
-      API_ENDPOINT:
-        value: https://mobile-api.paloitmbb.com
 
   - name: mbb-new-service
     description: "Mbb New Service using React"

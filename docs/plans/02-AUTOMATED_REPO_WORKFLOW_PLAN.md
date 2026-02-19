@@ -1,7 +1,7 @@
 # Automated Repository Creation Workflow - Implementation Plan
 
 **Created:** 11 February 2026  
-**Last Updated:** 18 February 2026  
+**Last Updated:** 19 February 2026  
 **Owner:** DevSecOps Team  
 **Status:** Implemented
 
@@ -32,6 +32,12 @@
 > - ✅ Removed `ARM_CLIENT_SECRET` requirement from workflows
 > - ✅ Updated all Terraform workflows with `azure/login@v2`
 > - ✅ Reduced GitHub secrets from 4 to 3
+>
+> **Secrets and Variables Decoupling (19 Feb 2026):**
+> - ✅ Removed repository secrets and variables from Terraform management
+> - ✅ Cleaner separation of concerns between infrastructure and application config
+> - ✅ Secrets/variables now managed directly in GitHub UI or via separate tools
+> - ✅ Simplified repositories.yaml and defaults.yaml configuration
 >
 > **Backend Configuration:**
 > - Storage Account: `mbbtfstate` (resource group: `mbb`)
@@ -414,7 +420,7 @@ body:
 - **Acknowledgement** (required checkboxes)
 
 **Default Values Strategy:**
-All other repository settings (visibility, features, security, topics, variables, etc.) will use default values from `data/defaults.yaml`. This provides:
+All other repository settings (visibility, features, security, topics, etc.) will use default values from `data/defaults.yaml`. This provides:
 
 - Explicit and centralized default configuration
 - Consistency across repositories
@@ -449,11 +455,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-    variables:
-      ENVIRONMENT:
-        value: production
-      API_BASE_URL:
-        value: https://api.paloitmbb.com
 ```
 
 The workflow will:
