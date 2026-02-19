@@ -166,3 +166,20 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
+
+  - name: mbb-test-repo
+    description: "Mbb Test Repo using Python"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: ["maybank", "mbb", "python"]
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: true
