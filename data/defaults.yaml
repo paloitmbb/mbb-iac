@@ -24,9 +24,3 @@ repository_defaults:
   topics:
     - maybank
     - mbb
-  
-  # Default variables (optional)
-  # Individual repositories can override or add more variables
-  variables:
-    ENVIRONMENT:
-      value: production

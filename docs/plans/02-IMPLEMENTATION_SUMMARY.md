@@ -1,8 +1,8 @@
 # Automated Repository Workflow - Implementation Summary
 
 **Date:** 12 February 2026  
-**Last Updated:** 18 February 2026  
-**Status:** ✅ Implementation Complete (Updated - Backend Migration & OIDC)
+**Last Updated:** 19 February 2026  
+**Status:** ✅ Implementation Complete (Updated - Secrets/Variables Decoupling)
 
 ## Recent Updates (February 2026)
 
@@ -59,6 +59,30 @@ Removed HTTP backend fallback logic from all helper scripts:
 - ✅ **scripts/import-repos.sh**: Removed HTTP backend authentication
 
 **Result:** 44 lines of legacy code removed across 4 scripts.
+
+### Secrets and Variables Management Decoupling
+
+**Date:** 19 February 2026
+
+Repository secrets and variables have been removed from Terraform management:
+
+- ✅ **Removed Terraform Resources**: `github_actions_secret` and `github_actions_variable` resources removed from `modules/github-repository`
+- ✅ **Cleaner State Management**: Terraform no longer tracks or manages repository secrets/variables
+- ✅ **Simplified Configuration**: Removed `secrets` and `variables` fields from repositories.yaml and defaults.yaml
+- ✅ **Better Security Practice**: Secrets should be managed directly in GitHub UI or via separate secret management tools
+
+**Rationale:**
+- Repository secrets contain sensitive information that should not be managed through IaC
+- Variables can change frequently and should be managed independently of infrastructure
+- Separating concerns allows repository teams to manage their own secrets/variables without infrastructure changes
+- Reduces complexity and potential security risks in Terraform state files
+
+**Files Modified:**
+- `modules/github-repository/main.tf` - Removed secret/variable resources
+- `modules/github-repository/variables.tf` - Removed input variable definitions
+- `main.tf` - Removed secret/variable parameters from module calls
+- `data/repositories.yaml` - Removed variables sections
+- `data/defaults.yaml` - Removed variables defaults
 
 ---
 
@@ -180,7 +204,7 @@ resource "github_team_repository" "this" {
 - ✅ Acknowledgment checkboxes (required)
 
 **Default Values Strategy:**
-All repository settings not requested in the form (visibility, features, security, topics, variables) use default values from `data/defaults.yaml`. This provides:
+All repository settings not requested in the form (visibility, features, security, topics) use default values from `data/defaults.yaml`. This provides:
 
 - Explicit and centralized default configuration
 - Simplified user experience
@@ -448,15 +472,11 @@ repository_defaults:
   topics:
     - maybank
     - mbb
-
-  variables:
-    ENVIRONMENT:
-      value: production
 ```
 
 **Field Merge Strategy:**
 
-1. **From Defaults (defaults.yaml):** visibility, features, security, base topics, variables
+1. **From Defaults (defaults.yaml):** visibility, features, security, base topics
 2. **From Issue Form (overrides):** name, default_branch, tech stack
 3. **Auto-generated:** description (from name + tech stack), topics (defaults + tech stack)
 4. **Example:** New repo "mbb-payment-api" with "Java Springboot" gets:
