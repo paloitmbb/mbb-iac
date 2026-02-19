@@ -75,6 +75,7 @@ jobs:
       id-token: write
       pull-requests: write
       actions: read
+      attestations: write
     uses: paloitmbb/mbb-tf-workflows/.github/workflows/terraform-gh-ci.yml@main
     with:
       terraform-version: ${{ vars.TERRAFORM_VERSION || '1.5.7' }}
