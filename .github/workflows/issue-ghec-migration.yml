@@ -225,7 +225,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check target repo existence
+      - name: Check target repo name not taken
         run: |
           TGT_ORG="${{ steps.parse.outputs.issueparser_target_organization }}"
           TGT_REPO="${{ steps.parse.outputs.issueparser_target_repo }}"
@@ -236,15 +236,15 @@ jobs:
             "https://api.github.com/repos/${TGT_ORG}/${TGT_REPO}")
 
           if [ "$HTTP_CODE" = "200" ]; then
-            echo "✅ Target repository '${TGT_ORG}/${TGT_REPO}' exists — migration will proceed into existing repo"
-          elif [ "$HTTP_CODE" = "404" ]; then
             gh issue comment ${{ github.event.issue.number }} \
               --body "❌ **Target Validation Failed**
 
-          Repository \`${TGT_ORG}/${TGT_REPO}\` does **not exist** on GitHub.com.
+          Repository \`${TGT_ORG}/${TGT_REPO}\` **already exists** on GitHub.com.
 
-          Please create the target repository first before requesting migration."
+          Please choose a different target repository name or delete the existing repository first."
             exit 1
+          elif [ "$HTTP_CODE" = "404" ]; then
+            echo "✅ Target repository name '${TGT_ORG}/${TGT_REPO}' is available — GEI will create it during migration"
           else
             gh issue comment ${{ github.event.issue.number }} \
               --body "❌ **Target Validation Failed**
