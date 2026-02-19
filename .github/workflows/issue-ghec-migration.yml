@@ -171,7 +171,7 @@ jobs:
 
           if [ -n "$ERRORS" ]; then
             echo "::error::Validation failed"
-            gh issue comment ${{ github.event.issue.number }} \
+            gh issue comment "${{ github.event.issue.number }}" \
               --body "❌ **Validation Failed**
 
           The following required fields are missing:
@@ -199,7 +199,7 @@ jobs:
             GHES_VERSION=$(jq -r '.installed_version // "unknown"' /tmp/ghes_meta.json 2>/dev/null)
             echo "✅ GHES instance reachable (version: $GHES_VERSION)"
           elif [ "$HTTP_CODE" = "000" ]; then
-            gh issue comment ${{ github.event.issue.number }} \
+            gh issue comment "${{ github.event.issue.number }}" \
               --body "❌ **GHES Validation Failed**
 
           Could not reach GHES instance at \`${{ steps.parse.outputs.issueparser_ghes_url }}\` (connection timeout).
@@ -229,7 +229,7 @@ jobs:
             "${GHES_API_URL}/repos/${SRC_ORG}/${SRC_REPO}")
 
           if [ "$HTTP_CODE" != "200" ]; then
-            gh issue comment ${{ github.event.issue.number }} \
+            gh issue comment "${{ github.event.issue.number }}" \
               --body "❌ **Source Validation Failed**
 
           Repository \`${SRC_ORG}/${SRC_REPO}\` not found on GHES at \`${{ steps.parse.outputs.issueparser_ghes_url }}\` (HTTP ${HTTP_CODE}).
@@ -243,7 +243,7 @@ jobs:
 
           ARCHIVED=$(jq -r '.archived' /tmp/src_repo.json)
           if [ "$ARCHIVED" = "true" ]; then
-            gh issue comment ${{ github.event.issue.number }} \
+            gh issue comment "${{ github.event.issue.number }}" \
               --body "❌ **Source Validation Failed**
 
           Repository \`${SRC_ORG}/${SRC_REPO}\` is already **archived**. Cannot migrate an archived repository."
@@ -279,7 +279,7 @@ jobs:
           fi
 
           if [ "$HTTP_CODE" != "200" ]; then
-            gh issue comment ${{ github.event.issue.number }} \
+            gh issue comment "${{ github.event.issue.number }}" \
               --body "❌ **Target Validation Failed**
 
           Organization/User \`${TGT_ORG}\` not found on GitHub.com (HTTP ${HTTP_CODE}).
@@ -303,7 +303,7 @@ jobs:
             "https://api.github.com/repos/${TGT_ORG}/${TGT_REPO}")
 
           if [ "$HTTP_CODE" = "200" ]; then
-            gh issue comment ${{ github.event.issue.number }} \
+            gh issue comment "${{ github.event.issue.number }}" \
               --body "❌ **Target Validation Failed**
 
           Repository \`${TGT_ORG}/${TGT_REPO}\` **already exists** on GitHub.com.
@@ -439,21 +439,20 @@ jobs:
             }
 
       - name: Comment validation passed
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          issue-number: ${{ github.event.issue.number }}
-          body: |
-            ### ✅ Validation Passed
+        run: |
+          gh issue comment "${{ github.event.issue.number }}" --body "### ✅ Validation Passed
 
-            | Field | Value |
-            |-------|-------|
-            | **Source GHES** | `${{ steps.parse.outputs.issueparser_ghes_url }}` |
-            | **Source (GHES)** | `${{ steps.parse.outputs.issueparser_source_organization }}/${{ steps.parse.outputs.issueparser_source_repo }}` |
-            | **Target (GHEC)** | `${{ steps.parse.outputs.issueparser_target_organization }}/${{ steps.parse.outputs.issueparser_target_repo }}` |
-            | **Visibility** | `${{ steps.parse.outputs.issueparser_target_visibility }}` |
-            | **Admins** | `${{ steps.parse.outputs.issueparser_admins }}` |
+          | Field | Value |
+          |-------|-------|
+          | **Source GHES** | \`${{ steps.parse.outputs.issueparser_ghes_url }}\` |
+          | **Source (GHES)** | \`${{ steps.parse.outputs.issueparser_source_organization }}/${{ steps.parse.outputs.issueparser_source_repo }}\` |
+          | **Target (GHEC)** | \`${{ steps.parse.outputs.issueparser_target_organization }}/${{ steps.parse.outputs.issueparser_target_repo }}\` |
+          | **Visibility** | \`${{ steps.parse.outputs.issueparser_target_visibility }}\` |
+          | **Admins** | \`${{ steps.parse.outputs.issueparser_admins }}\` |
 
-            🚀 Proceeding with GHES → GHEC migration...
+          🚀 Proceeding with GHES → GHEC migration..."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate validation summary
         uses: actions/github-script@v7
@@ -547,59 +546,68 @@ jobs:
       - name: Label as in-progress
         run: |
           gh label create "in-progress" --color "FBCA04" --description "Request is being processed" --force 2>/dev/null || true
-          gh issue edit ${{ github.event.issue.number }} --add-label "in-progress"
+          gh issue edit "${{ github.event.issue.number }}" --add-label "in-progress"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ─────────────────────────────────────────────
-  # Job 2: Approval Gate - requires manual approval after validation
+  # Job 2a: Notify that approval is required (runs immediately)
+  # ─────────────────────────────────────────────
+  approval-requested:
+    name: "Notify Approval Required"
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Comment approval requested
+        run: |
+          gh issue comment "${{ github.event.issue.number }}" --body "### 🔐 Approval Required
+
+          Validation has passed. A manual approval is now required to proceed with the migration.
+
+          | Field | Value |
+          |-------|-------|
+          | **Source GHES** | \`${{ needs.validate.outputs.ghes_url }}\` |
+          | **Source** | \`${{ needs.validate.outputs.source_organization }}/${{ needs.validate.outputs.source_repo }}\` |
+          | **Target** | \`${{ needs.validate.outputs.target_organization }}/${{ needs.validate.outputs.target_repo }}\` |
+          | **Visibility** | \`${{ needs.validate.outputs.target_visibility }}\` |
+
+          ⏳ Waiting for a member of the **migration-approval** environment reviewers to approve...
+
+          ---
+          *Automated by GitHub Actions workflow*"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─────────────────────────────────────────────
+  # Job 2b: Approval Gate - requires manual approval
   # ─────────────────────────────────────────────
   approval:
     name: "Migration Approval Gate"
-    needs: validate
+    needs: [validate, approval-requested]
     runs-on: ubuntu-latest
     environment:
       name: migration-approval
     permissions:
       issues: write
     steps:
-      - name: Comment approval requested
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          issue-number: ${{ github.event.issue.number }}
-          body: |
-            ### 🔐 Approval Required
-
-            Validation has passed. A manual approval is now required to proceed with the migration.
-
-            | Field | Value |
-            |-------|-------|
-            | **Source GHES** | `${{ needs.validate.outputs.ghes_url }}` |
-            | **Source** | `${{ needs.validate.outputs.source_organization }}/${{ needs.validate.outputs.source_repo }}` |
-            | **Target** | `${{ needs.validate.outputs.target_organization }}/${{ needs.validate.outputs.target_repo }}` |
-            | **Visibility** | `${{ needs.validate.outputs.target_visibility }}` |
-
-            ⏳ Waiting for a member of the **migration-approval** environment reviewers to approve...
-
-            ---
-            *Automated by GitHub Actions workflow*
-
       - name: Approval granted
         run: echo "✅ Migration approved — proceeding to next steps."
 
       - name: Comment approval granted
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          issue-number: ${{ github.event.issue.number }}
-          body: |
-            ### ✅ Migration Approved
+        run: |
+          gh issue comment "${{ github.event.issue.number }}" --body "### ✅ Migration Approved
 
-            The migration has been approved. Proceeding with the next steps.
+          The migration has been approved. Proceeding with the next steps.
 
-            ---
-            *Automated by GitHub Actions workflow*
-# ─────────────────────────────────────────────
-  # Job 2: Pre-migration — record state & lock
+          ---
+          *Automated by GitHub Actions workflow*"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─────────────────────────────────────────────
+  # Job 3: Pre-migration — record state & lock
   # ─────────────────────────────────────────────
   pre-migration:
     name: "Pre-Migration Setup"
@@ -672,23 +680,22 @@ jobs:
           echo "   HEAD SHA: ${HEAD_SHA:0:12}"
 
       - name: Comment pre-migration state
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          issue-number: ${{ needs.validate.outputs.issue_number }}
-          body: |
-            ### 📊 Pre-Migration State Recorded
+        run: |
+          gh issue comment "${{ needs.validate.outputs.issue_number }}" --body "### 📊 Pre-Migration State Recorded
 
-            | Metric | Value |
-            |--------|-------|
-            | **Branches** | ${{ steps.stats.outputs.branches }} |
-            | **Tags** | ${{ steps.stats.outputs.tags }} |
-            | **Default Branch** | ${{ steps.stats.outputs.default_branch }} |
-            | **HEAD SHA** | `${{ steps.stats.outputs.head_sha }}` |
+          | Metric | Value |
+          |--------|-------|
+          | **Branches** | ${{ steps.stats.outputs.branches }} |
+          | **Tags** | ${{ steps.stats.outputs.tags }} |
+          | **Default Branch** | ${{ steps.stats.outputs.default_branch }} |
+          | **HEAD SHA** | \`${{ steps.stats.outputs.head_sha }}\` |
 
-            ⏳ Starting GEI migration...
+          ⏳ Starting GEI migration..."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ─────────────────────────────────────────────
-  # Job 3: Execute migration via GEI
+  # Job 4: Execute migration via GEI
   # ─────────────────────────────────────────────
   migrate:
     name: "Execute GEI Migration"
@@ -745,26 +752,26 @@ jobs:
 
       - name: Comment migration result
         if: always()
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          issue-number: ${{ needs.validate.outputs.issue_number }}
-          body: |
-            ### GEI Migration ${{ steps.gei.outcome == 'success' && '✅' || '❌' }}
+        run: |
+          GEI_OUTPUT=$(cat /tmp/gei_output.txt 2>/dev/null || echo "No output captured")
+          gh issue comment "${{ needs.validate.outputs.issue_number }}" --body "### GEI Migration ${{ steps.gei.outcome == 'success' && '✅' || '❌' }}
 
-            **Source GHES:** `${{ needs.validate.outputs.ghes_url }}`
-            **Source:** `${{ needs.validate.outputs.source_organization }}/${{ needs.validate.outputs.source_repo }}`
-            **Target (GHEC):** `${{ needs.validate.outputs.target_organization }}/${{ needs.validate.outputs.target_repo }}`
+          **Source GHES:** \`${{ needs.validate.outputs.ghes_url }}\`
+          **Source:** \`${{ needs.validate.outputs.source_organization }}/${{ needs.validate.outputs.source_repo }}\`
+          **Target (GHEC):** \`${{ needs.validate.outputs.target_organization }}/${{ needs.validate.outputs.target_repo }}\`
 
-            <details><summary>GEI Output</summary>
+          <details><summary>GEI Output</summary>
 
-            ```
-            $(cat /tmp/gei_output.txt 2>/dev/null || echo "No output captured")
-            ```
+          \`\`\`
+          ${GEI_OUTPUT}
+          \`\`\`
 
-            </details>
+          </details>"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ─────────────────────────────────────────────
-  # Job 4: Post-migration setup
+  # Job 5: Post-migration setup
   # ─────────────────────────────────────────────
   post-migration:
     name: "Post-Migration Setup"
@@ -1415,7 +1422,7 @@ jobs:
             echo "env_count=0" >> $GITHUB_OUTPUT
             echo "env_migrated=0" >> $GITHUB_OUTPUT
           else
-            echo "$ENVS_RESPONSE" | jq -c '.environments[]' | while IFS= read -r ENV; do
+            while IFS= read -r ENV; do
               ENV_NAME=$(echo "$ENV" | jq -r '.name')
               echo "   Processing environment: $ENV_NAME"
 
@@ -1532,7 +1539,7 @@ jobs:
                 echo "   ⚠️ Environment '$ENV_NAME' — HTTP $HTTP_CODE — $ERROR_MSG"
                 SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
               fi
-            done
+            done < <(echo "$ENVS_RESPONSE" | jq -c '.environments[]')
 
             echo ""
             echo "   Summary: $MIGRATED_COUNT environment(s) migrated, $SKIPPED_COUNT skipped"
@@ -1545,28 +1552,49 @@ jobs:
           fi
 
       - name: Comment post-migration setup
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          issue-number: ${{ needs.validate.outputs.issue_number }}
-          body: |
-            ### 🔧 Post-Migration Setup Complete
+        run: |
+          COMMENT_BODY="### 🔧 Post-Migration Setup Complete
 
-            - ✅ Admin collaborators added: `${{ needs.validate.outputs.admins }}`
-            - ${{ steps.migrate-branch-protection.outputs.migrated_count > 0 && '✅' || 'ℹ️' }} Branch protection rules migrated (${{ steps.migrate-branch-protection.outputs.migrated_count }}/${{ steps.migrate-branch-protection.outputs.branch_count }} branches)
-            - ✅ Team access mappings applied (if provided)
-            - ${{ steps.migrate-ghas.outputs.ghas_status == 'success' && '✅' || '⚠️' }} Advanced Security (GHAS) permissions migrated (advanced security, secret scanning, code scanning, dependabot)
-            - ${{ steps.migrate-environments.outputs.env_status == 'skipped' && 'ℹ️ No environments to migrate' || format('✅ Environments migrated ({0} found)', steps.migrate-environments.outputs.env_count) }}
+          - ✅ Admin collaborators added: \`${{ needs.validate.outputs.admins }}\`
+          - ${{ steps.migrate-branch-protection.outputs.migrated_count > 0 && '✅' || 'ℹ️' }} Branch protection rules migrated (${{ steps.migrate-branch-protection.outputs.migrated_count }}/${{ steps.migrate-branch-protection.outputs.branch_count }} branches)
+          - ✅ Team access mappings applied (if provided)
+          - ${{ steps.migrate-ghas.outputs.ghas_status == 'success' && '✅' || '⚠️' }} Advanced Security (GHAS) permissions migrated (advanced security, secret scanning, code scanning, dependabot)
+          - ${{ steps.migrate-environments.outputs.env_status == 'skipped' && 'ℹ️ No environments to migrate' || format('✅ Environments migrated ({0} found)', steps.migrate-environments.outputs.env_count) }}"
 
-            ${{ env.BRANCH_PROTECTION_MANUAL != '' && format('#### ⚠️ Branch protection settings requiring manual re-configuration\n\nThe following settings were NOT migrated automatically (actor-specific or unsupported):\n{0}\n\nPlease configure these in **Settings → Branches** on the target repo.', env.BRANCH_PROTECTION_MANUAL) || '' }}
+          if [ -n "$BRANCH_PROTECTION_MANUAL" ]; then
+            COMMENT_BODY="${COMMENT_BODY}
 
-            ${{ env.GHAS_MANUAL != '' && format('#### ⚠️ Advanced Security settings requiring manual re-configuration\n\nThe following GHAS settings were NOT migrated automatically:\n{0}\n\nPlease configure these in **Settings → Code security and analysis** on the target repo.', env.GHAS_MANUAL) || '' }}
+          #### ⚠️ Branch protection settings requiring manual re-configuration
 
-            > ⚠️ **Note:** Environment secrets cannot be read via API and must be re-created manually on the target repository.
+          The following settings were NOT migrated automatically (actor-specific or unsupported):
+          ${BRANCH_PROTECTION_MANUAL}
 
-            📋 Running verification checks...
+          Please configure these in **Settings → Branches** on the target repo."
+          fi
+
+          if [ -n "$GHAS_MANUAL" ]; then
+            COMMENT_BODY="${COMMENT_BODY}
+
+          #### ⚠️ Advanced Security settings requiring manual re-configuration
+
+          The following GHAS settings were NOT migrated automatically:
+          ${GHAS_MANUAL}
+
+          Please configure these in **Settings → Code security and analysis** on the target repo."
+          fi
+
+          COMMENT_BODY="${COMMENT_BODY}
+
+          > ⚠️ **Note:** Environment secrets cannot be read via API and must be re-created manually on the target repository.
+
+          📋 Running verification checks..."
+
+          gh issue comment "${{ needs.validate.outputs.issue_number }}" --body "$COMMENT_BODY"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ─────────────────────────────────────────────
-  # Job 5: Verify migration integrity
+  # Job 6: Verify migration integrity
   # ─────────────────────────────────────────────
   verify:
     name: "Verify Migration"
@@ -1576,6 +1604,9 @@ jobs:
       issues: write
     outputs:
       verification_passed: ${{ steps.verify.outputs.all_pass }}
+      tgt_branches: ${{ steps.verify.outputs.tgt_branches }}
+      tgt_tags: ${{ steps.verify.outputs.tgt_tags }}
+      tgt_head_sha: ${{ steps.verify.outputs.tgt_head_sha }}
 
     steps:
       - name: Verify migration integrity
@@ -1648,22 +1679,21 @@ jobs:
           echo "tgt_head_sha=$TGT_HEAD_SHA" >> $GITHUB_OUTPUT
 
       - name: Comment verification result
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          issue-number: ${{ needs.validate.outputs.issue_number }}
-          body: |
-            ### 📋 Migration Verification ${{ steps.verify.outputs.all_pass == 'true' && '✅' || '⚠️' }}
+        run: |
+          gh issue comment "${{ needs.validate.outputs.issue_number }}" --body "### 📋 Migration Verification ${{ steps.verify.outputs.all_pass == 'true' && '✅' || '⚠️' }}
 
-            | Check | Source | Target | Status |
-            |-------|--------|--------|--------|
-            | **Branches** | ${{ needs.pre-migration.outputs.source_branches }} | ${{ steps.verify.outputs.tgt_branches }} | ${{ needs.pre-migration.outputs.source_branches == steps.verify.outputs.tgt_branches && '✅' || '❌' }} |
-            | **Tags** | ${{ needs.pre-migration.outputs.source_tags }} | ${{ steps.verify.outputs.tgt_tags }} | ${{ needs.pre-migration.outputs.source_tags == steps.verify.outputs.tgt_tags && '✅' || '❌' }} |
-            | **HEAD SHA** | `${{ needs.pre-migration.outputs.source_head_sha }}` | `${{ steps.verify.outputs.tgt_head_sha }}` | ${{ steps.verify.outputs.all_pass == 'true' && '✅' || '⚠️' }} |
+          | Check | Source | Target | Status |
+          |-------|--------|--------|--------|
+          | **Branches** | ${{ needs.pre-migration.outputs.source_branches }} | ${{ steps.verify.outputs.tgt_branches }} | ${{ needs.pre-migration.outputs.source_branches == steps.verify.outputs.tgt_branches && '✅' || '❌' }} |
+          | **Tags** | ${{ needs.pre-migration.outputs.source_tags }} | ${{ steps.verify.outputs.tgt_tags }} | ${{ needs.pre-migration.outputs.source_tags == steps.verify.outputs.tgt_tags && '✅' || '❌' }} |
+          | **HEAD SHA** | \`${{ needs.pre-migration.outputs.source_head_sha }}\` | \`${{ steps.verify.outputs.tgt_head_sha }}\` | ${{ steps.verify.outputs.all_pass == 'true' && '✅' || '⚠️' }} |
 
-            **Target URL:** https://github.com/${{ needs.validate.outputs.target_organization }}/${{ needs.validate.outputs.target_repo }}
+          **Target URL:** https://github.com/${{ needs.validate.outputs.target_organization }}/${{ needs.validate.outputs.target_repo }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ─────────────────────────────────────────────
-  # Job 6: Cutover — archive source & cleanup
+  # Job 7: Cutover — archive source & cleanup
   # ─────────────────────────────────────────────
   cutover:
     name: "Cutover & Cleanup"
@@ -1703,7 +1733,7 @@ jobs:
             echo "⚠️ Failed to archive source on GHES (HTTP $HTTP_CODE)"
           fi
   # ─────────────────────────────────────────────
-  # Job 7: Close issue
+  # Job 8: Close issue
   # ─────────────────────────────────────────────
   close-issue:
     name: "Close Issue"
@@ -1737,6 +1767,9 @@ jobs:
             const sourceHeadSha = '${{ needs.pre-migration.outputs.source_head_sha }}';
             const defaultBranch = '${{ needs.pre-migration.outputs.source_default_branch }}';
             const archiveSource = '${{ needs.pre-migration.outputs.archive_source }}';
+            const targetBranches = '${{ needs.verify.outputs.tgt_branches }}';
+            const targetTags = '${{ needs.verify.outputs.tgt_tags }}';
+            const targetHeadSha = '${{ needs.verify.outputs.tgt_head_sha }}';
 
             let summary = '# ✅ GHEC Migration Completed Successfully!\n\n';
             summary += '## 🎉 Migration Details\n\n';
@@ -1752,9 +1785,9 @@ jobs:
             summary += '## 📊 Migration Verification\n\n';
             summary += '| Check | Source | Target | Status |\n';
             summary += '|-------|--------|--------|--------|\n';
-            summary += `| **Branches** | ${sourceBranches} | ${sourceBranches} | ✅ PASS |\n`;
-            summary += `| **Tags** | ${sourceTags} | ${sourceTags} | ✅ PASS |\n`;
-            summary += `| **HEAD SHA** | \`${sourceHeadSha.substring(0, 12)}\` | \`${sourceHeadSha.substring(0, 12)}\` | ✅ PASS |\n\n`;
+            summary += `| **Branches** | ${sourceBranches} | ${targetBranches} | ${sourceBranches === targetBranches ? '✅ PASS' : '❌ FAIL'} |\n`;
+            summary += `| **Tags** | ${sourceTags} | ${targetTags} | ${sourceTags === targetTags ? '✅ PASS' : '❌ FAIL'} |\n`;
+            summary += `| **HEAD SHA** | \`${sourceHeadSha.substring(0, 12)}\` | \`${targetHeadSha.substring(0, 12)}\` | ${sourceHeadSha.substring(0, 12) === targetHeadSha.substring(0, 12) ? '✅ PASS' : '❌ FAIL'} |\n\n`;
 
             if (migrationOptions) {
               summary += '## ⚙️ Migration Options Applied\n\n';
@@ -1795,7 +1828,7 @@ jobs:
               .addRaw(summary)
               .write();
 
-      - name: Post success comment to issue
+      - name: Post success comment and close issue
         if: success()
         uses: actions/github-script@v7
         with:
@@ -1869,48 +1902,6 @@ jobs:
             ---
             *Automated by GitHub Actions workflow — GEI migration applied successfully*`;
 
-            await github.rest.issues.createComment({
-              issue_number: parseInt(issueNumber),
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: commentBody
-            });
-      - name: Close issue
-        if: success()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const issueNumber = '${{ needs.validate.outputs.issue_number }}';
-            const sourceOrg = '${{ needs.validate.outputs.source_organization }}';
-            const sourceRepo = '${{ needs.validate.outputs.source_repo }}';
-            const targetOrg = '${{ needs.validate.outputs.target_organization }}';
-            const targetRepo = '${{ needs.validate.outputs.target_repo }}';
-            const sourceBranches = '${{ needs.pre-migration.outputs.source_branches }}';
-            const sourceTags = '${{ needs.pre-migration.outputs.source_tags }}';
-            const sourceHeadSha = '${{ needs.pre-migration.outputs.source_head_sha }}';
-            const archiveSource = '${{ needs.pre-migration.outputs.archive_source }}';
-            const targetUrl = `https://github.com/${targetOrg}/${targetRepo}`;
-
-            let archiveMsg = '';
-            if (archiveSource === 'true') {
-              archiveMsg = '\n- 📦 Source repository archived on GitHub.com';
-            }
-
-            const commentBody = `### 🎉 Migration Completed Successfully!
-
-            | Detail | Value |
-            |--------|-------|
-            | **Source (GitHub.com)** | \`${sourceOrg}/${sourceRepo}\` |
-            | **Target (GitHub.com)** | [\`${targetOrg}/${targetRepo}\`](${targetUrl}) |
-            | **Branches** | ${sourceBranches} |
-            | **Tags** | ${sourceTags} |
-            | **HEAD SHA** | \`${sourceHeadSha}\` |
-            | **Verification** | ✅ All checks passed |
-            ${archiveMsg}
-
-            The repository has been successfully migrated.`;
-
-            // Post completion comment
             await github.rest.issues.createComment({
               issue_number: parseInt(issueNumber),
               owner: context.repo.owner,
