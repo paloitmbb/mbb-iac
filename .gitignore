@@ -1,6 +1,9 @@
 # Local .terraform directories
 **/.terraform/*
 
+# Terraform lock file
+.terraform.lock.hcl
+
 # .tfstate files
 *.tfstate
 *.tfstate.*
@@ -41,3 +44,16 @@ Thumbs.db
 
 # Ignore plan files
 *.plan
+
+# Development and tooling files
+.envrc*
+.pre-commit-config.yaml
+devbox.*
+Makefile
+.github/agents
+.github/prompts
+.github/skills
+.tflint.hcl
+.tfsec.yml
+
+
