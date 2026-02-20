@@ -10,6 +10,9 @@ This document describes the implementation plan for the **GitHub Enterprise Clou
 >
 > - **GitHub.com → GitHub.com migration** — source and target are both on GitHub.com (no GHES URL required)
 > - **Target repo must already exist** — the workflow validates that the target repository exists before proceeding (does not create a new repo)
+> - **Pre-migration runs before approval** — source repo stats and security alerts are recorded before the approval gate, giving reviewers full context
+> - **Comprehensive source repo stats** — pre-migration captures repo name, archived status, size, branches, tags, protected branches, PR count, issue count, release count, and HEAD SHA
+> - **Security alerts scanning** — Dependabot, Code Scanning, and Secret Scanning alerts are scanned and reported before migration
 > - **Full branch protection migration** — branch protection rules are migrated from source with fallback probing, not just default branch protection
 > - **Rulesets migration** — repository and org-level rulesets are migrated (repo-level first, org-level fallback)
 > - **Actions permissions migration** — permissions policy, selected actions, and workflow permissions are migrated
@@ -17,13 +20,14 @@ This document describes the implementation plan for the **GitHub Enterprise Clou
 > - **Repository-level Actions variables migration** — repo-level Actions variables are migrated
 > - **Secret names listing** — secret names are listed for manual re-creation (values cannot be read via API)
 > - **GHAS migration expanded** — includes code scanning default setup, secret scanning non-provider patterns, validity checks
+> - **Validation steps consolidated** — Parse + Display merged, validation steps consolidated, Post results + Summary merged into single step
 
 ### Components
 
 | Component | Path | Purpose |
 |-----------|------|---------|
 | Issue Template | `.github/ISSUE_TEMPLATE/ghec-migration-request.yml` | Self-service form for users to request a repository migration |
-| Workflow | `.github/workflows/issue-ghec-migration.yml` | 7-job pipeline that validates, migrates, configures, verifies, and closes the request |
+| Workflow | `.github/workflows/issue-ghec-migration.yml` | 8-job pipeline that validates, records state, approves, migrates, configures, verifies, and closes the request |
 
 ---
 
@@ -95,12 +99,12 @@ The workflow triggers when an issue is opened and filters by title prefix `[GHEC
 
 ### 4.2 Job Pipeline
 
-The workflow consists of **7 sequential jobs** with dependency gates:
+The workflow consists of **8 sequential jobs** with dependency gates:
 
 ```
-┌──────────┐    ┌──────────┐    ┌───────────────┐    ┌─────────┐
-│ validate │───►│ approval │───►│ pre-migration │───►│ migrate │
-└──────────┘    └──────────┘    └───────────────┘    └────┬────┘
+┌──────────┐    ┌───────────────┐    ┌──────────┐    ┌─────────┐
+│ validate │───►│ pre-migration │───►│ approval │───►│ migrate │
+└──────────┘    └───────────────┘    └──────────┘    └────┬────┘
                                                           │
                                                           ▼
                                 ┌─────────────┐    ┌──────────────────┐
@@ -113,6 +117,19 @@ The workflow consists of **7 sequential jobs** with dependency gates:
                                 └──────────┘    └─────────────┘
 ```
 
+**Job dependency chain:**
+
+| Job | Depends On |
+|-----|-----------|
+| `validate` | — |
+| `pre-migration` | `validate` |
+| `approval` | `validate`, `pre-migration` |
+| `migrate` | `validate`, `pre-migration` |
+| `post-migration` | `validate`, `pre-migration`, `migrate` |
+| `verify` | `validate`, `pre-migration`, `migrate`, `post-migration` |
+| `cutover` | `validate`, `pre-migration`, `verify` |
+| `close-issue` | `validate`, `verify`, `cutover` |
+
 ---
 
 ### 4.3 Job 1: Validate (`validate`)
@@ -122,16 +139,11 @@ The workflow consists of **7 sequential jobs** with dependency gates:
 | # | Step | Description | Implementation Detail |
 |---|------|-------------|----------------------|
 | 1 | Checkout | Clone the repository | `actions/checkout@v4` |
-| 2 | Parse Issue Form | Extract fields from issue body using regex | `actions/github-script@v7` with custom JS parsing functions (`extractField`, `extractTextarea`, `extractCheckboxes`) |
-| 3 | Display parsed values | Log all parsed values for debugging | Shell `echo` statements |
-| 4 | Validate required fields | Check all mandatory fields are non-empty | Shell script with error accumulation |
-| 5 | Validate source repo exists | `GET https://api.github.com/repos/{org}/{repo}` with `GH_SOURCE_PAT` | Also checks if repo is archived (blocks migration) |
-| 6 | Validate target org exists | `GET https://api.github.com/orgs/{org}` (falls back to `/users/{org}`) | Uses `GH_TARGET_PAT` |
-| 7 | Check target repo exists | `GET https://api.github.com/repos/{org}/{repo}` | HTTP 200 = repo exists → proceed; HTTP 404 = repo does not exist → fail (target must be pre-created) |
-| 8 | Post validation results | Post detailed comment to issue | `actions/github-script@v7` — adds labels (`validation-passed` or `validation-failed`) |
-| 9 | Comment validation passed | Summary table posted to issue | `peter-evans/create-or-update-comment@v4` |
-| 10 | Generate validation summary | Write GitHub Actions job summary | `core.summary.addRaw().write()` |
-| 11 | Label as in-progress | Add `in-progress` label to issue | `gh issue edit --add-label` |
+| 2 | Parse Issue Form | Extract fields from issue body using regex, log all parsed values for debugging | `actions/github-script@v7` with custom JS parsing functions (`extractField`, `extractTextarea`, `extractCheckboxes`) |
+| 3 | Validate required fields | Check all mandatory fields are non-empty (consolidated into single step) | Shell script with error accumulation |
+| 4 | Validate source and target repos | Validate source repo exists, target org exists, target repo exists | `GET /repos/{org}/{repo}` with `GH_SOURCE_PAT` and `GH_TARGET_PAT` — also checks archived status |
+| 5 | Post validation results and summary | Post detailed comment to issue, add labels, write GitHub Actions job summary | `actions/github-script@v7` — adds labels (`validation-passed` or `validation-failed`), writes `core.summary`, calls `core.setFailed()` on failure |
+| 6 | Label as in-progress | Add `in-progress` label to issue | `gh issue edit --add-label` |
 
 **Outputs propagated to downstream jobs:**
 
@@ -141,14 +153,47 @@ The workflow consists of **7 sequential jobs** with dependency gates:
 
 ---
 
-### 4.4 Job 2: Approval Gate (`approval`)
+### 4.4 Job 2: Pre-Migration Setup (`pre-migration`)
 
-**Purpose:** Pause the workflow and require manual approval before proceeding with the migration.
+**Purpose:** Record the source repository's comprehensive state (stats and security alerts) before the approval gate, giving reviewers full context.
+
+**Depends on:** `validate`
+
+| # | Step | Description | API Endpoint |
+|---|------|-------------|---------------------|
+| 1 | Parse migration options | Extract `archive_source` flag from checkboxes | String match on `"Archive source repository"` |
+| 2 | Record source repository state | Capture comprehensive repo stats: repo name, archived status, size (human-readable), branch count (paginated), tag count (paginated), HEAD SHA, default branch, protected branch count (paginated), PR count (all states via search API), issue count (all states via search API), release count | `GET /repos/{org}/{repo}`, `/branches`, `/tags`, `/branches/{default}`, `/branches?protected=true`, `/search/issues?q=type:pr`, `/search/issues?q=type:issue`, `/releases` |
+| 3 | Scan source repository security alerts | Scan for open Dependabot alerts (description + severity), Code Scanning alerts (description + severity), Secret Scanning alerts (type + validity) | `GET /repos/{org}/{repo}/dependabot/alerts?state=open`, `/code-scanning/alerts?state=open`, `/secret-scanning/alerts?state=open` |
+| 4 | Comment pre-migration state | Post comprehensive metrics table + security alerts tables to issue | `gh issue comment` (GitHub CLI) |
+
+**Outputs:**
+
+| Output | Description |
+|--------|-------------|
+| `source_branches` | Total branch count (paginated) |
+| `source_tags` | Total tag count (paginated) |
+| `source_head_sha` | HEAD SHA of default branch |
+| `source_default_branch` | Default branch name |
+| `source_protected_branches` | Protected branch count |
+| `source_pr_count` | Total PR count (all states) |
+| `source_issue_count` | Total issue count (all states) |
+| `source_release_count` | Total release count |
+| `source_repo_size` | Repository size (human-readable KB/MB/GB) |
+| `source_is_archived` | Whether source repo is archived |
+| `archive_source` | Whether to archive source after migration |
+
+---
+
+### 4.5 Job 3: Approval Gate (`approval`)
+
+**Purpose:** Pause the workflow and require manual approval before proceeding with the migration. Reviewers can see the pre-migration stats and security alerts posted in the issue before approving.
+
+**Depends on:** `validate`, `pre-migration`
 
 | # | Step | Description |
 |---|------|-------------|
 | 1 | Comment approval requested | Post comment with migration summary asking for review |
-| 2 | Wait for approval | GitHub environment protection rule (`migration-approval`) blocks until a reviewer approves |
+| 2 | Approval granted | Log approval confirmation |
 | 3 | Comment approval granted | Post confirmation comment |
 
 **Implementation Requirements:**
@@ -159,25 +204,11 @@ The workflow consists of **7 sequential jobs** with dependency gates:
 
 ---
 
-### 4.5 Job 3: Pre-Migration Setup (`pre-migration`)
-
-**Purpose:** Record the source repository's current state for post-migration verification.
-
-| # | Step | Description | API Endpoint |
-|---|------|-------------|---------------------|
-| 1 | Parse migration options | Extract `archive_source` flag from checkboxes | String match on `"Archive source repository"` |
-| 2 | Record source state | Capture branch count, tag count, HEAD SHA, default branch | `GET https://api.github.com/repos/{org}/{repo}`, `/branches`, `/tags`, `/branches/{default}` |
-| 3 | Comment pre-migration state | Post metrics table to issue | `peter-evans/create-or-update-comment@v4` |
-
-**Outputs:**
-
-- `source_branches`, `source_tags`, `source_head_sha`, `source_default_branch`, `archive_source`
-
----
-
 ### 4.6 Job 4: Execute GEI Migration (`migrate`)
 
 **Purpose:** Run the GitHub Enterprise Importer CLI to migrate the repository.
+
+**Depends on:** `validate`, `pre-migration`
 
 | # | Step | Description |
 |---|------|-------------|
@@ -222,7 +253,7 @@ gh gei migrate-repo \
 | 8 | Migrate repo-level Actions variables | Paginated variable migration from source to target | `GET/POST /repos/{org}/{repo}/actions/variables` |
 | 9 | List repo-level secret names | List Actions secrets, Dependabot secrets, and environment secrets (names only — values are unreadable via API) | `GET /repos/{org}/{repo}/actions/secrets`, `/dependabot/secrets`, `/environments/{name}/secrets` |
 | 10 | Migrate GHAS permissions | Multi-step security migration (see §4.7.1) | Multiple GitHub.com API calls |
-| 11 | Comment results | Post comprehensive summary with manual action items | `peter-evans/create-or-update-comment@v4` |
+| 11 | Comment results | Post comprehensive summary with manual action items | `gh issue comment` (GitHub CLI) |
 
 #### 4.7.1 Advanced Security (GHAS) Migration Sub-steps
 
@@ -326,6 +357,7 @@ The workflow automatically manages the following labels:
 | Rulesets API denied (403) | Issue continues; warning posted that rulesets may need manual re-creation |
 | GHAS migration partial failure | Issue continues; manual steps documented in `GHAS_MANUAL` env var and reported in comment |
 | Secrets not readable | Secret names listed for manual re-creation; workflow continues |
+| Security alerts API denied | Warning logged; security alerts section omitted from comment (404 for Code Scanning/Secret Scanning is silently skipped as it means the feature is not enabled) |
 | Verification failure (branch/tag/SHA mismatch) | Cutover is skipped; issue remains open for investigation |
 | Archive source failure | Warning logged; issue still closes successfully |
 
@@ -342,17 +374,19 @@ The workflow automatically manages the following labels:
 
 ### Phase 2: Workflow — Validation & Approval
 
-- [x] Implement issue body parsing with `actions/github-script` (Job 1)
-- [x] Implement field-level validation (empty checks, naming convention)
+- [x] Implement issue body parsing with `actions/github-script` (Job 1) — Parse + Display values merged into single step
+- [x] Implement field-level validation (empty checks, naming convention) — consolidated into single step
 - [x] Implement source repo existence & archived check
 - [x] Implement target org existence check (with user fallback)
 - [x] Implement target repo existence check (must already exist)
-- [x] Post detailed validation results as issue comment
-- [x] Add `migration-approval` environment gate (Job 2)
+- [x] Post detailed validation results, labels, and job summary as single consolidated step
+- [x] Add `migration-approval` environment gate (Job 3) — runs after pre-migration so reviewers have full context
 
-### Phase 3: Workflow — Migration Execution
+### Phase 3: Workflow — Pre-Migration & Migration Execution
 
-- [x] Implement pre-migration state recording (branches, tags, HEAD SHA) (Job 3)
+- [x] Implement pre-migration state recording (repo name, archived, size, branches, tags, HEAD SHA, protected branches, PR count, issue count, releases — all with pagination) (Job 2)
+- [x] Implement security alerts scanning (Dependabot, Code Scanning, Secret Scanning) with alert tables in issue comment (Job 2)
+- [x] Implement pre-migration comment with comprehensive stats table + security alerts (Job 2)
 - [x] Implement GEI CLI installation and migration execution (Job 4)
 - [x] Capture and post GEI output to issue
 
@@ -393,8 +427,11 @@ The workflow automatically manages the following labels:
 | Happy path | Valid source/target, all fields populated, target repo exists | Full migration completes, issue closed with `completed` label |
 | Missing required field | Empty source org | Validation fails, error posted to issue |
 | Invalid repo name | `MyRepo_123` | Validation fails with naming convention error |
-| Source repo archived | Archived source repo | Validation fails with "cannot migrate archived repo" |
+| Source repo archived | Archived source repo | Validation flags archived status; pre-migration records `is_archived=true` |
 | Target repo does not exist | Non-existent target repo name | Validation fails with "does not exist — please create the target repository first" |
+| Source repo with security alerts | Repo with Dependabot/Code Scanning/Secret Scanning alerts | Pre-migration comment includes alert tables with descriptions and severities |
+| Source repo without security features | Repo without GHAS enabled | Security alerts step gracefully handles 404 responses (features not enabled) |
+| Large repo with many branches/tags | Repo with >100 branches and tags | Paginated branch/tag counting captures accurate totals |
 | Approval rejected | Reviewer denies approval | Workflow stops at approval gate |
 | GEI failure | Network issue during migration | Migration job fails, error posted to issue |
 | Partial branch protection migration | Actor-specific settings on source | Branch protection migrated partially; manual items listed in comment |
@@ -421,7 +458,6 @@ The workflow automatically manages the following labels:
 
 | Limitation | Impact | Mitigation |
 |------------|--------|------------|
-| Branch/tag pagination | Repos with >100 branches/tags may show incorrect counts in verification | Use paginated API calls or GitHub CLI |
 | GEI does not migrate GitHub Actions secrets | Secrets must be re-added manually | Secret names listed in post-migration comment for reference |
 | Actor-specific branch protection settings | Push restrictions, dismissal restrictions, bypass allowances, lock branch, required deployments cannot be migrated (IDs differ between orgs) | Non-migratable items reported in issue comment for manual re-configuration |
 | Rulesets API on free plans | Repo-level rulesets API returns 403 for private repos on free plans | Workflow falls back to org-level rulesets; if both fail, reports in comment |
@@ -431,3 +467,5 @@ The workflow automatically manages the following labels:
 | GitHub Pages configuration | Not migrated by GEI | Manual reconfiguration needed |
 | Deploy keys | Not migrated by GEI | Manual reconfiguration needed |
 | Migration manifest | Manifest update step is currently commented out | Enable when manifest tracking is needed |
+| Security alerts descriptions truncated | Dependabot/Code Scanning alert descriptions are truncated to 80 characters in issue comment tables | Full details available in source repo security tab |
+| Search API rate limits | PR and issue counts use the search API which has stricter rate limits (30 req/min) | Only 2 search calls per migration; unlikely to hit limits |
