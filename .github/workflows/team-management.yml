@@ -145,12 +145,13 @@ jobs:
               }
             }
 
-            // --- Username Validation (maintainer requests only) ---
+            // --- Username Validation (maintainer requests and optional for create new team) ---
             const isMaintainerRequest = requestType.includes('maintainer');
-            if (isMaintainerRequest) {
-              if (!teamMaintainer) {
+            const hasSpecifiedMaintainer = !!(teamMaintainer && teamMaintainer !== '_No response_');
+            if (isMaintainerRequest || (requestType === 'Create new team' && hasSpecifiedMaintainer)) {
+              if (isMaintainerRequest && !teamMaintainer) {
                 errors.push('Team maintainer username is required for maintainer role requests');
-              } else {
+              } else if (hasSpecifiedMaintainer) {
                 // Check if user exists on GitHub
                 try {
                   await github.rest.users.getByUsername({ username: teamMaintainer });
@@ -351,6 +352,7 @@ jobs:
             const teamMaintainer = '${{ needs.validate-request.outputs.team-maintainer }}';
             const repository = '${{ needs.validate-request.outputs.repository }}';
             const permission = '${{ needs.validate-request.outputs.permission }}' || 'push';
+            const hasSpecifiedMaintainer = !!(teamMaintainer && teamMaintainer !== '_No response_');
             let result = {};
 
             switch (requestType) {
@@ -429,9 +431,22 @@ jobs:
                   role: 'maintainer',
                 });
 
+                // Also assign specified team maintainer if provided and different from requestor
+                if (hasSpecifiedMaintainer && teamMaintainer !== requestor) {
+                  await github.rest.teams.addOrUpdateMembershipForUserInOrg({
+                    org,
+                    team_slug: teamName,
+                    username: teamMaintainer,
+                    role: 'maintainer',
+                  });
+                }
+
+                const extraMaintainerNote = hasSpecifiedMaintainer && teamMaintainer !== requestor
+                  ? `. User \`@${teamMaintainer}\` also assigned as **maintainer**`
+                  : '';
                 result = {
                   action: 'Created new team',
-                  details: `Team \`${teamName}\` created. User \`@${requestor}\` assigned as **maintainer**.`,
+                  details: `Team \`${teamName}\` created. User \`@${requestor}\` assigned as **maintainer**${extraMaintainerNote}.`,
                 };
                 break;
 

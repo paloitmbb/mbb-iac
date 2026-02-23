@@ -19,7 +19,7 @@ body:
         |---|---|---|---|---|
         | Request/Remove maintainer role | Required (must exist) | Used (defaults to you) | Ignored | Ignored |
         | Give/Remove team access to a repository | Required (must exist) | Ignored | Required (must exist) | Used (defaults to push) |
-        | Create new team | Required (must NOT exist) | Ignored | Ignored | Ignored |
+        | Create new team | Required (must NOT exist) | Optional (defaults to requestor) | Ignored | Ignored |
 
   - type: dropdown
     id: request-type
