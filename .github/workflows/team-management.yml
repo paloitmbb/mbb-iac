@@ -1,4 +1,4 @@
-name: Issue Triggered Team Management Workflow
+name: "Issue Triggered Team Management Workflow"
 
 on:
   issues:
@@ -6,8 +6,6 @@ on:
 
 permissions:
   issues: write
-  contents: write
-  pull-requests: write
 
 jobs:
   # ============================================================================
@@ -16,7 +14,7 @@ jobs:
   validate-request:
     name: Validate Team Request
     runs-on: ubuntu-latest
-    if: startsWith(github.event.issue.title, '[TEAM REQUEST]')
+    if: contains(github.event.issue.labels.*.name, 'team-request')
     outputs:
       request-type: ${{ steps.parse.outputs.request-type }}
       team-name: ${{ steps.parse.outputs.team-name }}
@@ -307,7 +305,7 @@ jobs:
             summary += '|-------|-------|\n';
             summary += `| **Request Type** | ${requestType} |\n`;
             summary += `| **Team** | \`${teamName}\` |\n`;
-            summary += `| **Issue** | #${issueNumber} |\n`;
+            summary += `| **Issue** | [#${issueNumber}](https://github.com/${context.repo.owner}/${context.repo.repo}/issues/${issueNumber}) |\n`;
             summary += `| **Requestor** | @${context.payload.issue.user.login} |\n`;
             summary += `| **Status** | ${passed ? '✅ Passed' : '❌ Failed'} |\n\n`;
 
@@ -330,16 +328,6 @@ jobs:
     environment: team-management-approval
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.ORG_GITHUB_TOKEN }}
-
-      - name: Configure Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
       - name: Execute team request
         id: execute
         uses: actions/github-script@v7
@@ -458,202 +446,6 @@ jobs:
             core.setOutput('details', result.details);
             console.log(`✅ ${result.action}: ${result.details}`);
 
-      # ── Update teams.yaml and create PR (for team access & create team requests) ──
-
-      - name: Install yq
-        if: |
-          contains(fromJSON('["Give team access to a repository", "Remove team access to a repository", "Create new team"]'),
-            needs.validate-request.outputs.request-type)
-        run: |
-          if ! command -v yq &> /dev/null; then
-            wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-            chmod +x /usr/local/bin/yq
-          fi
-          yq --version
-
-      - name: Update teams.yaml
-        if: |
-          contains(fromJSON('["Give team access to a repository", "Remove team access to a repository", "Create new team"]'),
-            needs.validate-request.outputs.request-type)
-        id: update-yaml
-        shell: bash
-        run: |
-          REQUEST_TYPE="${{ needs.validate-request.outputs.request-type }}"
-          TEAM_NAME="${{ needs.validate-request.outputs.team-name }}"
-          REPOSITORY="${{ needs.validate-request.outputs.repository }}"
-          PERMISSION="${{ needs.validate-request.outputs.permission }}"
-
-          echo "Updating teams.yaml for request: ${REQUEST_TYPE}"
-          echo "Team: ${TEAM_NAME}, Repository: ${REPOSITORY}, Permission: ${PERMISSION}"
-
-          case "$REQUEST_TYPE" in
-            "Give team access to a repository")
-              # Check if team entry already exists
-              EXISTING=$(yq eval ".teams[] | select(.name == \"${TEAM_NAME}\" and .repository == \"${REPOSITORY}\") | .name" data/teams.yaml 2>/dev/null)
-              if [ -n "$EXISTING" ]; then
-                # Update existing entry's permission
-                yq eval -i "(.teams[] | select(.name == \"${TEAM_NAME}\" and .repository == \"${REPOSITORY}\")).permission = \"${PERMISSION}\"" data/teams.yaml
-                echo "change_type=updated" >> $GITHUB_OUTPUT
-              else
-                # Add new team-repository entry
-                yq eval -i ".teams += [{\"name\": \"${TEAM_NAME}\", \"repository\": \"${REPOSITORY}\", \"permission\": \"${PERMISSION}\", \"privacy\": \"closed\", \"description\": \"Team ${TEAM_NAME}\"}]" data/teams.yaml
-                echo "change_type=added" >> $GITHUB_OUTPUT
-              fi
-              ;;
-
-            "Remove team access to a repository")
-              # Remove matching team-repository entry
-              yq eval -i "del(.teams[] | select(.name == \"${TEAM_NAME}\" and .repository == \"${REPOSITORY}\"))" data/teams.yaml
-              echo "change_type=removed" >> $GITHUB_OUTPUT
-              ;;
-
-            "Create new team")
-              # Add new team entry (no repository yet)
-              yq eval -i ".teams += [{\"name\": \"${TEAM_NAME}\", \"privacy\": \"closed\", \"description\": \"Team ${TEAM_NAME}\", \"members\": []}]" data/teams.yaml
-              echo "change_type=created" >> $GITHUB_OUTPUT
-              ;;
-          esac
-
-          echo "teams.yaml updated successfully"
-          cat data/teams.yaml
-
-      - name: Create branch and commit YAML changes
-        if: |
-          contains(fromJSON('["Give team access to a repository", "Remove team access to a repository", "Create new team"]'),
-            needs.validate-request.outputs.request-type)
-        id: create-branch
-        run: |
-          REQUEST_TYPE="${{ needs.validate-request.outputs.request-type }}"
-          TEAM_NAME="${{ needs.validate-request.outputs.team-name }}"
-          TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          BRANCH_NAME="team-request/${TEAM_NAME}-${TIMESTAMP}"
-
-          git checkout -b "${BRANCH_NAME}"
-          git add data/teams.yaml
-
-          # Build appropriate commit message based on request type
-          case "$REQUEST_TYPE" in
-            "Give team access to a repository")
-              REPO="${{ needs.validate-request.outputs.repository }}"
-              PERM="${{ needs.validate-request.outputs.permission }}"
-              COMMIT_MSG="feat: ✨ grant ${TEAM_NAME} ${PERM} access to ${REPO}
-
-          Team access request from issue #${{ github.event.issue.number }}
-
-          - Team: ${TEAM_NAME}
-          - Repository: ${REPO}
-          - Permission: ${PERM}
-
-          Related to #${{ github.event.issue.number }}"
-              ;;
-            "Remove team access to a repository")
-              REPO="${{ needs.validate-request.outputs.repository }}"
-              COMMIT_MSG="feat: 🗑️ remove ${TEAM_NAME} access from ${REPO}
-
-          Team access removal request from issue #${{ github.event.issue.number }}
-
-          - Team: ${TEAM_NAME}
-          - Repository: ${REPO}
-
-          Related to #${{ github.event.issue.number }}"
-              ;;
-            "Create new team")
-              COMMIT_MSG="feat: ✨ add new team ${TEAM_NAME}
-
-          Team creation request from issue #${{ github.event.issue.number }}
-
-          - Team: ${TEAM_NAME}
-          - Privacy: closed
-
-          Related to #${{ github.event.issue.number }}"
-              ;;
-          esac
-
-          git commit -m "$COMMIT_MSG"
-          git push origin "${BRANCH_NAME}"
-
-          echo "branch=${BRANCH_NAME}" >> $GITHUB_OUTPUT
-          echo "Branch ${BRANCH_NAME} pushed successfully"
-
-      - name: Create pull request for YAML update
-        if: |
-          contains(fromJSON('["Give team access to a repository", "Remove team access to a repository", "Create new team"]'),
-            needs.validate-request.outputs.request-type)
-        id: create-pr
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const requestType = '${{ needs.validate-request.outputs.request-type }}';
-            const teamName = '${{ needs.validate-request.outputs.team-name }}';
-            const repository = '${{ needs.validate-request.outputs.repository }}';
-            const permission = '${{ needs.validate-request.outputs.permission }}';
-            const branchName = '${{ steps.create-branch.outputs.branch }}';
-            const issueNumber = context.issue.number;
-
-            let prTitle = '';
-            let prBodyDetails = '';
-
-            switch (requestType) {
-              case 'Give team access to a repository':
-                prTitle = `🔑 Grant ${teamName} ${permission} access to ${repository}`;
-                prBodyDetails = `| **Team** | \`${teamName}\` |\n| **Repository** | \`${repository}\` |\n| **Permission** | \`${permission}\` |`;
-                break;
-              case 'Remove team access to a repository':
-                prTitle = `🚫 Remove ${teamName} access from ${repository}`;
-                prBodyDetails = `| **Team** | \`${teamName}\` |\n| **Repository** | \`${repository}\` |`;
-                break;
-              case 'Create new team':
-                prTitle = `🆕 Create new team: ${teamName}`;
-                prBodyDetails = `| **Team** | \`${teamName}\` |\n| **Privacy** | closed |`;
-                break;
-            }
-
-            const prBody = `## 🔧 Team Configuration Update
-
-            This PR updates \`data/teams.yaml\` to reflect automated team management changes.
-
-            ### Request Details
-
-            | Field | Value |
-            |-------|-------|
-            | **Request Type** | ${requestType} |
-            ${prBodyDetails}
-            | **Requested By** | @${context.payload.issue.user.login} |
-            | **Approved By** | DevSecOps Team |
-
-            ### Changes
-
-            - Updated \`data/teams.yaml\` to reflect the team configuration change
-            - API changes have already been applied automatically
-
-            > ⚠️ **Note:** This PR must be merged and \`terraform apply\` run to sync Terraform state with these configuration changes.
-
-            ---
-
-            Closes #${issueNumber}`;
-
-            const pr = await github.rest.pulls.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: prTitle,
-              head: branchName,
-              base: 'main',
-              body: prBody,
-            });
-
-            core.setOutput('pr-number', pr.data.number.toString());
-            core.setOutput('pr-url', pr.data.html_url);
-
-            // Add labels to PR
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: pr.data.number,
-              labels: ['team-request', 'automated'],
-            });
-
-            console.log(`✅ PR #${pr.data.number} created: ${pr.data.html_url}`);
-
       - name: Post execution summary to issue
         if: always()
         uses: actions/github-script@v7
@@ -663,8 +455,6 @@ jobs:
             const success = '${{ steps.execute.outcome }}' === 'success';
             const action = '${{ steps.execute.outputs.action }}' || 'Unknown action';
             const details = '${{ steps.execute.outputs.details }}' || 'No details available';
-            const prUrl = '${{ steps.create-pr.outputs.pr-url }}' || '';
-            const prNumber = '${{ steps.create-pr.outputs.pr-number }}' || '';
 
             let comment = success
               ? '## ✅ Request Executed Successfully\n\n'
@@ -677,12 +467,6 @@ jobs:
             comment += `| **Details** | ${details} |\n`;
             comment += `| **Executed By** | Automated Workflow |\n`;
             comment += `| **Approved By** | DevSecOps Team |\n`;
-
-            if (prUrl) {
-              comment += `| **Configuration PR** | [#${prNumber}](${prUrl}) |\n`;
-              comment += '\n> ⚠️ **Note:** A configuration PR has been created to update `data/teams.yaml`. ';
-              comment += 'This PR must be merged and `terraform apply` run to sync Terraform state.\n';
-            }
 
             comment += '\n';
 
@@ -735,8 +519,6 @@ jobs:
             const requestType = '${{ needs.validate-request.outputs.request-type }}';
             const teamName = '${{ needs.validate-request.outputs.team-name }}';
             const issueNumber = context.issue.number;
-            const prUrl = '${{ steps.create-pr.outputs.pr-url }}' || '';
-            const prNumber = '${{ steps.create-pr.outputs.pr-number }}' || '';
 
             let summary = success
               ? '# ✅ Team Request Executed Successfully\n\n'
@@ -748,11 +530,7 @@ jobs:
             summary += `| **Team** | \`${teamName}\` |\n`;
             summary += `| **Action** | ${action} |\n`;
             summary += `| **Details** | ${details} |\n`;
-            summary += `| **Issue** | #${issueNumber} |\n`;
-
-            if (prUrl) {
-              summary += `| **Configuration PR** | [#${prNumber}](${prUrl}) |\n`;
-            }
+            summary += `| **Issue** | [#${issueNumber}](https://github.com/${context.repo.owner}/${context.repo.repo}/issues/${issueNumber}) |\n`;
 
             summary += '\n';
 

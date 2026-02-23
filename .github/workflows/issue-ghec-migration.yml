@@ -14,7 +14,7 @@ jobs:
   # ─────────────────────────────────────────────
   validate:
     name: "Validate Migration Request"
-    if: startsWith(github.event.issue.title, '[GHEC Migration]')
+    if: contains(github.event.issue.labels.*.name, 'ghec-migration-request')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1355,6 +1355,7 @@ jobs:
     needs: [validate, pre-migration, cutover, post-migration]
     if: |
       always() &&
+      needs.validate.result != 'skipped' &&
       (needs.cutover.result == 'success' || needs.cutover.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:

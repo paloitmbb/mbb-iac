@@ -54,49 +54,6 @@ module "github_repositories" {
   depends_on = [module.github_organization]
 }
 
-# ============================================================================
-# Team Management
-# ============================================================================
-
-# Load teams configuration
-locals {
-  teams_file = "${path.module}/data/teams.yaml"
-  teams_data = try(yamldecode(file(local.teams_file)), { teams = [] })
-
-  # Normalize teams data - ensure it's always a list, never null
-  # Handle cases where teams: is present but null/empty
-  all_teams = coalesce(try(local.teams_data.teams, null), [])
-}
-
-# Create DevSecOps team with admin access to all repositories
-module "devsecops_team" {
-  source = "./modules/github-teams"
-
-  team_name   = "paloitmbb-devsecops"
-  description = "DevSecOps team with organization-level permissions to view and approve all repositories and pipelines"
-  privacy     = "closed"
-
-  # Grant admin access to all managed repositories
-  repositories = [for repo in local.all_repositories : repo.name]
-  permission   = "admin"
-
-  depends_on = [module.github_repositories]
-}
-
-# Create repository-specific teams
-module "repository_teams" {
-  source   = "./modules/github-teams"
-  for_each = { for team in local.all_teams : team.name => team }
-
-  team_name    = each.value.name
-  description  = each.value.description
-  privacy      = try(each.value.privacy, "closed")
-  repositories = try([each.value.repository], [])
-  permission   = try(each.value.permission, "pull")
-
-  depends_on = [module.github_repositories]
-}
-
 # Copilot Configuration
 module "github_copilot" {
   source = "./modules/github-copilot"

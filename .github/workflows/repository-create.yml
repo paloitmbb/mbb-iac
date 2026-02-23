@@ -21,7 +21,7 @@ jobs:
   validate-request:
     name: ✅ Validate - Repository Request
     runs-on: ubuntu-latest
-    if: startsWith(github.event.issue.title, '[REPO REQUEST]')
+    if: contains(github.event.issue.labels.*.name, 'repo-request')
     outputs:
       # Parsed fields
       repo-name: ${{ steps.parse.outputs.repo-name }}

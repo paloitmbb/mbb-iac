@@ -29,28 +29,3 @@ output "copilot_seats" {
   value       = module.github_copilot.seat_assignments
   sensitive   = true
 }
-
-output "devsecops_team" {
-  description = "DevSecOps team information"
-  value = {
-    team_id   = module.devsecops_team.team_id
-    team_name = module.devsecops_team.team_name
-    team_slug = module.devsecops_team.team_slug
-  }
-}
-
-output "repository_teams" {
-  description = "Map of repository-specific teams"
-  value = {
-    for name, team in module.repository_teams : name => {
-      team_id   = team.team_id
-      team_name = team.team_name
-      team_slug = team.team_slug
-    }
-  }
-}
-
-output "team_count" {
-  description = "Total number of teams being managed"
-  value       = length(coalesce(local.all_teams, [])) + 1 # +1 for devsecops team
-}
