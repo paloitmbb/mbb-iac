@@ -1,4 +1,4 @@
-name: "GitHub Enterprise Cloud Migration Request"
+name: "♻️ GitHub Enterprise Cloud Migration Request"
 description: "Request migration of a repository between GitHub.com accounts/organizations using GEI CLI"
 title: "[GHEC Migration] "
 labels: ["ghec-migration-request"]

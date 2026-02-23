@@ -268,40 +268,6 @@ jobs:
           file-paths: 'data/repositories.yaml'
           linked-issue: ${{ github.event.issue.number }}
 
-      - name: Generate PR creation job summary
-        if: success()
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
-        with:
-          script: |
-            const repoName = '${{ needs.validate-request.outputs.repo-name }}';
-            const techStack = '${{ needs.validate-request.outputs.tech-stack }}';
-            const defaultBranch = '${{ needs.validate-request.outputs.default-branch }}';
-            const teamsDisplay = '${{ needs.validate-request.outputs.teams-display }}';
-            const prUrl = '${{ steps.create-pr.outputs.pr-url }}';
-            const prNumber = '${{ steps.create-pr.outputs.pr-number }}';
-
-            let summary = '# ✅ Pull Request Created Successfully!\n\n';
-            summary += `## 🎉 Repository Configuration Ready\n\n`;
-            summary += '| Field | Value |\n';
-            summary += '|-------|-------|\n';
-            summary += `| **Repository Name** | \`${repoName}\` |\n`;
-            summary += `| **Tech Stack** | ${techStack} |\n`;
-            summary += `| **Default Branch** | \`${defaultBranch}\` |\n`;
-            summary += `| **Teams with Access** | ${teamsDisplay || 'None'} |\n`;
-            summary += `| **Pull Request** | [#${prNumber}](${prUrl}) |\n\n`;
-
-            summary += '## 📋 Next Steps\n\n';
-            summary += `1. 📝 Review the PR: [#${prNumber}](${prUrl})\n`;
-            summary += `2. ✅ Approve and merge the PR\n`;
-            summary += `3. 🚀 Run Terraform apply to create repository and grant team access\n\n`;
-
-            summary += '---\n\n';
-            summary += `*PR created for issue #${{ github.event.issue.number }}*\n`;
-
-            await core.summary
-              .addRaw(summary)
-              .write();
-
       - name: Build PR success notification
         if: success()
         id: build-pr-success
@@ -350,32 +316,6 @@ jobs:
           summary-table: ${{ steps.build-pr-success.outputs.summary-json }}
           next-steps: ${{ steps.build-pr-success.outputs.next-steps }}
           labels-add: 'pr-created'
-
-      - name: Generate failure job summary
-        if: failure()
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
-        with:
-          script: |
-            const repoName = '${{ needs.validate-request.outputs.repo-name }}';
-
-            let summary = '# ❌ Repository Creation Failed\n\n';
-            summary += `## 🚨 Error Information\n\n`;
-            summary += '| Field | Value |\n';
-            summary += '|-------|-------|\n';
-            summary += `| **Repository Name** | \`${repoName}\` |\n`;
-            summary += `| **Workflow Run** | [View Logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |\n`;
-            summary += `| **Issue** | #${{ github.event.issue.number }} |\n\n`;
-
-            summary += '## 🔧 Troubleshooting Steps\n\n';
-            summary += '1. 📋 Check the workflow logs for detailed error messages\n';
-            summary += '2. 🔍 Verify that all required permissions are in place\n';
-            summary += '3. 🔄 Ensure no manual changes conflict with automation\n\n';
-
-            summary += '---\n\n';
-
-            await core.summary
-              .addRaw(summary)
-              .write();
 
       - name: Build PR failure notification
         if: failure()
