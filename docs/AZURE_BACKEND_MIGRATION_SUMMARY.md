@@ -4,8 +4,8 @@
 
 This document summarizes the changes made to migrate the Terraform backend for the **dev environment** from GitHub Releases (HTTP backend) to Azure Blob Storage (azurerm backend).
 
-**Date**: 2026-02-18  
-**Scope**: Dev environment only  
+**Date**: 2026-02-18
+**Scope**: Dev environment only
 **Status**: Configuration complete, pending migration execution
 
 ## Changes Made
@@ -81,7 +81,7 @@ ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
 ARM_USE_OIDC: true
 ```
 
-**Removed**: 
+**Removed**:
 - `ARM_CLIENT_SECRET` - No longer needed with OIDC
 - GitHub-specific state recovery logic from terraform apply steps
 

@@ -115,30 +115,30 @@ State history is automatically maintained through GitHub Release asset versions 
 
 ## Advantages
 
-✅ **No Cloud Infrastructure**: No need for S3 buckets or cloud storage  
-✅ **GitHub Native**: Everything stays in GitHub ecosystem  
-✅ **Version Control**: State versions tracked in releases  
-✅ **Access Control**: Uses GitHub repository permissions  
-✅ **Free**: No additional costs for storage  
+✅ **No Cloud Infrastructure**: No need for S3 buckets or cloud storage
+✅ **GitHub Native**: Everything stays in GitHub ecosystem
+✅ **Version Control**: State versions tracked in releases
+✅ **Access Control**: Uses GitHub repository permissions
+✅ **Free**: No additional costs for storage
 ✅ **Simple**: No additional services to configure
 
 ## Limitations
 
-⚠️ **Performance**: Slightly slower than dedicated state backends  
-⚠️ **Size Limits**: GitHub Release assets limited to 2GB  
-⚠️ **Rate Limits**: Subject to GitHub API rate limits  
+⚠️ **Performance**: Slightly slower than dedicated state backends
+⚠️ **Size Limits**: GitHub Release assets limited to 2GB
+⚠️ **Rate Limits**: Subject to GitHub API rate limits
 ⚠️ **Manual Setup**: Requires initial release tags
 
 ## Troubleshooting
 
 ### Error: "404 Not Found" during init
 
-**Cause**: Release tag doesn't exist yet  
+**Cause**: Release tag doesn't exist yet
 **Solution**: Create the release tag as shown in step 2
 
 ### Error: "401 Unauthorized"
 
-**Cause**: Missing or invalid GitHub token  
+**Cause**: Missing or invalid GitHub token
 **Solution**: Ensure `GITHUB_TOKEN` is set and valid:
 
 ```bash
@@ -148,7 +148,7 @@ gh auth status
 
 ### Error: "Failed to lock state"
 
-**Cause**: State is already locked or lock ref exists  
+**Cause**: State is already locked or lock ref exists
 **Solution**: Force unlock (use with caution):
 
 ```bash
@@ -163,7 +163,7 @@ terraform force-unlock <lock-id>
 
 ### Error: "File too large"
 
-**Cause**: State file exceeds GitHub's asset size limits  
+**Cause**: State file exceeds GitHub's asset size limits
 **Solution**: Consider:
 
 - Splitting into multiple workspaces

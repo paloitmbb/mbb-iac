@@ -1,4 +1,4 @@
-name: Issue Triggered Repository Creation Workflow
+name: Repository Creation - Issue Triggered
 
 on:
   issues:
@@ -19,7 +19,7 @@ jobs:
   # Job 1: Validate Repository Request
   # ============================================================================
   validate-request:
-    name: Validate Repository Request
+    name: ✅ Validate - Repository Request
     runs-on: ubuntu-latest
     if: startsWith(github.event.issue.title, '[REPO REQUEST]')
     outputs:
@@ -40,7 +40,7 @@ jobs:
 
       - name: Parse issue form
         id: parse
-        uses: paloitmbb/mbb-tf-actions/actions/parse-issue-form@main # Pin to commit with explicit outputs
+        uses: paloitmbb/mbb-tf-actions/actions/github-parse-issueform@main # Pin to commit with explicit outputs
         with:
           issue-body: ${{ github.event.issue.body }}
           field-mapping: |
@@ -76,13 +76,13 @@ jobs:
 
       - name: Load default values from defaults.yaml
         id: load-defaults
-        uses: paloitmbb/mbb-tf-actions/actions/load-repository-defaults@main
+        uses: paloitmbb/mbb-tf-actions/actions/github-load-defaults@main
         with:
           defaults-file: 'data/defaults.yaml'
 
       - name: Validate repository request
         id: validate
-        uses: paloitmbb/mbb-tf-actions/actions/validate-repository-request@main
+        uses: paloitmbb/mbb-tf-actions/actions/github-validate-request@main
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           organization: ${{ github.repository_owner }}
@@ -172,7 +172,7 @@ jobs:
 
       - name: Notify validation result
         if: always()
-        uses: paloitmbb/mbb-tf-actions/actions/notify-issue-status@main
+        uses: paloitmbb/mbb-tf-actions/actions/github-notify-issue@main
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           issue-number: ${{ github.event.issue.number }}
@@ -186,7 +186,7 @@ jobs:
   # Job 2: Create Repository Configuration PR (Requires Approval)
   # ============================================================================
   create-repository-pr:
-    name: Create Repository Configuration PR
+    name: 📝 Create PR - Repository Config
     runs-on: ubuntu-latest
     needs: validate-request
     if: needs.validate-request.outputs.validation-passed == 'true'
@@ -200,7 +200,7 @@ jobs:
 
       - name: Update YAML configuration
         id: update-yaml
-        uses: paloitmbb/mbb-tf-actions/actions/update-yaml-config@main
+        uses: paloitmbb/mbb-tf-actions/actions/github-update-yamlconfig@main
         with:
           config-file: 'data/repositories.yaml'
           defaults-file: 'data/defaults.yaml'
@@ -211,7 +211,7 @@ jobs:
 
       - name: Create pull request
         id: create-pr
-        uses: paloitmbb/mbb-tf-actions/actions/create-config-pull-request@main
+        uses: paloitmbb/mbb-tf-actions/actions/github-create-pullrequest@main
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           branch-prefix: 'repo-request'
@@ -341,7 +341,7 @@ jobs:
 
       - name: Notify PR creation success
         if: success()
-        uses: paloitmbb/mbb-tf-actions/actions/notify-issue-status@main
+        uses: paloitmbb/mbb-tf-actions/actions/github-notify-issue@main
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           issue-number: ${{ github.event.issue.number }}
@@ -400,7 +400,7 @@ jobs:
 
       - name: Notify PR creation failure
         if: failure()
-        uses: paloitmbb/mbb-tf-actions/actions/notify-issue-status@main
+        uses: paloitmbb/mbb-tf-actions/actions/github-notify-issue@main
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           issue-number: ${{ github.event.issue.number }}

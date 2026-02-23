@@ -55,5 +55,3 @@ Makefile
 .github/skills
 .tflint.hcl
 .tfsec.yml
-
-

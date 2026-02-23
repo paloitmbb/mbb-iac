@@ -1,4 +1,4 @@
-name: New Repository Request
+name: Repository Request
 description: Request creation of a new GitHub repository with access granted to existing teams
 title: "[REPO REQUEST] "
 labels: ["repo-request", "pending-review"]
