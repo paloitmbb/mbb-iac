@@ -1357,60 +1357,94 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
     outputs:
-      log_uploaded: ${{ steps.upload-migration-logs.outputs.log-uploaded }}
-      log_blob_name: ${{ steps.upload-migration-logs.outputs.log-blob-name }}
+      log_uploaded: ${{ steps.upload-migration-logs.outputs.log_uploaded }}
+      log_blob_name: ${{ steps.upload-migration-logs.outputs.log_blob_name }}
 
     steps:
-      - name: Upload migration logs to Azure
-        id: upload-migration-logs
-        uses: paloitmbb/mbb-tf-actions/actions/migration-upload-logs@main
+      - name: Azure Login
+        uses: azure/login@v2
         with:
-          # Azure credentials
-          azure-client-id: ${{ secrets.ARM_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.ARM_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-          storage-account: mbbtfstate
-          container-name: migration-logs
+          creds: '{"clientId":"${{ secrets.ARM_CLIENT_ID }}","clientSecret":"${{ secrets.ARM_CLIENT_SECRET }}","subscriptionId":"${{ secrets.ARM_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.ARM_TENANT_ID }}"}'
 
-          # Source repository details
-          source-org: ${{ needs.validate.outputs.source_organization }}
-          source-repo: ${{ needs.validate.outputs.source_repo }}
-          source-default-branch: ${{ needs.pre-migration.outputs.source_default_branch }}
-          source-head-sha: ${{ needs.pre-migration.outputs.source_head_sha }}
-          source-branches: ${{ needs.pre-migration.outputs.source_branches }}
-          source-tags: ${{ needs.pre-migration.outputs.source_tags }}
-          source-pr-count: ${{ needs.pre-migration.outputs.source_pr_count }}
-          source-issue-count: ${{ needs.pre-migration.outputs.source_issue_count }}
-          source-release-count: ${{ needs.pre-migration.outputs.source_release_count }}
-          source-repo-size: ${{ needs.pre-migration.outputs.source_repo_size }}
-          source-is-archived: ${{ needs.pre-migration.outputs.source_is_archived }}
-          source-last-push: ${{ needs.pre-migration.outputs.source_last_push }}
+      - name: Build and upload migration log
+        id: upload-migration-logs
+        run: |
+          # ── Build migration log JSON ──
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          SOURCE_ORG="${{ needs.validate.outputs.source_organization }}"
+          SOURCE_REPO="${{ needs.validate.outputs.source_repo }}"
+          TARGET_ORG="${{ needs.validate.outputs.target_organization }}"
+          TARGET_REPO="${{ needs.validate.outputs.target_repo }}"
+          BLOB_NAME="${SOURCE_ORG}_${SOURCE_REPO}_to_${TARGET_ORG}_${TARGET_REPO}_$(date -u +%Y%m%d_%H%M%S).json"
 
-          # Target repository details
-          target-org: ${{ needs.validate.outputs.target_organization }}
-          target-repo: ${{ needs.validate.outputs.target_repo }}
-          target-visibility: ${{ needs.validate.outputs.target_visibility }}
+          cat > /tmp/migration-log.json <<EOJSON
+          {
+            "timestamp": "${TIMESTAMP}",
+            "source": {
+              "organization": "${SOURCE_ORG}",
+              "repository": "${SOURCE_REPO}",
+              "default_branch": "${{ needs.pre-migration.outputs.source_default_branch }}",
+              "head_sha": "${{ needs.pre-migration.outputs.source_head_sha }}",
+              "branches": "${{ needs.pre-migration.outputs.source_branches }}",
+              "tags": "${{ needs.pre-migration.outputs.source_tags }}",
+              "pr_count": "${{ needs.pre-migration.outputs.source_pr_count }}",
+              "issue_count": "${{ needs.pre-migration.outputs.source_issue_count }}",
+              "release_count": "${{ needs.pre-migration.outputs.source_release_count }}",
+              "repo_size": "${{ needs.pre-migration.outputs.source_repo_size }}",
+              "is_archived": "${{ needs.pre-migration.outputs.source_is_archived }}",
+              "last_push": "${{ needs.pre-migration.outputs.source_last_push }}"
+            },
+            "target": {
+              "organization": "${TARGET_ORG}",
+              "repository": "${TARGET_REPO}",
+              "visibility": "${{ needs.validate.outputs.target_visibility }}"
+            },
+            "migration": {
+              "options": "${{ needs.validate.outputs.migration_options }}",
+              "archive_source": "${{ needs.pre-migration.outputs.archive_source }}",
+              "admins": "${{ needs.validate.outputs.admins }}",
+              "team_mappings": "${{ needs.validate.outputs.team_mappings }}",
+              "justification": "${{ needs.validate.outputs.justification }}"
+            },
+            "results": {
+              "cutover": "${{ needs.cutover.result }}",
+              "post_migration": "${{ needs.post-migration.result }}",
+              "secret_count": "${{ needs.post-migration.outputs.secret_count }}",
+              "secret_names": "${{ needs.post-migration.outputs.secret_names }}",
+              "secret_error": "${{ needs.post-migration.outputs.secret_error }}"
+            },
+            "github": {
+              "issue_number": "${{ needs.validate.outputs.issue_number }}",
+              "run_id": "${{ github.run_id }}",
+              "run_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
+          }
+          EOJSON
 
-          # Migration options
-          migration-options: ${{ needs.validate.outputs.migration_options }}
-          archive-source: ${{ needs.pre-migration.outputs.archive_source }}
-          admins: ${{ needs.validate.outputs.admins }}
-          team-mappings: ${{ needs.validate.outputs.team_mappings }}
-          justification: ${{ needs.validate.outputs.justification }}
+          echo "📦 Migration log built: $BLOB_NAME"
+          cat /tmp/migration-log.json | jq . 2>/dev/null || cat /tmp/migration-log.json
 
-          # Results
-          cutover-result: ${{ needs.cutover.result }}
-          post-migration-result: ${{ needs.post-migration.result }}
-          secret-count: ${{ needs.post-migration.outputs.secret_count }}
-          secret-names: ${{ needs.post-migration.outputs.secret_names }}
-          secret-error: ${{ needs.post-migration.outputs.secret_error }}
+          # ── Upload to Azure Blob Storage ──
+          echo "☁️ Uploading migration log to Azure Blob Storage..."
+          az storage blob upload \
+            --account-name mbbtfstate \
+            --container-name migration-logs \
+            --name "$BLOB_NAME" \
+            --file /tmp/migration-log.json \
+            --auth-mode login \
+            --overwrite true
 
-          # GitHub context
-          issue-number: ${{ needs.validate.outputs.issue_number }}
-          run-id: ${{ github.run_id }}
-          run-url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          UPLOAD_EXIT=$?
+          if [ "$UPLOAD_EXIT" -eq 0 ]; then
+            echo "✅ Migration log uploaded successfully: $BLOB_NAME"
+            echo "log_uploaded=true" >> $GITHUB_OUTPUT
+            echo "log_blob_name=$BLOB_NAME" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ Failed to upload migration log (exit code: $UPLOAD_EXIT)"
+            echo "log_uploaded=false" >> $GITHUB_OUTPUT
+            echo "log_blob_name=" >> $GITHUB_OUTPUT
+          fi
 
   # ─────────────────────────────────────────────
   # Job 8: Close issue
