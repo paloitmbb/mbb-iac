@@ -305,7 +305,7 @@ jobs:
             summary += '|-------|-------|\n';
             summary += `| **Request Type** | ${requestType} |\n`;
             summary += `| **Team** | \`${teamName}\` |\n`;
-            summary += `| **Issue** | #${issueNumber} |\n`;
+            summary += `| **Issue** | [#${issueNumber}](https://github.com/${context.repo.owner}/${context.repo.repo}/issues/${issueNumber}) |\n`;
             summary += `| **Requestor** | @${context.payload.issue.user.login} |\n`;
             summary += `| **Status** | ${passed ? '✅ Passed' : '❌ Failed'} |\n\n`;
 
@@ -530,7 +530,7 @@ jobs:
             summary += `| **Team** | \`${teamName}\` |\n`;
             summary += `| **Action** | ${action} |\n`;
             summary += `| **Details** | ${details} |\n`;
-            summary += `| **Issue** | #${issueNumber} |\n`;
+            summary += `| **Issue** | [#${issueNumber}](https://github.com/${context.repo.owner}/${context.repo.repo}/issues/${issueNumber}) |\n`;
 
             summary += '\n';
 
