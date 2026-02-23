@@ -57,19 +57,19 @@ Implement a GitHub issue-driven automated workflow that allows organization memb
 | **State**     | Updates YAML + Terraform state        | Stateless API operations               |
 | **Trigger**   | `[REPO REQUEST]` prefix in title      | `[TEAM REQUEST]` prefix in title       |
 
-**Rationale for API-based execution:** Team membership and maintainer roles are not managed via Terraform in this project (see `data/TEAMS.md`). Only team _creation_ and _repository access_ are Terraform-managed. However, to keep the workflow fast and self-contained, all five operations will use the GitHub API directly, with the "Create new team" request additionally updating `data/teams.yaml` via a PR for Terraform consistency.
+**Rationale for API-based execution:** Team membership, maintainer roles, and team creation are not managed via Terraform in this project. Only team _repository access_ changes update `data/teams.yaml` via a PR for record-keeping. All five operations use the GitHub API directly.
 
 ---
 
 ## Request Types
 
-| #   | Request Type                       | API Operation                                                        | Terraform Impact            |
+| #   | Request Type                       | API Operation                                                        | teams.yaml Update           |
 | --- | ---------------------------------- | -------------------------------------------------------------------- | --------------------------- |
 | 1   | Request team maintainer role       | `PUT /orgs/{org}/teams/{team}/memberships/{user}` (role: maintainer) | None                        |
 | 2   | Remove team maintainer role        | `PUT /orgs/{org}/teams/{team}/memberships/{user}` (role: member)     | None                        |
-| 3   | Give team access to a repository   | `PUT /orgs/{org}/teams/{team}/repos/{owner}/{repo}`                  | Updates `teams.yaml` via PR |
-| 4   | Remove team access to a repository | `DELETE /orgs/{org}/teams/{team}/repos/{owner}/{repo}`               | Updates `teams.yaml` via PR |
-| 5   | Create new team                    | `POST /orgs/{org}/teams` + maintainer assignment                     | Updates `teams.yaml` via PR |
+| 3   | Give team access to a repository   | `PUT /orgs/{org}/teams/{team}/repos/{owner}/{repo}`                  | ✅ Yes — adds/updates entry |
+| 4   | Remove team access to a repository | `DELETE /orgs/{org}/teams/{team}/repos/{owner}/{repo}`               | ✅ Yes — removes entry      |
+| 5   | Create new team                    | `POST /orgs/{org}/teams` + maintainer assignment                     | None                        |
 
 ---
 
@@ -646,20 +646,21 @@ The execute job runs after approval. It dispatches to the appropriate API call b
       core.setOutput('details', result.details);
 ```
 
-### 4.2 Update `teams.yaml` via PR (for team access & create team requests)
+### 4.2 Update `teams.yaml` via PR (for team access requests)
 
-For requests that modify team-repository relationships or create new teams, the workflow should create a PR to update `data/teams.yaml` to keep Terraform state consistent.
+For requests that modify team-repository relationships, the workflow creates a PR to update `data/teams.yaml` for record-keeping.
 
 **Applies to:**
 
 - Give team access to a repository
 - Remove team access to a repository
-- Create new team
+
+> **Note:** Creating a new team does **not** raise a PR. The team is created directly via GitHub API and the issue is closed upon success.
 
 ```yaml
 - name: Checkout repository
   if: |
-    contains(fromJSON('["Give team access to a repository", "Remove team access to a repository", "Create new team"]'),
+    contains(fromJSON('["Give team access to a repository", "Remove team access to a repository"]'),
       needs.validate-request.outputs.request-type)
   uses: actions/checkout@v4
   with:
@@ -667,7 +668,7 @@ For requests that modify team-repository relationships or create new teams, the 
 
 - name: Update teams.yaml
   if: |
-    contains(fromJSON('["Give team access to a repository", "Remove team access to a repository", "Create new team"]'),
+    contains(fromJSON('["Give team access to a repository", "Remove team access to a repository"]'),
       needs.validate-request.outputs.request-type)
   id: update-yaml
   shell: bash
@@ -698,19 +699,11 @@ For requests that modify team-repository relationships or create new teams, the 
         # Remove matching team-repository entry
         yq eval -i "del(.teams[] | select(.name == \"${TEAM_NAME}\" and .repository == \"${REPOSITORY}\"))" data/teams.yaml
         ;;
-      "Create new team")
-        # Add new team entry (no repository yet)
-        yq eval -i ".teams += [{
-          \"name\": \"${TEAM_NAME}\",
-          \"privacy\": \"closed\",
-          \"description\": \"Team ${TEAM_NAME}\"
-        }]" data/teams.yaml
-        ;;
     esac
 
 - name: Create pull request for YAML update
   if: |
-    contains(fromJSON('["Give team access to a repository", "Remove team access to a repository", "Create new team"]'),
+    contains(fromJSON('["Give team access to a repository", "Remove team access to a repository"]'),
       needs.validate-request.outputs.request-type)
   id: create-pr
   # Use existing PR creation pattern (same as repo-creation workflow)
@@ -749,7 +742,7 @@ For requests that modify team-repository relationships or create new teams, the 
       if (prUrl) {
         comment += `| **Configuration PR** | [#${prNumber}](${prUrl}) |\n`;
         comment += '\n> ⚠️ **Note:** A configuration PR has been created to update `data/teams.yaml`. ';
-        comment += 'This PR must be merged and `terraform apply` run to sync Terraform state.\n';
+        comment += 'This PR must be merged to keep `data/teams.yaml` in sync with the applied changes.\n';
       }
 
       comment += '\n';
@@ -878,11 +871,9 @@ Generate a GitHub Actions job summary for the execution job:
 
 ### Existing Files (No Modification Required)
 
-| File                    | Reason                                                 |
-| ----------------------- | ------------------------------------------------------ |
-| `data/teams.yaml`       | Updated at runtime by workflow via PR                  |
-| `modules/github-teams/` | Existing module handles Terraform-side team management |
-| `main.tf`               | Already iterates over `teams.yaml` for team creation   |
+| File              | Reason                                        |
+| ----------------- | --------------------------------------------- |
+| `data/teams.yaml` | Updated at runtime by workflow via PR         |
 
 ### GitHub Configuration
 
@@ -931,8 +922,8 @@ The `ORG_GITHUB_TOKEN` secret must have the following additional permissions for
 | 6   | Give team access (valid team, valid repo)        | ✅ Access granted                       |
 | 7   | Give team access (nonexistent repo)              | ❌ Validation fails                     |
 | 8   | Remove team access (valid)                       | ✅ Access removed                       |
-| 9   | Create new team (unique name)                    | ✅ Team created, requestor = maintainer |
-| 10  | Create new team (existing name)                  | ❌ Validation fails                     |
+| 9   | Create new team (unique name)                    | ✅ Team created, requestor = maintainer, no PR |
+| 10  | Create new team (existing name)                  | ❌ Validation fails                            |
 | 11  | Approval denied                                  | ⏹️ Workflow stops, no action taken      |
 | 12  | Non-`[TEAM REQUEST]` issue                       | ⏹️ Workflow does not trigger            |
 

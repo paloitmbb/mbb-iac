@@ -458,11 +458,11 @@ jobs:
             core.setOutput('details', result.details);
             console.log(`✅ ${result.action}: ${result.details}`);
 
-      # ── Update teams.yaml and create PR (for team access & create team requests) ──
+      # ── Update teams.yaml and create PR (for team access requests) ──
 
       - name: Install yq
         if: |
-          contains(fromJSON('["Give team access to a repository", "Remove team access to a repository", "Create new team"]'),
+          contains(fromJSON('["Give team access to a repository", "Remove team access to a repository"]'),
             needs.validate-request.outputs.request-type)
         run: |
           if ! command -v yq &> /dev/null; then
@@ -473,7 +473,7 @@ jobs:
 
       - name: Update teams.yaml
         if: |
-          contains(fromJSON('["Give team access to a repository", "Remove team access to a repository", "Create new team"]'),
+          contains(fromJSON('["Give team access to a repository", "Remove team access to a repository"]'),
             needs.validate-request.outputs.request-type)
         id: update-yaml
         shell: bash
@@ -506,12 +506,6 @@ jobs:
               yq eval -i "del(.teams[] | select(.name == \"${TEAM_NAME}\" and .repository == \"${REPOSITORY}\"))" data/teams.yaml
               echo "change_type=removed" >> $GITHUB_OUTPUT
               ;;
-
-            "Create new team")
-              # Add new team entry (no repository yet)
-              yq eval -i ".teams += [{\"name\": \"${TEAM_NAME}\", \"privacy\": \"closed\", \"description\": \"Team ${TEAM_NAME}\", \"members\": []}]" data/teams.yaml
-              echo "change_type=created" >> $GITHUB_OUTPUT
-              ;;
           esac
 
           echo "teams.yaml updated successfully"
@@ -519,7 +513,7 @@ jobs:
 
       - name: Create branch and commit YAML changes
         if: |
-          contains(fromJSON('["Give team access to a repository", "Remove team access to a repository", "Create new team"]'),
+          contains(fromJSON('["Give team access to a repository", "Remove team access to a repository"]'),
             needs.validate-request.outputs.request-type)
         id: create-branch
         run: |
@@ -557,16 +551,6 @@ jobs:
 
           Related to #${{ github.event.issue.number }}"
               ;;
-            "Create new team")
-              COMMIT_MSG="feat: ✨ add new team ${TEAM_NAME}
-
-          Team creation request from issue #${{ github.event.issue.number }}
-
-          - Team: ${TEAM_NAME}
-          - Privacy: closed
-
-          Related to #${{ github.event.issue.number }}"
-              ;;
           esac
 
           git commit -m "$COMMIT_MSG"
@@ -577,7 +561,7 @@ jobs:
 
       - name: Create pull request for YAML update
         if: |
-          contains(fromJSON('["Give team access to a repository", "Remove team access to a repository", "Create new team"]'),
+          contains(fromJSON('["Give team access to a repository", "Remove team access to a repository"]'),
             needs.validate-request.outputs.request-type)
         id: create-pr
         uses: actions/github-script@v7
@@ -602,10 +586,6 @@ jobs:
                 prTitle = `🚫 Remove ${teamName} access from ${repository}`;
                 prBodyDetails = `| **Team** | \`${teamName}\` |\n| **Repository** | \`${repository}\` |`;
                 break;
-              case 'Create new team':
-                prTitle = `🆕 Create new team: ${teamName}`;
-                prBodyDetails = `| **Team** | \`${teamName}\` |\n| **Privacy** | closed |`;
-                break;
             }
 
             const prBody = `## 🔧 Team Configuration Update
@@ -626,7 +606,7 @@ jobs:
             - Updated \`data/teams.yaml\` to reflect the team configuration change
             - API changes have already been applied automatically
 
-            > ⚠️ **Note:** This PR must be merged and \`terraform apply\` run to sync Terraform state with these configuration changes.
+            > ⚠️ **Note:** This PR must be merged to keep \`data/teams.yaml\` in sync with the applied changes.
 
             ---
 
@@ -681,7 +661,7 @@ jobs:
             if (prUrl) {
               comment += `| **Configuration PR** | [#${prNumber}](${prUrl}) |\n`;
               comment += '\n> ⚠️ **Note:** A configuration PR has been created to update `data/teams.yaml`. ';
-              comment += 'This PR must be merged and `terraform apply` run to sync Terraform state.\n';
+              comment += 'This PR must be merged to keep `data/teams.yaml` in sync with the applied changes.\n';
             }
 
             comment += '\n';

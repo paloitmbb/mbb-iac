@@ -50,8 +50,8 @@ Job 1: validate-request
          ▼
 Job 2: execute-request
   ├── Execute GitHub API call based on request type
-  ├── Update data/teams.yaml (for access/create requests)
-  ├── Create PR for teams.yaml changes
+  ├── Update data/teams.yaml (for team access requests only)
+  ├── Create PR for teams.yaml changes (team access requests only)
   ├── Post execution summary comment to issue
   └── Close issue (completed) or label (execution-failed)
 ```
@@ -64,7 +64,7 @@ Job 2: execute-request
 | 2   | Remove team maintainer role        | `PUT /orgs/{org}/teams/{team}/memberships/{user}` (role: member)     | No                           |
 | 3   | Give team access to a repository   | `PUT /orgs/{org}/teams/{team}/repos/{owner}/{repo}`                  | ✅ Yes — adds/updates entry  |
 | 4   | Remove team access to a repository | `DELETE /orgs/{org}/teams/{team}/repos/{owner}/{repo}`               | ✅ Yes — removes entry       |
-| 5   | Create new team                    | `POST /orgs/{org}/teams` + maintainer assignment                     | ✅ Yes — adds new team entry |
+| 5   | Create new team                    | `POST /orgs/{org}/teams` + maintainer assignment                     | No                           |
 
 ---
 
@@ -125,14 +125,16 @@ The following labels must exist in the repository:
 
 ## teams.yaml Update Behaviour
 
-For request types that affect team-repository relationships or create new teams, the workflow:
+For request types that affect team-repository relationships, the workflow:
 
 1. Modifies `data/teams.yaml` directly on a new branch (`team-request/{team-name}-{timestamp}`)
 2. Creates a pull request targeting `main` with a descriptive title and body
 3. Links the PR back to the originating issue
-4. Posts a note in the issue comment that the PR must be merged and `terraform apply` run
+4. Posts a note in the issue comment that the PR must be merged
 
-**Important:** The GitHub API changes are applied immediately upon approval. The `teams.yaml` PR ensures Terraform state stays in sync during the next apply.
+**Important:** The GitHub API changes are applied immediately upon approval. The `teams.yaml` PR ensures the repository configuration file stays in sync.
+
+> **Note:** Creating a new team does **not** update `teams.yaml` or raise a PR. The team is created directly via GitHub API and the issue is closed upon success.
 
 ---
 
@@ -142,9 +144,11 @@ For request types that affect team-repository relationships or create new teams,
 
 Team membership and maintainer roles are stateless operations applied directly via GitHub API. This provides faster execution and avoids Terraform state complexity for ephemeral membership changes.
 
-### 2. Terraform Sync via PR
+### 2. teams.yaml Sync via PR
 
-For structural changes (team creation, repo access), `data/teams.yaml` is updated via PR to keep Terraform state consistent. This is a conscious trade-off: API changes take effect immediately while Terraform sync follows on merge.
+For team-repository access changes, `data/teams.yaml` is updated via PR to keep the repository configuration consistent. This is a conscious trade-off: API changes take effect immediately while the YAML sync follows on merge.
+
+Creating a new team does not raise a PR — the team is created directly via GitHub API with no YAML update required.
 
 ### 3. Approval Gate
 
@@ -178,8 +182,8 @@ The workflow follows the same structural patterns as the existing `repo-request.
 | 6   | Give team access (valid team, valid repo)        | ✅ Access granted + PR created                      |
 | 7   | Give team access (nonexistent repo)              | ❌ Validation fails, issue closed                   |
 | 8   | Remove team access (valid)                       | ✅ Access removed + PR created                      |
-| 9   | Create new team (unique name)                    | ✅ Team created, requestor = maintainer, PR created |
-| 10  | Create new team (existing name)                  | ❌ Validation fails, issue closed                   |
+| 9   | Create new team (unique name)                    | ✅ Team created, requestor = maintainer, no PR created |
+| 10  | Create new team (existing name)                  | ❌ Validation fails, issue closed                      |
 | 11  | Approval denied                                  | ⏹️ Workflow stops, no action taken                  |
 | 12  | Non-`[TEAM REQUEST]` issue                       | ⏹️ Workflow does not trigger                        |
 
