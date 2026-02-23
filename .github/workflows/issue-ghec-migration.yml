@@ -1353,7 +1353,7 @@ jobs:
   upload-logs:
     name: "Upload Migration Logs"
     needs: [validate, pre-migration, cutover, post-migration]
-    if: always()
+    if: always() && needs.validate.result != 'skipped'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1420,6 +1420,7 @@ jobs:
     needs: [validate, pre-migration, cutover, post-migration, upload-logs]
     if: |
       always() &&
+      needs.validate.result != 'skipped' &&
       (needs.cutover.result == 'success' || needs.cutover.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
