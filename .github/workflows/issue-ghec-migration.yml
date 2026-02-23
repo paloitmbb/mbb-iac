@@ -61,7 +61,7 @@ jobs:
               const regex = new RegExp(`### ${fieldLabel}[\\s\\S]*?(?=\\n###|$)`, 'i');
               const section = body.match(regex);
               if (!section) return [];
-              
+
               const checkedItems = [];
               const lines = section[0].split('\n');
               for (const line of lines) {
@@ -82,7 +82,7 @@ jobs:
             const admins = extractField(issueBody, 'Admins');
             const teamMappings = extractTextarea(issueBody, 'Team Access Mappings');
             const justification = extractTextarea(issueBody, 'Justification');
-            
+
             // Extract migration options (checkboxes)
             const migrationOptions = extractCheckboxes(issueBody, 'Migration Options');
             const migrationOptionsStr = migrationOptions.join(', ');
@@ -149,7 +149,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Validate source repository exists 
+      - name: Validate source repository exists
         run: |
           SRC_ORG="${{ steps.parse.outputs.issueparser_source_organization }}"
           SRC_REPO="${{ steps.parse.outputs.issueparser_source_repo }}"
@@ -282,7 +282,7 @@ jobs:
               commentBody += `- **Target Repository:** \`${targetOrg}/${targetRepo}\`\n`;
               commentBody += `- **Target Visibility:** \`${targetVisibility}\`\n`;
               commentBody += `- **Admins:** ${admins}\n\n`;
-              
+
               if (migrationOptions) {
                 commentBody += '### Migration Options\n';
                 const options = migrationOptions.split(',').map(opt => opt.trim()).filter(opt => opt);
@@ -307,7 +307,7 @@ jobs:
                 commentBody += '### 📝 Justification\n';
                 commentBody += '> ' + justification.split('\n').join('\n> ') + '\n\n';
               }
-              
+
               commentBody += '---\n\n';
               commentBody += '⏳ **Migration process will begin shortly...**\n\n';
               commentBody += '**Next Steps:**\n';
@@ -319,7 +319,7 @@ jobs:
             } else {
               commentBody += '❌ **Validation Failed**\n\n';
               commentBody += '### Errors Found:\n';
-              
+
               if (!sourceOrg) {
                 commentBody += '- ❌ Source Organization: Missing or empty\n';
               }
@@ -332,7 +332,7 @@ jobs:
               if (!targetRepo) {
                 commentBody += '- ❌ Target Repository: Missing or empty\n';
               }
-              
+
               commentBody += '\n---\n\n';
               commentBody += '⚠️ **This issue will be closed. Please fix the errors and create a new migration request.**';
             }
@@ -359,7 +359,7 @@ jobs:
                 repo: context.repo.repo,
                 labels: ['validation-failed']
               });
-              
+
               // // Close issue if validation failed
               // await github.rest.issues.update({
               //   issue_number: context.issue.number,
@@ -368,7 +368,7 @@ jobs:
               //   state: 'closed',
               //   state_reason: 'not_planned'
               // });
-              
+
               // Exit the workflow
               core.setFailed('Validation failed - issue closed');
             }
@@ -416,7 +416,7 @@ jobs:
               summary += `| **Target Repository** | \`${targetOrg}/${targetRepo}\` |\n`;
               summary += `| **Target Visibility** | \`${targetVisibility}\` |\n`;
               summary += `| **Admins** | ${admins} |\n`;
-              
+
               if (migrationOptions) {
                 summary += '\n### ⚙️ Migration Options\n\n';
                 const options = migrationOptions.split(',').map(opt => opt.trim()).filter(opt => opt);
@@ -440,7 +440,7 @@ jobs:
                 summary += '\n### 📝 Justification\n\n';
                 summary += '> ' + justification.split('\n').join('\n> ') + '\n';
               }
-              
+
               summary += '\n---\n\n';
               summary += '### ⏳ Next Steps\n\n';
               summary += '1. 📊 Pre-migration state recording\n';
@@ -451,7 +451,7 @@ jobs:
             } else {
               summary += '## ❌ Validation Failed\n\n';
               summary += '### Errors Found:\n\n';
-              
+
               if (!sourceOrg) {
                 summary += '- ❌ **Source Organization:** Missing or empty\n';
               }
@@ -464,7 +464,7 @@ jobs:
               if (!targetRepo) {
                 summary += '- ❌ **Target Repository:** Missing or empty\n';
               }
-              
+
               summary += '\n---\n\n';
               summary += '⚠️ **Please fix the above errors and create a new issue.**\n';
             }
@@ -480,7 +480,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
- 
+
   # ─────────────────────────────────────────────
   # Job 2: Approval Gate - requires manual approval after validation
   # ─────────────────────────────────────────────
