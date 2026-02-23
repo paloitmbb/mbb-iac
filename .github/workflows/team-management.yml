@@ -1,4 +1,4 @@
-name: "👥 Issue Triggered Team Management Workflow"
+name: "Issue Triggered Team Management Workflow"
 
 on:
   issues:
