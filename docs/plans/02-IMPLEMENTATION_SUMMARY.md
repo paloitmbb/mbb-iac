@@ -1,7 +1,7 @@
 # Automated Repository Workflow - Implementation Summary
 
-**Date:** 12 February 2026  
-**Last Updated:** 19 February 2026  
+**Date:** 12 February 2026
+**Last Updated:** 19 February 2026
 **Status:** ✅ Implementation Complete (Updated - Secrets/Variables Decoupling)
 
 ## Recent Updates (February 2026)
@@ -350,7 +350,7 @@ Success! The configuration is valid.
      "subject": "repo:paloitmbb/mbb-iac:ref:refs/heads/main",
      "audiences": ["api://AzureADTokenExchange"]
    }'
-   
+
    # For pull requests
    az ad app federated-credential create --id $APP_ID --parameters '{
      "name": "github-actions-pr",
@@ -588,6 +588,6 @@ Track these metrics after deployment:
 
 ---
 
-**Implementation Completed By:** GitHub Copilot  
-**Reviewed By:** Pending  
+**Implementation Completed By:** GitHub Copilot
+**Reviewed By:** Pending
 **Approved By:** Pending

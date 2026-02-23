@@ -1,13 +1,13 @@
 # Automated Repository Creation Workflow - Implementation Plan
 
-**Created:** 11 February 2026  
-**Last Updated:** 19 February 2026  
-**Owner:** DevSecOps Team  
+**Created:** 11 February 2026
+**Last Updated:** 19 February 2026
+**Owner:** DevSecOps Team
 **Status:** Implemented
 
 ---
 
-> **⚠️ IMPORTANT UPDATE (Current Implementation):**  
+> **⚠️ IMPORTANT UPDATE (Current Implementation):**
 > The implementation has been modified from the original plan:
 >
 > - **No teams are created** - users specify existing teams that will have access to the repository
@@ -634,18 +634,18 @@ jobs:
         id: check-yaml
         run: |
           REPO_NAME="${{ steps.parse.outputs.repo-name }}"
-          
+
           # Install yq if not available
           if ! command -v yq &> /dev/null; then
             wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
             chmod +x /usr/local/bin/yq
           fi
-          
+
           # Check if repository exists in data/repositories.yaml
           if [ -f "data/repositories.yaml" ]; then
             # Search for the repository name in the YAML file
             REPO_FOUND=$(yq eval ".repositories[] | select(.name == \"$REPO_NAME\") | .name" data/repositories.yaml)
-            
+
             if [ -n "$REPO_FOUND" ]; then
               echo "exists=true" >> $GITHUB_OUTPUT
               echo "error=Repository entry for '$REPO_NAME' already exists in data/repositories.yaml" >> $GITHUB_OUTPUT

@@ -91,8 +91,8 @@ module "repository_teams" {
   team_name    = each.value.name
   description  = each.value.description
   privacy      = try(each.value.privacy, "closed")
-  repositories = [each.value.repository]
-  permission   = each.value.permission
+  repositories = try([each.value.repository], [])
+  permission   = try(each.value.permission, "pull")
 
   depends_on = [module.github_repositories]
 }

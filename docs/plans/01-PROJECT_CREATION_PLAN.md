@@ -1223,13 +1223,13 @@ jobs:
             # Detect which environment folders changed
             CHANGED_FILES=$(git diff --name-only HEAD^ HEAD)
             ENVIRONMENTS=()
-            
+
             for env in dev staging production; do
               if echo "$CHANGED_FILES" | grep -q "environments/${env}/"; then
                 ENVIRONMENTS+=("\"$env\"")
               fi
             done
-            
+
             if [ ${#ENVIRONMENTS[@]} -eq 0 ]; then
               echo "environments=[]" >> $GITHUB_OUTPUT
             else
@@ -1304,8 +1304,8 @@ jobs:
               per_page: 10
             });
 
-            const mergedPR = prs.find(pr => 
-              pr.merged_at && 
+            const mergedPR = prs.find(pr =>
+              pr.merged_at &&
               pr.head.ref.startsWith('repo-request/') &&
               pr.merge_commit_sha === context.sha
             );
@@ -1330,10 +1330,10 @@ jobs:
               repo: context.repo.repo,
               issue_number: issueNumber,
               body: `✅ Repository has been created successfully!
-              
+
               **Environment**: ${{ matrix.environment }}
               **Terraform Apply**: Completed
-              
+
               The repository is now available and configured with all requested settings.`
             });
 

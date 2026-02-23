@@ -114,11 +114,13 @@ jobs:
               try {
                 await github.rest.teams.getByName({ org, team_slug: teamName });
                 teamExists = true;
-                console.log(`✅ Team "${teamName}" found in organization`);
+                const foundExpected = requestType !== 'Create new team';
+                console.log(`${foundExpected ? '✅' : '❌'} Team "${teamName}" found in organization`);
               } catch (e) {
                 if (e.status === 404) {
                   teamExists = false;
-                  console.log(`❌ Team "${teamName}" not found in organization`);
+                  const notFoundExpected = requestType === 'Create new team';
+                  console.log(`${notFoundExpected ? '✅' : '❌'} Team "${teamName}" not found in organization`);
                 } else {
                   throw e;
                 }
@@ -143,12 +145,13 @@ jobs:
               }
             }
 
-            // --- Username Validation (maintainer requests only) ---
+            // --- Username Validation (maintainer requests and optional for create new team) ---
             const isMaintainerRequest = requestType.includes('maintainer');
-            if (isMaintainerRequest) {
-              if (!teamMaintainer) {
+            const hasSpecifiedMaintainer = !!(teamMaintainer && teamMaintainer !== '_No response_');
+            if (isMaintainerRequest || (requestType === 'Create new team' && hasSpecifiedMaintainer)) {
+              if (isMaintainerRequest && !teamMaintainer) {
                 errors.push('Team maintainer username is required for maintainer role requests');
-              } else {
+              } else if (hasSpecifiedMaintainer) {
                 // Check if user exists on GitHub
                 try {
                   await github.rest.users.getByUsername({ username: teamMaintainer });
@@ -193,15 +196,22 @@ jobs:
 
             console.log(`Validation ${passed ? 'PASSED' : 'FAILED'} - ${errors.length} error(s)`);
 
+            if (!passed) {
+              core.setFailed(`Validation failed with ${errors.length} error(s): ${errors.join('; ')}`);
+            }
+
       - name: Post validation summary to issue
         if: always()
         uses: actions/github-script@v7
+        env:
+          ERRORS_JSON: ${{ steps.validate.outputs.errors }}
+          VALIDATIONS_JSON: ${{ steps.validate.outputs.validations }}
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
             const passed = '${{ steps.validate.outputs.validation-passed }}' === 'true';
-            const errors = JSON.parse('${{ steps.validate.outputs.errors }}' || '[]');
-            const validations = JSON.parse('${{ steps.validate.outputs.validations }}' || '[]');
+            const errors = JSON.parse(process.env.ERRORS_JSON || '[]');
+            const validations = JSON.parse(process.env.VALIDATIONS_JSON || '[]');
 
             const requestType = `${{ steps.parse.outputs.request-type }}`;
             const teamName = `${{ steps.parse.outputs.team-name }}`;
@@ -342,6 +352,7 @@ jobs:
             const teamMaintainer = '${{ needs.validate-request.outputs.team-maintainer }}';
             const repository = '${{ needs.validate-request.outputs.repository }}';
             const permission = '${{ needs.validate-request.outputs.permission }}' || 'push';
+            const hasSpecifiedMaintainer = !!(teamMaintainer && teamMaintainer !== '_No response_');
             let result = {};
 
             switch (requestType) {
@@ -420,9 +431,22 @@ jobs:
                   role: 'maintainer',
                 });
 
+                // Also assign specified team maintainer if provided and different from requestor
+                if (hasSpecifiedMaintainer && teamMaintainer !== requestor) {
+                  await github.rest.teams.addOrUpdateMembershipForUserInOrg({
+                    org,
+                    team_slug: teamName,
+                    username: teamMaintainer,
+                    role: 'maintainer',
+                  });
+                }
+
+                const extraMaintainerNote = hasSpecifiedMaintainer && teamMaintainer !== requestor
+                  ? `. User \`@${teamMaintainer}\` also assigned as **maintainer**`
+                  : '';
                 result = {
                   action: 'Created new team',
-                  details: `Team \`${teamName}\` created. User \`@${requestor}\` assigned as **maintainer**.`,
+                  details: `Team \`${teamName}\` created. User \`@${requestor}\` assigned as **maintainer**${extraMaintainerNote}.`,
                 };
                 break;
 

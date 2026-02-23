@@ -4,7 +4,10 @@
 # Teams are created via Terraform; membership is managed via GitHub API
 
 teams:
-
+  - name: mbb-devsecops-dev
+    privacy: closed
+    description: Team mbb-devsecops-dev
+    members: []
 # Team Structure Convention:
 # {repository-name}-{role}
 #
