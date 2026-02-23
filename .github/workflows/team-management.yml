@@ -14,7 +14,7 @@ jobs:
   validate-request:
     name: Validate Team Request
     runs-on: ubuntu-latest
-    if: startsWith(github.event.issue.title, '[TEAM REQUEST]')
+    if: contains(github.event.issue.labels.*.name, 'team-request')
     outputs:
       request-type: ${{ steps.parse.outputs.request-type }}
       team-name: ${{ steps.parse.outputs.team-name }}
