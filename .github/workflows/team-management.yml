@@ -196,12 +196,15 @@ jobs:
       - name: Post validation summary to issue
         if: always()
         uses: actions/github-script@v7
+        env:
+          ERRORS_JSON: ${{ steps.validate.outputs.errors }}
+          VALIDATIONS_JSON: ${{ steps.validate.outputs.validations }}
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
             const passed = '${{ steps.validate.outputs.validation-passed }}' === 'true';
-            const errors = JSON.parse('${{ steps.validate.outputs.errors }}' || '[]');
-            const validations = JSON.parse('${{ steps.validate.outputs.validations }}' || '[]');
+            const errors = JSON.parse(process.env.ERRORS_JSON || '[]');
+            const validations = JSON.parse(process.env.VALIDATIONS_JSON || '[]');
 
             const requestType = `${{ steps.parse.outputs.request-type }}`;
             const teamName = `${{ steps.parse.outputs.team-name }}`;
