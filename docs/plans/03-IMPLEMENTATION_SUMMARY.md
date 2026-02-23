@@ -50,21 +50,19 @@ Job 1: validate-request
          ▼
 Job 2: execute-request
   ├── Execute GitHub API call based on request type
-  ├── Update data/teams.yaml (for access/create requests)
-  ├── Create PR for teams.yaml changes
   ├── Post execution summary comment to issue
   └── Close issue (completed) or label (execution-failed)
 ```
 
 ### Supported Request Types
 
-| #   | Request Type                       | API Operation                                                        | teams.yaml Update            |
-| --- | ---------------------------------- | -------------------------------------------------------------------- | ---------------------------- |
-| 1   | Request team maintainer role       | `PUT /orgs/{org}/teams/{team}/memberships/{user}` (role: maintainer) | No                           |
-| 2   | Remove team maintainer role        | `PUT /orgs/{org}/teams/{team}/memberships/{user}` (role: member)     | No                           |
-| 3   | Give team access to a repository   | `PUT /orgs/{org}/teams/{team}/repos/{owner}/{repo}`                  | ✅ Yes — adds/updates entry  |
-| 4   | Remove team access to a repository | `DELETE /orgs/{org}/teams/{team}/repos/{owner}/{repo}`               | ✅ Yes — removes entry       |
-| 5   | Create new team                    | `POST /orgs/{org}/teams` + maintainer assignment                     | ✅ Yes — adds new team entry |
+| #   | Request Type                       | API Operation                                                        |
+| --- | ---------------------------------- | -------------------------------------------------------------------- |
+| 1   | Request team maintainer role       | `PUT /orgs/{org}/teams/{team}/memberships/{user}` (role: maintainer) |
+| 2   | Remove team maintainer role        | `PUT /orgs/{org}/teams/{team}/memberships/{user}` (role: member)     |
+| 3   | Give team access to a repository   | `PUT /orgs/{org}/teams/{team}/repos/{owner}/{repo}`                  |
+| 4   | Remove team access to a repository | `DELETE /orgs/{org}/teams/{team}/repos/{owner}/{repo}`               |
+| 5   | Create new team                    | `POST /orgs/{org}/teams` + maintainer assignment                     |
 
 ---
 
@@ -123,43 +121,25 @@ The following labels must exist in the repository:
 
 ---
 
-## teams.yaml Update Behaviour
-
-For request types that affect team-repository relationships or create new teams, the workflow:
-
-1. Modifies `data/teams.yaml` directly on a new branch (`team-request/{team-name}-{timestamp}`)
-2. Creates a pull request targeting `main` with a descriptive title and body
-3. Links the PR back to the originating issue
-4. Posts a note in the issue comment that the PR must be merged and `terraform apply` run
-
-**Important:** The GitHub API changes are applied immediately upon approval. The `teams.yaml` PR ensures Terraform state stays in sync during the next apply.
-
----
-
 ## Key Design Decisions
 
 ### 1. Direct API Execution (No Terraform)
 
 Team membership and maintainer roles are stateless operations applied directly via GitHub API. This provides faster execution and avoids Terraform state complexity for ephemeral membership changes.
 
-### 2. Terraform Sync via PR
-
-For structural changes (team creation, repo access), `data/teams.yaml` is updated via PR to keep Terraform state consistent. This is a conscious trade-off: API changes take effect immediately while Terraform sync follows on merge.
-
-### 3. Approval Gate
+### 2. Approval Gate
 
 All five request types require DevSecOps approval via the `team-management-approval` environment, ensuring consistent oversight for all team changes.
 
-### 4. Default Team Maintainer
+### 3. Default Team Maintainer
 
 For maintainer role requests where the `Team Maintainer` field is blank, the workflow defaults to the issue requestor's username. This reduces friction for self-service maintainer assignments.
 
-### 5. Consistent Patterns
+### 4. Consistent Patterns
 
 The workflow follows the same structural patterns as the existing `repo-request.yml`:
 
 - `actions/github-script@v7` for all API and scripting steps
-- `actions/checkout@v4` for repository operations
 - GitHub job summaries alongside issue comments
 - Environment-based approval gate
 - Conventional commit messages following project guidelines
@@ -175,11 +155,11 @@ The workflow follows the same structural patterns as the existing `repo-request.
 | 3   | Request maintainer role (nonexistent user)       | ❌ Validation fails, issue closed                   |
 | 4   | Request maintainer role (nonexistent team)       | ❌ Validation fails, issue closed                   |
 | 5   | Remove maintainer role (valid)                   | ✅ Demoted to member                                |
-| 6   | Give team access (valid team, valid repo)        | ✅ Access granted + PR created                      |
+| 6   | Give team access (valid team, valid repo)        | ✅ Access granted                                   |
 | 7   | Give team access (nonexistent repo)              | ❌ Validation fails, issue closed                   |
-| 8   | Remove team access (valid)                       | ✅ Access removed + PR created                      |
-| 9   | Create new team (unique name)                    | ✅ Team created, requestor = maintainer, PR created |
-| 10  | Create new team (existing name)                  | ❌ Validation fails, issue closed                   |
+| 8   | Remove team access (valid)                       | ✅ Access removed                                   |
+| 9   | Create new team (unique name)                    | ✅ Team created, requestor = maintainer, no PR created |
+| 10  | Create new team (existing name)                  | ❌ Validation fails, issue closed                      |
 | 11  | Approval denied                                  | ⏹️ Workflow stops, no action taken                  |
 | 12  | Non-`[TEAM REQUEST]` issue                       | ⏹️ Workflow does not trigger                        |
 
@@ -198,6 +178,5 @@ The workflow follows the same structural patterns as the existing `repo-request.
 
 - [Plan Document](./03-TEAM_MANAGEMENT_WORKFLOW_PLAN.md)
 - [Repository Workflow Implementation Summary](./02-IMPLEMENTATION_SUMMARY.md)
-- [Teams Data Documentation](../../data/TEAMS.md)
 - [Issue Template](../../.github/ISSUE_TEMPLATE/team-management.yml)
 - [Workflow File](../../.github/workflows/team-management.yml)
