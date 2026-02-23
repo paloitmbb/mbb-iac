@@ -1,6 +1,6 @@
-name: Team Management Request
+name: "👥 Team Management Request"
 description: Request team role changes, team access to repositories, or create a new team
-title: "👥 [TEAM REQUEST] "
+title: "[TEAM REQUEST] "
 labels: ["team-request", "pending-review"]
 assignees:
   - devsecops-team
