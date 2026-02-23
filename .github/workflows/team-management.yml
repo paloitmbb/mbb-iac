@@ -114,11 +114,13 @@ jobs:
               try {
                 await github.rest.teams.getByName({ org, team_slug: teamName });
                 teamExists = true;
-                console.log(`✅ Team "${teamName}" found in organization`);
+                const foundExpected = requestType !== 'Create new team';
+                console.log(`${foundExpected ? '✅' : '❌'} Team "${teamName}" found in organization`);
               } catch (e) {
                 if (e.status === 404) {
                   teamExists = false;
-                  console.log(`❌ Team "${teamName}" not found in organization`);
+                  const notFoundExpected = requestType === 'Create new team';
+                  console.log(`${notFoundExpected ? '✅' : '❌'} Team "${teamName}" not found in organization`);
                 } else {
                   throw e;
                 }
@@ -192,6 +194,10 @@ jobs:
             core.setOutput('validations', JSON.stringify(validations));
 
             console.log(`Validation ${passed ? 'PASSED' : 'FAILED'} - ${errors.length} error(s)`);
+
+            if (!passed) {
+              core.setFailed(`Validation failed with ${errors.length} error(s): ${errors.join('; ')}`);
+            }
 
       - name: Post validation summary to issue
         if: always()
