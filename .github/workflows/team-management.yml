@@ -1,0 +1,742 @@
+name: Issue Triggered Team Management Workflow
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  # ============================================================================
+  # Job 1: Validate Team Request
+  # ============================================================================
+  validate-request:
+    name: Validate Team Request
+    runs-on: ubuntu-latest
+    if: startsWith(github.event.issue.title, '[TEAM REQUEST]')
+    outputs:
+      request-type: ${{ steps.parse.outputs.request-type }}
+      team-name: ${{ steps.parse.outputs.team-name }}
+      team-maintainer: ${{ steps.parse.outputs.team-maintainer }}
+      repository: ${{ steps.parse.outputs.repository }}
+      permission: ${{ steps.parse.outputs.permission }}
+      justification: ${{ steps.parse.outputs.justification }}
+      validation-passed: ${{ steps.validate.outputs.validation-passed }}
+      errors: ${{ steps.validate.outputs.errors }}
+      validations: ${{ steps.validate.outputs.validations }}
+
+    steps:
+      - name: Parse issue form
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueBody = context.payload.issue.body;
+
+            function extractField(body, fieldLabel) {
+              const regex = new RegExp(`### ${fieldLabel}\\s*\\n\\s*([^\\n#]+)`, 'i');
+              const match = body.match(regex);
+              return match ? match[1].trim() : '';
+            }
+
+            const requestType = extractField(issueBody, 'Request Type');
+            const teamName = extractField(issueBody, 'Team');
+            let teamMaintainer = extractField(issueBody, 'Team Maintainer');
+            const repository = extractField(issueBody, 'Repository');
+            const rawPermission = extractField(issueBody, 'Permission Level');
+            const permission = (rawPermission && rawPermission !== '_No response_') ? rawPermission : 'push';
+            const justification = extractField(issueBody, 'Justification / Remark');
+
+            // Default team maintainer to requestor for maintainer role requests
+            const isMaintainerRequest = requestType.toLowerCase().includes('maintainer');
+            if (isMaintainerRequest && (!teamMaintainer || teamMaintainer === '_No response_')) {
+              teamMaintainer = context.payload.issue.user.login;
+            }
+
+            core.setOutput('request-type', requestType);
+            core.setOutput('team-name', teamName);
+            core.setOutput('team-maintainer', teamMaintainer || '');
+            core.setOutput('repository', repository || '');
+            core.setOutput('permission', permission);
+            core.setOutput('justification', justification);
+
+            console.log(`Request Type: ${requestType}`);
+            console.log(`Team Name: ${teamName}`);
+            console.log(`Team Maintainer: ${teamMaintainer}`);
+            console.log(`Repository: ${repository}`);
+            console.log(`Permission: ${permission}`);
+
+      - name: Validate team request
+        id: validate
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const org = context.repo.owner;
+            const requestType = '${{ steps.parse.outputs.request-type }}';
+            const teamName = '${{ steps.parse.outputs.team-name }}';
+            const teamMaintainer = '${{ steps.parse.outputs.team-maintainer }}';
+            const repository = '${{ steps.parse.outputs.repository }}';
+            const errors = [];
+            const validations = [];
+
+            // --- Common Validations ---
+
+            // Validate request type
+            const validTypes = [
+              'Request team maintainer role',
+              'Remove team maintainer role',
+              'Give team access to a repository',
+              'Remove team access to a repository',
+              'Create new team'
+            ];
+            if (!validTypes.includes(requestType)) {
+              errors.push(`Invalid request type: "${requestType}". Must be one of: ${validTypes.join(', ')}`);
+            } else {
+              validations.push({ check: 'Request type is valid', result: '✅ Passed' });
+            }
+
+            // Validate team name
+            if (!teamName) {
+              errors.push('Team name is required');
+            } else if (!/^[a-zA-Z0-9._-]+$/.test(teamName)) {
+              errors.push('Team name must contain only alphanumeric characters, hyphens, underscores, and periods');
+            } else {
+              validations.push({ check: 'Team name format', result: '✅ Passed' });
+            }
+
+            // --- Team Existence Check ---
+            let teamExists = false;
+            if (teamName && /^[a-zA-Z0-9._-]+$/.test(teamName)) {
+              try {
+                await github.rest.teams.getByName({ org, team_slug: teamName });
+                teamExists = true;
+                console.log(`✅ Team "${teamName}" found in organization`);
+              } catch (e) {
+                if (e.status === 404) {
+                  teamExists = false;
+                  console.log(`❌ Team "${teamName}" not found in organization`);
+                } else {
+                  throw e;
+                }
+              }
+            }
+
+            // For "Create new team": team must NOT exist
+            if (requestType === 'Create new team') {
+              if (teamExists) {
+                errors.push(`Team "${teamName}" already exists. Cannot create a duplicate.`);
+                validations.push({ check: 'Team does not exist (required for create)', result: '❌ Team already exists' });
+              } else {
+                validations.push({ check: 'Team does not exist (required for create)', result: '✅ Passed' });
+              }
+            } else if (validTypes.includes(requestType)) {
+              // For all other requests: team MUST exist
+              if (!teamExists) {
+                errors.push(`Team "${teamName}" does not exist in the organization.`);
+                validations.push({ check: 'Team exists', result: '❌ Not found' });
+              } else {
+                validations.push({ check: 'Team exists', result: '✅ Passed' });
+              }
+            }
+
+            // --- Username Validation (maintainer requests only) ---
+            const isMaintainerRequest = requestType.includes('maintainer');
+            if (isMaintainerRequest) {
+              if (!teamMaintainer) {
+                errors.push('Team maintainer username is required for maintainer role requests');
+              } else {
+                // Check if user exists on GitHub
+                try {
+                  await github.rest.users.getByUsername({ username: teamMaintainer });
+                  validations.push({ check: `User "${teamMaintainer}" exists`, result: '✅ Passed' });
+                } catch (e) {
+                  errors.push(`User "${teamMaintainer}" does not exist on GitHub`);
+                  validations.push({ check: `User "${teamMaintainer}" exists`, result: '❌ Not found' });
+                }
+
+                // Check org membership
+                try {
+                  await github.rest.orgs.checkMembershipForUser({ org, username: teamMaintainer });
+                  validations.push({ check: `User "${teamMaintainer}" is org member`, result: '✅ Passed' });
+                } catch (e) {
+                  errors.push(`User "${teamMaintainer}" is not a member of the organization`);
+                  validations.push({ check: `User "${teamMaintainer}" is org member`, result: '❌ Not a member' });
+                }
+              }
+            }
+
+            // --- Repository Validation (team access requests only) ---
+            const isAccessRequest = requestType.includes('access to a repository');
+            if (isAccessRequest) {
+              if (!repository || repository === '_No response_') {
+                errors.push('Repository name is required for team access requests');
+              } else {
+                try {
+                  await github.rest.repos.get({ owner: org, repo: repository });
+                  validations.push({ check: `Repository "${repository}" exists`, result: '✅ Passed' });
+                } catch (e) {
+                  errors.push(`Repository "${repository}" does not exist in the organization`);
+                  validations.push({ check: `Repository "${repository}" exists`, result: '❌ Not found' });
+                }
+              }
+            }
+
+            // --- Output Results ---
+            const passed = errors.length === 0;
+            core.setOutput('validation-passed', passed.toString());
+            core.setOutput('errors', JSON.stringify(errors));
+            core.setOutput('validations', JSON.stringify(validations));
+
+            console.log(`Validation ${passed ? 'PASSED' : 'FAILED'} - ${errors.length} error(s)`);
+
+      - name: Post validation summary to issue
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const passed = '${{ steps.validate.outputs.validation-passed }}' === 'true';
+            const errors = JSON.parse('${{ steps.validate.outputs.errors }}' || '[]');
+            const validations = JSON.parse('${{ steps.validate.outputs.validations }}' || '[]');
+
+            const requestType = `${{ steps.parse.outputs.request-type }}`;
+            const teamName = `${{ steps.parse.outputs.team-name }}`;
+            const teamMaintainer = `${{ steps.parse.outputs.team-maintainer }}`;
+            const repository = `${{ steps.parse.outputs.repository }}`;
+            const permission = `${{ steps.parse.outputs.permission }}`;
+
+            let comment = passed
+              ? '## ✅ Validation Passed\n\n'
+              : '## ❌ Validation Failed\n\n';
+
+            // Request summary table
+            comment += '### 📋 Request Summary\n\n';
+            comment += '| Field | Value |\n';
+            comment += '|-------|-------|\n';
+            comment += `| **Request Type** | ${requestType} |\n`;
+            comment += `| **Team** | \`${teamName}\` |\n`;
+            comment += `| **Team Maintainer** | ${teamMaintainer || '_N/A_'} |\n`;
+            comment += `| **Repository** | ${repository || '_N/A_'} |\n`;
+            comment += `| **Permission** | ${permission || '_N/A_'} |\n`;
+            comment += `| **Requested By** | @${context.payload.issue.user.login} |\n\n`;
+
+            // Validation results
+            comment += '### 🔍 Validation Results\n\n';
+            comment += '| Check | Result |\n';
+            comment += '|-------|--------|\n';
+            for (const v of validations) {
+              comment += `| ${v.check} | ${v.result} |\n`;
+            }
+            comment += '\n';
+
+            // Errors (if any)
+            if (errors.length > 0) {
+              comment += '### ⚠️ Errors\n\n';
+              for (const e of errors) {
+                comment += `- ❌ ${e}\n`;
+              }
+              comment += '\n';
+            }
+
+            // Next steps
+            if (passed) {
+              comment += '### 📝 Next Steps\n\n';
+              comment += '- ⏳ Awaiting approval from **DevSecOps team** (`paloitmbb-devsecops`)\n';
+              comment += '- Once approved, the request will be executed automatically\n';
+            } else {
+              comment += '### 📝 Next Steps\n\n';
+              comment += '- Please fix the validation errors and create a new request issue.\n';
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment,
+            });
+
+            // Add labels
+            const labels = passed ? ['validation-passed'] : ['validation-failed'];
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels,
+            });
+
+            // Close issue if validation failed
+            if (!passed) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                state: 'closed',
+                state_reason: 'not_planned',
+              });
+            }
+
+      - name: Generate validation job summary
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const passed = '${{ steps.validate.outputs.validation-passed }}' === 'true';
+            const requestType = `${{ steps.parse.outputs.request-type }}`;
+            const teamName = `${{ steps.parse.outputs.team-name }}`;
+            const issueNumber = context.issue.number;
+
+            let summary = passed
+              ? '# ✅ Team Request Validation Passed\n\n'
+              : '# ❌ Team Request Validation Failed\n\n';
+
+            summary += '| Field | Value |\n';
+            summary += '|-------|-------|\n';
+            summary += `| **Request Type** | ${requestType} |\n`;
+            summary += `| **Team** | \`${teamName}\` |\n`;
+            summary += `| **Issue** | #${issueNumber} |\n`;
+            summary += `| **Requestor** | @${context.payload.issue.user.login} |\n`;
+            summary += `| **Status** | ${passed ? '✅ Passed' : '❌ Failed'} |\n\n`;
+
+            if (passed) {
+              summary += '## Next Steps\n\n';
+              summary += '- Awaiting DevSecOps team approval\n';
+              summary += '- Request will be executed automatically upon approval\n';
+            }
+
+            await core.summary.addRaw(summary).write();
+
+  # ============================================================================
+  # Job 2: Execute Team Request (Requires Approval)
+  # ============================================================================
+  execute-request:
+    name: Execute Team Request
+    runs-on: ubuntu-latest
+    needs: validate-request
+    if: needs.validate-request.outputs.validation-passed == 'true'
+    environment: team-management-approval
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.ORG_GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Execute team request
+        id: execute
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const org = context.repo.owner;
+            const requestType = '${{ needs.validate-request.outputs.request-type }}';
+            const teamName = '${{ needs.validate-request.outputs.team-name }}';
+            const teamMaintainer = '${{ needs.validate-request.outputs.team-maintainer }}';
+            const repository = '${{ needs.validate-request.outputs.repository }}';
+            const permission = '${{ needs.validate-request.outputs.permission }}' || 'push';
+            let result = {};
+
+            switch (requestType) {
+
+              // ── Request 1: Request team maintainer role ──
+              case 'Request team maintainer role':
+                await github.rest.teams.addOrUpdateMembershipForUserInOrg({
+                  org,
+                  team_slug: teamName,
+                  username: teamMaintainer,
+                  role: 'maintainer',
+                });
+                result = {
+                  action: 'Assigned maintainer role',
+                  details: `User \`${teamMaintainer}\` is now a **maintainer** of team \`${teamName}\``,
+                };
+                break;
+
+              // ── Request 2: Remove team maintainer role ──
+              case 'Remove team maintainer role':
+                await github.rest.teams.addOrUpdateMembershipForUserInOrg({
+                  org,
+                  team_slug: teamName,
+                  username: teamMaintainer,
+                  role: 'member',
+                });
+                result = {
+                  action: 'Removed maintainer role',
+                  details: `User \`${teamMaintainer}\` has been demoted to **member** of team \`${teamName}\``,
+                };
+                break;
+
+              // ── Request 3: Give team access to a repository ──
+              case 'Give team access to a repository':
+                await github.rest.teams.addOrUpdateRepoPermissionsInOrg({
+                  org,
+                  team_slug: teamName,
+                  owner: org,
+                  repo: repository,
+                  permission,
+                });
+                result = {
+                  action: 'Granted repository access',
+                  details: `Team \`${teamName}\` now has **${permission}** access to \`${repository}\``,
+                };
+                break;
+
+              // ── Request 4: Remove team access to a repository ──
+              case 'Remove team access to a repository':
+                await github.rest.teams.removeRepoInOrg({
+                  org,
+                  team_slug: teamName,
+                  owner: org,
+                  repo: repository,
+                });
+                result = {
+                  action: 'Removed repository access',
+                  details: `Team \`${teamName}\` no longer has access to \`${repository}\``,
+                };
+                break;
+
+              // ── Request 5: Create new team ──
+              case 'Create new team':
+                await github.rest.teams.create({
+                  org,
+                  name: teamName,
+                  privacy: 'closed',
+                });
+
+                // Assign requestor as team maintainer
+                const requestor = context.payload.issue.user.login;
+                await github.rest.teams.addOrUpdateMembershipForUserInOrg({
+                  org,
+                  team_slug: teamName,
+                  username: requestor,
+                  role: 'maintainer',
+                });
+
+                result = {
+                  action: 'Created new team',
+                  details: `Team \`${teamName}\` created. User \`@${requestor}\` assigned as **maintainer**.`,
+                };
+                break;
+
+              default:
+                throw new Error(`Unknown request type: ${requestType}`);
+            }
+
+            core.setOutput('action', result.action);
+            core.setOutput('details', result.details);
+            console.log(`✅ ${result.action}: ${result.details}`);
+
+      # ── Update teams.yaml and create PR (for team access & create team requests) ──
+
+      - name: Install yq
+        if: |
+          contains(fromJSON('["Give team access to a repository", "Remove team access to a repository", "Create new team"]'),
+            needs.validate-request.outputs.request-type)
+        run: |
+          if ! command -v yq &> /dev/null; then
+            wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            chmod +x /usr/local/bin/yq
+          fi
+          yq --version
+
+      - name: Update teams.yaml
+        if: |
+          contains(fromJSON('["Give team access to a repository", "Remove team access to a repository", "Create new team"]'),
+            needs.validate-request.outputs.request-type)
+        id: update-yaml
+        shell: bash
+        run: |
+          REQUEST_TYPE="${{ needs.validate-request.outputs.request-type }}"
+          TEAM_NAME="${{ needs.validate-request.outputs.team-name }}"
+          REPOSITORY="${{ needs.validate-request.outputs.repository }}"
+          PERMISSION="${{ needs.validate-request.outputs.permission }}"
+
+          echo "Updating teams.yaml for request: ${REQUEST_TYPE}"
+          echo "Team: ${TEAM_NAME}, Repository: ${REPOSITORY}, Permission: ${PERMISSION}"
+
+          case "$REQUEST_TYPE" in
+            "Give team access to a repository")
+              # Check if team entry already exists
+              EXISTING=$(yq eval ".teams[] | select(.name == \"${TEAM_NAME}\" and .repository == \"${REPOSITORY}\") | .name" data/teams.yaml 2>/dev/null)
+              if [ -n "$EXISTING" ]; then
+                # Update existing entry's permission
+                yq eval -i "(.teams[] | select(.name == \"${TEAM_NAME}\" and .repository == \"${REPOSITORY}\")).permission = \"${PERMISSION}\"" data/teams.yaml
+                echo "change_type=updated" >> $GITHUB_OUTPUT
+              else
+                # Add new team-repository entry
+                yq eval -i ".teams += [{\"name\": \"${TEAM_NAME}\", \"repository\": \"${REPOSITORY}\", \"permission\": \"${PERMISSION}\", \"privacy\": \"closed\", \"description\": \"Team ${TEAM_NAME}\"}]" data/teams.yaml
+                echo "change_type=added" >> $GITHUB_OUTPUT
+              fi
+              ;;
+
+            "Remove team access to a repository")
+              # Remove matching team-repository entry
+              yq eval -i "del(.teams[] | select(.name == \"${TEAM_NAME}\" and .repository == \"${REPOSITORY}\"))" data/teams.yaml
+              echo "change_type=removed" >> $GITHUB_OUTPUT
+              ;;
+
+            "Create new team")
+              # Add new team entry (no repository yet)
+              yq eval -i ".teams += [{\"name\": \"${TEAM_NAME}\", \"privacy\": \"closed\", \"description\": \"Team ${TEAM_NAME}\", \"members\": []}]" data/teams.yaml
+              echo "change_type=created" >> $GITHUB_OUTPUT
+              ;;
+          esac
+
+          echo "teams.yaml updated successfully"
+          cat data/teams.yaml
+
+      - name: Create branch and commit YAML changes
+        if: |
+          contains(fromJSON('["Give team access to a repository", "Remove team access to a repository", "Create new team"]'),
+            needs.validate-request.outputs.request-type)
+        id: create-branch
+        run: |
+          REQUEST_TYPE="${{ needs.validate-request.outputs.request-type }}"
+          TEAM_NAME="${{ needs.validate-request.outputs.team-name }}"
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          BRANCH_NAME="team-request/${TEAM_NAME}-${TIMESTAMP}"
+
+          git checkout -b "${BRANCH_NAME}"
+          git add data/teams.yaml
+
+          # Build appropriate commit message based on request type
+          case "$REQUEST_TYPE" in
+            "Give team access to a repository")
+              REPO="${{ needs.validate-request.outputs.repository }}"
+              PERM="${{ needs.validate-request.outputs.permission }}"
+              COMMIT_MSG="feat: ✨ grant ${TEAM_NAME} ${PERM} access to ${REPO}
+
+          Team access request from issue #${{ github.event.issue.number }}
+
+          - Team: ${TEAM_NAME}
+          - Repository: ${REPO}
+          - Permission: ${PERM}
+
+          Related to #${{ github.event.issue.number }}"
+              ;;
+            "Remove team access to a repository")
+              REPO="${{ needs.validate-request.outputs.repository }}"
+              COMMIT_MSG="feat: 🗑️ remove ${TEAM_NAME} access from ${REPO}
+
+          Team access removal request from issue #${{ github.event.issue.number }}
+
+          - Team: ${TEAM_NAME}
+          - Repository: ${REPO}
+
+          Related to #${{ github.event.issue.number }}"
+              ;;
+            "Create new team")
+              COMMIT_MSG="feat: ✨ add new team ${TEAM_NAME}
+
+          Team creation request from issue #${{ github.event.issue.number }}
+
+          - Team: ${TEAM_NAME}
+          - Privacy: closed
+
+          Related to #${{ github.event.issue.number }}"
+              ;;
+          esac
+
+          git commit -m "$COMMIT_MSG"
+          git push origin "${BRANCH_NAME}"
+
+          echo "branch=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+          echo "Branch ${BRANCH_NAME} pushed successfully"
+
+      - name: Create pull request for YAML update
+        if: |
+          contains(fromJSON('["Give team access to a repository", "Remove team access to a repository", "Create new team"]'),
+            needs.validate-request.outputs.request-type)
+        id: create-pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const requestType = '${{ needs.validate-request.outputs.request-type }}';
+            const teamName = '${{ needs.validate-request.outputs.team-name }}';
+            const repository = '${{ needs.validate-request.outputs.repository }}';
+            const permission = '${{ needs.validate-request.outputs.permission }}';
+            const branchName = '${{ steps.create-branch.outputs.branch }}';
+            const issueNumber = context.issue.number;
+
+            let prTitle = '';
+            let prBodyDetails = '';
+
+            switch (requestType) {
+              case 'Give team access to a repository':
+                prTitle = `🔑 Grant ${teamName} ${permission} access to ${repository}`;
+                prBodyDetails = `| **Team** | \`${teamName}\` |\n| **Repository** | \`${repository}\` |\n| **Permission** | \`${permission}\` |`;
+                break;
+              case 'Remove team access to a repository':
+                prTitle = `🚫 Remove ${teamName} access from ${repository}`;
+                prBodyDetails = `| **Team** | \`${teamName}\` |\n| **Repository** | \`${repository}\` |`;
+                break;
+              case 'Create new team':
+                prTitle = `🆕 Create new team: ${teamName}`;
+                prBodyDetails = `| **Team** | \`${teamName}\` |\n| **Privacy** | closed |`;
+                break;
+            }
+
+            const prBody = `## 🔧 Team Configuration Update
+
+            This PR updates \`data/teams.yaml\` to reflect automated team management changes.
+
+            ### Request Details
+
+            | Field | Value |
+            |-------|-------|
+            | **Request Type** | ${requestType} |
+            ${prBodyDetails}
+            | **Requested By** | @${context.payload.issue.user.login} |
+            | **Approved By** | DevSecOps Team |
+
+            ### Changes
+
+            - Updated \`data/teams.yaml\` to reflect the team configuration change
+            - API changes have already been applied automatically
+
+            > ⚠️ **Note:** This PR must be merged and \`terraform apply\` run to sync Terraform state with these configuration changes.
+
+            ---
+
+            Closes #${issueNumber}`;
+
+            const pr = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: prTitle,
+              head: branchName,
+              base: 'main',
+              body: prBody,
+            });
+
+            core.setOutput('pr-number', pr.data.number.toString());
+            core.setOutput('pr-url', pr.data.html_url);
+
+            // Add labels to PR
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.data.number,
+              labels: ['team-request', 'automated'],
+            });
+
+            console.log(`✅ PR #${pr.data.number} created: ${pr.data.html_url}`);
+
+      - name: Post execution summary to issue
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const success = '${{ steps.execute.outcome }}' === 'success';
+            const action = '${{ steps.execute.outputs.action }}' || 'Unknown action';
+            const details = '${{ steps.execute.outputs.details }}' || 'No details available';
+            const prUrl = '${{ steps.create-pr.outputs.pr-url }}' || '';
+            const prNumber = '${{ steps.create-pr.outputs.pr-number }}' || '';
+
+            let comment = success
+              ? '## ✅ Request Executed Successfully\n\n'
+              : '## ❌ Request Execution Failed\n\n';
+
+            comment += '### 📋 Execution Summary\n\n';
+            comment += '| Field | Value |\n';
+            comment += '|-------|-------|\n';
+            comment += `| **Action** | ${action} |\n`;
+            comment += `| **Details** | ${details} |\n`;
+            comment += `| **Executed By** | Automated Workflow |\n`;
+            comment += `| **Approved By** | DevSecOps Team |\n`;
+
+            if (prUrl) {
+              comment += `| **Configuration PR** | [#${prNumber}](${prUrl}) |\n`;
+              comment += '\n> ⚠️ **Note:** A configuration PR has been created to update `data/teams.yaml`. ';
+              comment += 'This PR must be merged and `terraform apply` run to sync Terraform state.\n';
+            }
+
+            comment += '\n';
+
+            if (!success) {
+              const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+              comment += `### 🔧 Troubleshooting\n\n`;
+              comment += `- [View Workflow Logs](${runUrl})\n`;
+              comment += `- Contact DevSecOps team for assistance\n`;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment,
+            });
+
+            // Close issue on success, add labels
+            if (success) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                state: 'closed',
+                state_reason: 'completed',
+              });
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: ['completed'],
+              });
+            } else {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: ['execution-failed'],
+              });
+            }
+
+      - name: Generate execution job summary
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const success = '${{ steps.execute.outcome }}' === 'success';
+            const action = '${{ steps.execute.outputs.action }}' || 'Unknown';
+            const details = '${{ steps.execute.outputs.details }}' || 'No details';
+            const requestType = '${{ needs.validate-request.outputs.request-type }}';
+            const teamName = '${{ needs.validate-request.outputs.team-name }}';
+            const issueNumber = context.issue.number;
+            const prUrl = '${{ steps.create-pr.outputs.pr-url }}' || '';
+            const prNumber = '${{ steps.create-pr.outputs.pr-number }}' || '';
+
+            let summary = success
+              ? '# ✅ Team Request Executed Successfully\n\n'
+              : '# ❌ Team Request Execution Failed\n\n';
+
+            summary += '| Field | Value |\n';
+            summary += '|-------|-------|\n';
+            summary += `| **Request Type** | ${requestType} |\n`;
+            summary += `| **Team** | \`${teamName}\` |\n`;
+            summary += `| **Action** | ${action} |\n`;
+            summary += `| **Details** | ${details} |\n`;
+            summary += `| **Issue** | #${issueNumber} |\n`;
+
+            if (prUrl) {
+              summary += `| **Configuration PR** | [#${prNumber}](${prUrl}) |\n`;
+            }
+
+            summary += '\n';
+
+            if (!success) {
+              const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+              summary += `## 🔧 Troubleshooting\n\n`;
+              summary += `- [View Workflow Logs](${runUrl})\n`;
+              summary += `- Contact DevSecOps team for assistance\n`;
+            }
+
+            await core.summary.addRaw(summary).write();

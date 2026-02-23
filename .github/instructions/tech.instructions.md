@@ -527,6 +527,19 @@ Recommended CI/CD pipeline:
 2. **On merge to main**: Auto-apply to dev environment
 3. **Manual approval**: Promote to staging/production
 
+### GitHub Actions Security
+
+**CRITICAL GUARDRAIL**: All GitHub Actions workflows **must** use verified actions only. Using unverified or unknown third-party actions introduces supply chain risk.
+
+#### Rules for Using GitHub Actions
+
+1. **Use only verified actions**: Only use actions from:
+   - GitHub's official `actions/` organization
+   - Verified/trusted publishers (e.g., `hashicorp/`, `aws-actions/`, `azure/`)
+   - Avoid unknown or unverified third-party actions
+
+2. **Keep actions up-to-date**: Regularly review and update action versions when new releases are available, especially for security patches. Use tools like [Dependabot](https://docs.github.com/en/code-security/dependabot) to automate this.
+
 ### GitHub Actions Example
 
 ```yaml
@@ -543,8 +556,11 @@ jobs:
   terraform:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: hashicorp/setup-terraform@v2
+      # ✅ Verified action from actions/
+      - uses: actions/checkout@v4
+
+      # ✅ Verified action from hashicorp/
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.5.7
 
@@ -721,7 +737,8 @@ terraform plan
 ✅ Version control all configuration  
 ✅ Follow conventional commit messages  
 ✅ Use state locking for concurrent safety  
-✅ Keep secrets in environment variables
+✅ Keep secrets in environment variables  
+✅ Use only verified GitHub Actions from trusted publishers
 
 ### DON'T
 
@@ -734,7 +751,8 @@ terraform plan
 ❌ Use deprecated provider features  
 ❌ Share state files publicly  
 ❌ Skip backend initialization  
-❌ Ignore provider version constraints
+❌ Ignore provider version constraints  
+❌ Use unverified or unknown third-party GitHub Actions
 
 ## Additional Resources
 

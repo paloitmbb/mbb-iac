@@ -1,0 +1,109 @@
+name: Team Management Request
+description: Request team role changes, team access to repositories, or create a new team
+title: "[TEAM REQUEST] "
+labels: ["team-request", "pending-review"]
+assignees:
+  - devsecops-team
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Team Management Request Form
+        Please fill out this form to submit a team management request.
+        Your request will be validated and requires approval from the DevSecOps team.
+
+        **Note:** Fields are context-dependent — see field descriptions for which apply to your request type.
+
+        | Request Type | Team | Team Maintainer | Repository | Permission |
+        |---|---|---|---|---|
+        | Request/Remove maintainer role | Required (must exist) | Used (defaults to you) | Ignored | Ignored |
+        | Give/Remove team access to a repository | Required (must exist) | Ignored | Required (must exist) | Used (defaults to push) |
+        | Create new team | Required (must NOT exist) | Ignored | Ignored | Ignored |
+
+  - type: dropdown
+    id: request-type
+    attributes:
+      label: Request Type
+      description: Select the type of team management request
+      options:
+        - Request team maintainer role
+        - Remove team maintainer role
+        - Give team access to a repository
+        - Remove team access to a repository
+        - Create new team
+    validations:
+      required: true
+
+  - type: input
+    id: team-name
+    attributes:
+      label: Team
+      description: >
+        Name (slug) of the team. For existing operations, this team must already exist.
+        For "Create new team", this will be the new team name.
+      placeholder: "mbb-web-portal-dev"
+    validations:
+      required: true
+
+  - type: input
+    id: team-maintainer
+    attributes:
+      label: Team Maintainer
+      description: >
+        GitHub username to assign/revoke maintainer role.
+        Required for maintainer role requests. If left blank, the requestor's username will be used.
+        Ignored for team access requests and create new team.
+      placeholder: "github-username"
+    validations:
+      required: false
+
+  - type: input
+    id: repository
+    attributes:
+      label: Repository
+      description: >
+        Name of the repository to grant/remove team access.
+        Required for team access requests. Ignored for maintainer role requests and create new team.
+      placeholder: "mbb-web-portal"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: permission
+    attributes:
+      label: Permission Level
+      description: >
+        Permission level for team access to repository.
+        Only applicable for "Give team access to a repository". Defaults to "push" if not specified.
+      options:
+        - pull
+        - triage
+        - push
+        - maintain
+        - admin
+      default: 2
+    validations:
+      required: false
+
+  - type: textarea
+    id: justification
+    attributes:
+      label: Justification / Remark
+      description: Provide a justification or additional comments for this request
+      placeholder: |
+        - Reason for request:
+        - Additional context:
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Acknowledgment
+      description: Please confirm you understand the following
+      options:
+        - label: I understand that this request requires DevSecOps team approval
+          required: true
+        - label: I confirm that I am a member of this GitHub organization
+          required: true
