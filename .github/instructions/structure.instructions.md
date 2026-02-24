@@ -11,7 +11,6 @@ Provide project context and coding guidelines that AI should follow when generat
 - 🏢 GitHub Organization settings and policies
 - 📦 Repository creation and configuration management
 - 🔒 GitHub Advanced Security (GHAS) integration
-- 🤖 GitHub Copilot seat and policy management
 - 🔄 Multi-environment support (dev, staging, production)
 - 📝 YAML-based repository definitions for scalability
 
@@ -56,13 +55,6 @@ mbb-iac/
 │   │   ├── outputs.tf        # Module outputs
 │   │   ├── versions.tf       # Module version requirements
 │   │   └── README.md         # Module documentation
-│   │
-│   └── github-copilot/        # Copilot settings
-│       ├── main.tf           # Copilot configuration
-│       ├── variables.tf      # Module inputs
-│       ├── outputs.tf        # Module outputs
-│       ├── versions.tf       # Module version requirements
-│       └── README.md         # Module documentation
 │
 ├── environments/              # Environment-specific configurations
 │   ├── dev/
@@ -130,14 +122,6 @@ mbb-iac/
 - Manages Dependabot alerts and security updates
 - Controls vulnerability alerts
 - Sets security policies per repository
-
-### github-copilot
-
-- Manages Copilot organization settings
-- Controls seat assignments for teams and users
-- Configures content exclusions
-- Sets policy mode and feature flags (IDE chat, CLI)
-- Manages public code suggestion settings
 
 ## Configuration Patterns
 
@@ -241,7 +225,6 @@ The project outputs:
 - `repository_source`: Whether repos come from "yaml" or "tfvars"
 - `repository_count`: Total number of managed repositories
 - `repositories`: Map of repository details (full_name, html_url, ssh_url)
-- `copilot_seats`: Copilot seat assignments (sensitive)
 
 ## Development Guidelines
 
@@ -302,24 +285,5 @@ organization = {
   description                     = "Organization Description"
   default_repository_permission   = "read"
   members_can_create_repositories = false
-}
-```
-
-### Enabling Copilot
-
-Edit `environments/{env}/terraform.tfvars`:
-
-```hcl
-copilot_config = {
-  enabled                 = true
-  public_code_suggestions = "disabled"
-  ide_chat_enabled        = true
-  cli_enabled             = true
-  policy_mode             = "enabled"
-  seat_assignments = {
-    teams = ["engineering", "platform"]
-    users = ["user@example.com"]
-  }
-  content_exclusions = ["*.env", "secrets/*"]
 }
 ```

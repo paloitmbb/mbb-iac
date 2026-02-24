@@ -51,19 +51,3 @@ module "github_repositories" {
 
   depends_on = [module.github_organization]
 }
-
-# Copilot Configuration
-module "github_copilot" {
-  source = "./modules/github-copilot"
-
-  organization_name       = var.organization.name
-  copilot_enabled         = var.copilot_config.enabled
-  public_code_suggestions = var.copilot_config.public_code_suggestions
-  ide_chat_enabled        = var.copilot_config.ide_chat_enabled
-  cli_enabled             = var.copilot_config.cli_enabled
-  policy_mode             = var.copilot_config.policy_mode
-  seat_assignments        = var.copilot_config.seat_assignments
-  content_exclusions      = var.copilot_config.content_exclusions
-
-  depends_on = [module.github_organization]
-}

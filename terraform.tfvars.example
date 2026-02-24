@@ -66,28 +66,6 @@ ghas_config = {
   }
 }
 
-# Copilot Configuration
-copilot_config = {
-  enabled                 = true
-  public_code_suggestions = "disabled"
-  ide_chat_enabled        = true
-  cli_enabled             = true
-  policy_mode             = "enabled"
-
-  seat_assignments = {
-    teams = ["engineering"]
-    users = ["admin@example.com"]
-  }
-
-  content_exclusions = [
-    "*.env",
-    "*.key",
-    "*.pem",
-    "secrets/*",
-    "credentials/*"
-  ]
-}
-
 # Teams Configuration
 teams = [
   {
