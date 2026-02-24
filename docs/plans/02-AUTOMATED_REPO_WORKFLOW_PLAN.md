@@ -992,8 +992,6 @@ jobs:
 
 - [ ] Deploy to dev environment
 - [ ] Run full test suite in dev
-- [ ] Deploy to staging environment
-- [ ] Run smoke tests in staging
 - [ ] Deploy to production environment
 - [ ] Monitor first few production requests
 
@@ -1019,15 +1017,9 @@ jobs:
 2. **Day 3:** Fix identified issues
 3. **Day 4-5:** Regression testing and documentation
 
-### 6.4 Staging Deployment (Week 4)
+### 6.4 Production Deployment (Week 4)
 
-1. **Day 1:** Deploy to staging environment
-2. **Day 2-3:** Run full test suite in staging
-3. **Day 4-5:** User acceptance testing with DevSecOps team
-
-### 6.5 Production Deployment (Week 5)
-
-1. **Day 1:** Production deployment during maintenance window
+1. **Day 1:** Deploy to production environment
 2. **Day 2-3:** Monitor first production requests
 3. **Day 4-5:** Gather feedback and create iteration backlog
 
