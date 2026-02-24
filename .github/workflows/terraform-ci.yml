@@ -89,8 +89,8 @@ jobs:
       tflint-version: 'v0.60.0'
 
       # Security Scanning
-      enable-tfsec: true
-      enable-trivy: true
+      enable-tfsec: ${{ github.event_name != 'workflow_dispatch' || inputs.enable-tfsec }}
+      enable-trivy: ${{ github.event_name != 'workflow_dispatch' || inputs.enable-trivy }}
       tfsec-severity: ${{ inputs.tfsec-severity || 'CRITICAL' }}
       trivy-severity: ${{ inputs.trivy-severity || 'HIGH' }}
 
