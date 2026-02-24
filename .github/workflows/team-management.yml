@@ -55,9 +55,10 @@ jobs:
             }
 
             core.setOutput('request-type', requestType);
-            core.setOutput('team-name', teamName);
+            // Slugify team name and repository to avoid capitalisation mismatch with GitHub slugs
+            core.setOutput('team-name', teamName ? teamName.toLowerCase().replace(/\s+/g, '-') : '');
             core.setOutput('team-maintainer', teamMaintainer || '');
-            core.setOutput('repository', repository || '');
+            core.setOutput('repository', repository ? repository.toLowerCase().replace(/\s+/g, '-') : '');
             core.setOutput('permission', permission);
             core.setOutput('justification', justification);
 
@@ -403,18 +404,22 @@ jobs:
                 break;
 
               // ── Request 5: Create new team ──
-              case 'Create new team':
-                await github.rest.teams.create({
+              case 'Create new team': {
+                const createResponse = await github.rest.teams.create({
                   org,
                   name: teamName,
                   privacy: 'closed',
                 });
 
+                // Use the slug returned by the API — it may differ from the provided name
+                // (e.g. spaces → hyphens, uppercase → lowercase, special chars stripped)
+                const createdSlug = createResponse.data.slug;
+
                 // Assign requestor as team maintainer
                 const requestor = context.payload.issue.user.login;
                 await github.rest.teams.addOrUpdateMembershipForUserInOrg({
                   org,
-                  team_slug: teamName,
+                  team_slug: createdSlug,
                   username: requestor,
                   role: 'maintainer',
                 });
@@ -423,7 +428,7 @@ jobs:
                 if (hasSpecifiedMaintainer && teamMaintainer !== requestor) {
                   await github.rest.teams.addOrUpdateMembershipForUserInOrg({
                     org,
-                    team_slug: teamName,
+                    team_slug: createdSlug,
                     username: teamMaintainer,
                     role: 'maintainer',
                   });
@@ -434,9 +439,10 @@ jobs:
                   : '';
                 result = {
                   action: 'Created new team',
-                  details: `Team \`${teamName}\` created. User \`@${requestor}\` assigned as **maintainer**${extraMaintainerNote}.`,
+                  details: `Team \`${teamName}\` created (slug: \`${createdSlug}\`). User \`@${requestor}\` assigned as **maintainer**${extraMaintainerNote}.`,
                 };
                 break;
+              }
 
               default:
                 throw new Error(`Unknown request type: ${requestType}`);

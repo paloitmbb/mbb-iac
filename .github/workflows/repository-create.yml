@@ -24,7 +24,7 @@ jobs:
     if: contains(github.event.issue.labels.*.name, 'repo-request')
     outputs:
       # Parsed fields
-      repo-name: ${{ steps.parse.outputs.repo-name }}
+      repo-name: ${{ steps.compute-tech-stack.outputs.repo-name }}
       tech-stack: ${{ steps.compute-tech-stack.outputs.final-tech-stack }}
       justification: ${{ steps.parse.outputs.justification }}
       teams: ${{ steps.parse.outputs.teams }}
@@ -74,6 +74,10 @@ jobs:
 
           echo "final-tech-stack=$FINAL_TECH_STACK" >> $GITHUB_OUTPUT
 
+          # Slugify repo name to avoid capitalisation mismatch
+          REPO_NAME="${{ steps.parse.outputs.repo-name }}"
+          echo "repo-name=$(echo "$REPO_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[[:space:]]\+/-/g')" >> $GITHUB_OUTPUT
+
       - name: Load default values from defaults.yaml
         id: load-defaults
         uses: paloitmbb/mbb-tf-actions/actions/github-load-defaults@main
@@ -86,7 +90,7 @@ jobs:
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           organization: ${{ github.repository_owner }}
-          repository-name: ${{ steps.parse.outputs.repo-name }}
+          repository-name: ${{ steps.compute-tech-stack.outputs.repo-name }}
           teams: ${{ steps.parse.outputs.teams }}
 
       - name: Build validation details
@@ -94,7 +98,7 @@ jobs:
         id: build-details
         shell: bash
         run: |
-          REPO_NAME="${{ steps.parse.outputs.repo-name }}"
+          REPO_NAME="${{ steps.compute-tech-stack.outputs.repo-name }}"
           TECH_STACK="${{ steps.compute-tech-stack.outputs.final-tech-stack }}"
           TEAMS="${{ steps.parse.outputs.teams }}"
           TEAMS_DISPLAY="${{ steps.validate.outputs.teams-display }}"
