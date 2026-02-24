@@ -10,11 +10,11 @@
 
 **Date:** 18 February 2026
 
-The project has been migrated from GitHub HTTP backend to Azure Blob Storage for the dev environment:
+The project has been migrated from GitHub HTTP backend to Azure Blob Storage for all environments:
 
 - ✅ **Dev Environment**: Now uses Azure Storage (`mbbtfstate/tfstate/github.terraform.tfstate`)
 - ✅ **OIDC Authentication**: Workflows use `azure/login@v2` for secretless authentication
-- ✅ **Backend Simplification**: Removed HTTP backend fallback logic from all scripts
+- ✅ **Backend Simplification**: Simplified all scripts to use Azure backend only
 - ✅ **Updated Configuration**: Backend configs reflect new Azure storage account names
 
 **Key Changes:**
@@ -51,12 +51,12 @@ All GitHub Actions workflows now use OIDC for Azure authentication:
 
 **Date:** 18 February 2026
 
-Removed HTTP backend fallback logic from all helper scripts:
+Simplified all helper scripts to use Azure backend only:
 
 - ✅ **scripts/init.sh**: Simplified to Azure-only backend detection
-- ✅ **scripts/apply.sh**: Removed GitHub release state recovery logic
-- ✅ **scripts/plan.sh**: Removed TF_HTTP_PASSWORD exports
-- ✅ **scripts/import-repos.sh**: Removed HTTP backend authentication
+- ✅ **scripts/apply.sh**: Removed legacy state recovery logic
+- ✅ **scripts/plan.sh**: Simplified for Azure backend
+- ✅ **scripts/import-repos.sh**: Updated to Azure authentication
 
 **Result:** 44 lines of legacy code removed across 4 scripts.
 

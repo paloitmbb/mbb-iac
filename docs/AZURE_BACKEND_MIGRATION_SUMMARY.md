@@ -2,62 +2,50 @@
 
 ## Overview
 
-This document summarizes the changes made to migrate the Terraform backend for the **dev environment** from GitHub Releases (HTTP backend) to Azure Blob Storage (azurerm backend).
+This document summarizes the changes made to migrate the Terraform backend for all environments from GitHub Releases (HTTP backend) to Azure Blob Storage (azurerm backend).
 
 **Date**: 2026-02-18
-**Scope**: Dev environment only
-**Status**: Configuration complete, pending migration execution
+**Scope**: All environments (dev, staging, production)
+**Status**: Configuration complete
 
 ## Changes Made
 
 ### 1. Backend Configuration (`versions.tf`)
 
-**Changed**: Backend type from `http` to `azurerm`
+**Changed**: Backend type to `azurerm`
 
-```diff
-- backend "http" {
--   # Configuration loaded from backend.tfvars
--   # Uses GitHub Releases for state storage
--   # and GitHub Issues API for state locking
-+ backend "azurerm" {
-+   # Configuration loaded from backend.tfvars
-+   # Uses Azure Blob Storage for state storage
-+   # and Azure Blob Lease for state locking
-  }
-```
-
-**Impact**: All environments now use the azurerm backend configuration structure. Staging and production can still use HTTP backend by specifying appropriate backend.tfvars.
-
-### 2. Dev Environment Backend Config (`environments/dev/backend.tfvars`)
-
-**Changed**: Replaced HTTP backend parameters with Azure Storage parameters
-
-**Before**:
 ```hcl
-address  = "https://github.com/paloitmbb/mbb-iac/releases/download/state-dev/terraform.tfstate"
-username = "terraform"
+backend "azurerm" {
+  # Configuration loaded from backend.tfvars
+  # Uses Azure Blob Storage for state storage
+  # and Azure Blob Lease for state locking
+}
 ```
 
-**After**:
+**Impact**: All environments use the azurerm backend configuration structure.
+
+### 2. Environment Backend Configs (`environments/{env}/backend.tfvars`)
+
+**Changed**: All environments now use Azure Storage parameters
+
 ```hcl
 resource_group_name  = "mbb"
 storage_account_name = "mbbtfstate"
 container_name       = "tfstate"
-key                  = "github.terraform.tfstate"
+key                  = "github.terraform.tfstate"  # unique key per environment
 ```
 
-**Impact**: Dev environment now requires Azure authentication instead of GitHub token.
+**Impact**: All environments require Azure authentication.
 
 ### 3. Init Script (`scripts/init.sh`)
 
-**Changed**: Added backend type detection and Azure authentication support
+**Changed**: Simplified to Azure-only backend support
 
 **New Features**:
-- Automatically detects backend type (Azure vs GitHub) based on backend.tfvars content
 - Validates Azure authentication (ARM_ACCESS_KEY, ARM_SAS_TOKEN, or Service Principal)
-- Maintains backward compatibility with GitHub HTTP backend for other environments
+- Uses Azure Blob Storage backend for all environments
 
-**Impact**: Script now supports both backend types seamlessly.
+**Impact**: Script now supports Azure backend authentication seamlessly.
 
 ### 4. GitHub Actions Workflows
 
@@ -85,7 +73,7 @@ ARM_USE_OIDC: true
 - `ARM_CLIENT_SECRET` - No longer needed with OIDC
 - GitHub-specific state recovery logic from terraform apply steps
 
-**Impact**: Workflows now use secretless OIDC authentication for Azure and support both Azure (dev) and GitHub (staging/production) backends.
+**Impact**: Workflows now use secretless OIDC authentication for Azure across all environments (dev, staging, production).
 
 ### 5. Documentation
 
@@ -94,8 +82,8 @@ ARM_USE_OIDC: true
 - `docs/AZURE_BACKEND_MIGRATION_SUMMARY.md` - This summary document
 
 **Updated**:
-- `README.md` - Added Azure backend configuration instructions
-- Updated Quick Start section to reflect dual backend support
+- `README.md` - Updated to reflect Azure-only backend configuration
+- Updated Quick Start section to reflect unified Azure backend support
 - Added backend configuration troubleshooting
 
 ## Migration Steps Required
@@ -183,16 +171,7 @@ gh secret set ARM_SUBSCRIPTION_ID --body "$SUBSCRIPTION_ID"
 gh secret set ARM_TENANT_ID --body "$(az account show --query tenantId -o tsv)"
 ```
 
-### 3. Backup Current State
-
-```bash
-# Download current state from GitHub (backup)
-curl -L -H "Authorization: token $GITHUB_TOKEN" \
-  "https://github.com/paloitmbb/mbb-iac/releases/download/state-dev/terraform.tfstate" \
-  -o terraform.tfstate.backup
-```
-
-### 4. Migrate State to Azure
+### 3. Migrate State to Azure
 
 ```bash
 # Set Azure authentication (for local migration)
@@ -212,7 +191,7 @@ terraform plan -var-file=environments/dev/terraform.tfvars
 
 **Note**: GitHub Actions will use OIDC authentication automatically (no secrets needed).
 
-### 5. Test the New Backend
+### 4. Test the New Backend
 
 ```bash
 # Run a plan to ensure everything works
@@ -226,13 +205,13 @@ terraform plan -var-file=environments/dev/terraform.tfvars
 
 | Environment | Backend Type | State Location | Status |
 |-------------|-------------|----------------|---------|
-| **dev** | Azure Blob Storage | `mbbtfstate/tfstate/github.terraform.tfstate` | ✅ Configured, pending migration |
-| **staging** | HTTP (GitHub) | GitHub Releases `state-staging` | ✅ No changes |
-| **production** | HTTP (GitHub) | GitHub Releases `state-production` | ✅ No changes |
+| **dev** | Azure Blob Storage | `mbbtfstate/tfstate/github.terraform.tfstate` | ✅ Configured |
+| **staging** | Azure Blob Storage | `mbbtfstate/tfstate/github-staging.terraform.tfstate` | ✅ Configured |
+| **production** | Azure Blob Storage | `mbbtfstate/tfstate/github-production.terraform.tfstate` | ✅ Configured |
 
 ## Required GitHub Secrets
 
-For GitHub Actions OIDC authentication with Azure (dev environment):
+For GitHub Actions OIDC authentication with Azure (all environments):
 
 | Secret | Purpose | Required |
 |--------|---------|----------|
@@ -245,7 +224,7 @@ For GitHub Actions OIDC authentication with Azure (dev environment):
 
 ## Benefits of Azure Backend
 
-### Advantages Over GitHub HTTP Backend
+### Advantages of Azure Backend
 
 1. **Native State Locking**: Automatic locking via Azure Blob Lease (no manual implementation needed)
 2. **Better Performance**: Faster state read/write operations
@@ -263,33 +242,12 @@ For GitHub Actions OIDC authentication with Azure (dev environment):
 - ✅ Faster state operations
 - ✅ No more manual state recovery logic in workflows
 
-## Rollback Plan
-
-If you need to rollback to GitHub backend:
-
-1. Restore `versions.tf`:
-   ```hcl
-   backend "http" { }
-   ```
-
-2. Restore `environments/dev/backend.tfvars`:
-   ```hcl
-   address  = "https://github.com/paloitmbb/mbb-iac/releases/download/state-dev/terraform.tfstate"
-   username = "terraform"
-   ```
-
-3. Re-initialize:
-   ```bash
-   terraform init -migrate-state -backend-config=environments/dev/backend.tfvars
-   ```
-
 ## Testing Checklist
 
 Before considering migration complete:
 
 - [ ] Azure resources created (resource group, storage account, container)
 - [ ] GitHub secrets configured (ARM_CLIENT_ID, etc.)
-- [ ] State backed up from GitHub
 - [ ] State migrated to Azure successfully
 - [ ] `terraform plan` runs successfully
 - [ ] `terraform apply` runs successfully
@@ -302,7 +260,6 @@ Before considering migration complete:
 For detailed setup and troubleshooting information, see:
 
 - [AZURE_BACKEND_SETUP.md](../AZURE_BACKEND_SETUP.md) - Complete Azure backend guide
-- [HTTP_BACKEND_SETUP.md](../HTTP_BACKEND_SETUP.md) - GitHub backend guide (staging/production)
 - [README.md](../README.md) - General project documentation
 
 ## Questions?
@@ -317,6 +274,4 @@ If you encounter issues or have questions:
 
 ## Summary
 
-This migration moves the dev environment to a more robust and enterprise-ready backend solution while maintaining the existing GitHub backend for staging and production environments. The changes are backward compatible and include comprehensive documentation and tooling support.
-
-**Next Steps**: Follow the migration steps above to complete the transition.
+All environments (dev, staging, production) use Azure Blob Storage as the Terraform backend. This provides a consistent, enterprise-ready solution with native state locking, versioning, and RBAC-based access control.

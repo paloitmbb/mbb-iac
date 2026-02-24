@@ -314,15 +314,11 @@ teams = [
 ### Backend Configuration: `environments/{env}/backend.tfvars`
 
 ```hcl
-# HTTP Backend with GitHub Releases
-address        = "https://github.com/paloitmbb/mbb-iac/releases/download/state-dev/terraform.tfstate"
-lock_address   = "https://api.github.com/repos/paloitmbb/mbb-iac/issues"
-unlock_address = "https://api.github.com/repos/paloitmbb/mbb-iac/issues"
-username       = "terraform"
-password       = "${GITHUB_TOKEN}"  # Set via environment variable
-
-# Note: State is stored as GitHub Release assets
-# Lock is managed via GitHub Issues API
+# Azure Storage Backend
+resource_group_name  = "mbb"
+storage_account_name = "mbbtfstate"
+container_name       = "tfstate"
+key                  = "github.terraform.tfstate"
 ```
 
 ## Implementation Steps
@@ -343,10 +339,10 @@ password       = "${GITHUB_TOKEN}"  # Set via environment variable
    - Set up branch protection rules
 
 3. **Configure Backend**
-   - Set up HTTP backend with GitHub Releases
-   - Create initial state release (automated by init script)
-   - Configure state locking via GitHub Issues API
-   - Test backend connectivity with GITHUB_TOKEN
+   - Set up Azure Blob Storage backend
+   - Create Azure resource group and storage account
+   - Configure state locking via Azure Blob Lease
+   - Test backend connectivity with Azure credentials
 
 4. **Authentication Setup**
    - Generate GitHub Personal Access Token or App credentials
@@ -453,10 +449,10 @@ terraform {
     }
   }
 
-  backend "http" {
+  backend "azurerm" {
     # Configuration loaded from backend.tfvars
-    # Uses GitHub Releases for state storage
-    # and GitHub Issues API for state locking
+    # Uses Azure Blob Storage for state storage
+    # and Azure Blob Lease for state locking
   }
 }
 
@@ -588,11 +584,11 @@ module "github_copilot" {
 
 ### State Management
 
-- State stored as GitHub Release assets (encrypted in transit via HTTPS)
-- State locking via GitHub Issues API
-- Automatic state versioning through GitHub Releases
-- Access controls via GitHub repository permissions
-- State backup through Release history
+- State stored in Azure Blob Storage (encrypted in transit via HTTPS)
+- State locking via Azure Blob Lease
+- Automatic state versioning through Azure Blob versioning
+- Access controls via Azure RBAC
+- State backup through Azure Blob soft delete
 
 ### Secrets Management
 
@@ -1058,7 +1054,6 @@ jobs:
           terraform init -backend-config=backend.tfvars
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
-          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_PAT }}
 
       - name: Terraform Validate
         run: |
@@ -1364,9 +1359,11 @@ Configure these secrets in your GitHub repository settings:
 ```bash
 # GitHub Personal Access Token or App credentials
 GITHUB_PAT         # Token with repo, workflow, admin:org permissions
-                   # Also used for HTTP backend state storage
 
-# Note: No AWS credentials needed - state stored in GitHub Releases
+# Azure credentials for backend state storage
+ARM_CLIENT_ID      # Azure Service Principal Application ID
+ARM_SUBSCRIPTION_ID # Azure Subscription ID
+ARM_TENANT_ID      # Azure AD Tenant ID
 ```
 
 ### Environment Protection Rules
