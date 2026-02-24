@@ -15,24 +15,6 @@ variable "organization" {
   })
 }
 
-variable "organization_secrets" {
-  description = "Organization-level secrets"
-  type = map(object({
-    value      = string
-    visibility = string
-  }))
-  default = {}
-}
-
-variable "organization_variables" {
-  description = "Organization-level variables"
-  type = map(object({
-    value      = string
-    visibility = string
-  }))
-  default = {}
-}
-
 variable "repositories" {
   description = "List of repositories to manage"
   type = list(object({
@@ -65,12 +47,6 @@ variable "repositories" {
     teams = optional(list(object({
       team       = string
       permission = string
-    })))
-    secrets = optional(map(object({
-      value = string
-    })))
-    variables = optional(map(object({
-      value = string
     })))
   }))
   default = []

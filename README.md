@@ -211,7 +211,7 @@ See [How to Request a Repository](docs/HOW_TO_REQUEST_REPOSITORY.md) for detaile
 
 ### github-organization
 
-Manages organization-level settings, secrets, and variables.
+Manages organization-level settings.
 
 [Documentation](modules/github-organization/README.md)
 

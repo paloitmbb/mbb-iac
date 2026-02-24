@@ -44,7 +44,7 @@ mbb-iac/
 │   │   └── README.md         # Module documentation
 │   │
 │   ├── github-repository/     # Repository management
-│   │   ├── main.tf           # Repository, branches, teams, secrets
+│   │   ├── main.tf           # Repository, branches, teams
 │   │   ├── variables.tf      # Module inputs
 │   │   ├── outputs.tf        # Module outputs
 │   │   ├── versions.tf       # Module version requirements
@@ -113,7 +113,6 @@ mbb-iac/
 
 - Manages organization-level settings (billing email, company info, description)
 - Controls default repository permissions
-- Configures organization-wide secrets and variables
 - Sets member creation permissions
 
 ### github-repository
@@ -121,7 +120,6 @@ mbb-iac/
 - Creates and configures repositories with customizable settings
 - Implements branch protection rules
 - Manages team access and permissions
-- Handles repository secrets and variables
 - Configures repository features (issues, projects, wiki)
 - Sets up topics and default branches
 

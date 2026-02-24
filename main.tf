@@ -26,8 +26,6 @@ module "github_organization" {
   description                     = var.organization.description
   default_repository_permission   = var.organization.default_repository_permission
   members_can_create_repositories = var.organization.members_can_create_repositories
-  organization_secrets            = var.organization_secrets
-  organization_variables          = var.organization_variables
 }
 
 # Repository Management
