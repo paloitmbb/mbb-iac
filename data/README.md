@@ -49,12 +49,6 @@ repositories:
     teams:
       - team: team-name
         permission: pull|push|admin|maintain|triage
-    secrets:
-      SECRET_NAME:
-        description: Secret description
-    variables:
-      VARIABLE_NAME:
-        value: variable-value
 ```
 
 ## How It Works
@@ -143,4 +137,3 @@ terraform validate
 - YAML file is optional - tfvars approach still works
 - If both exist, tfvars takes precedence
 - Schema must match the Terraform variable type definition
-- Sensitive values should still use environment variables or secret managers

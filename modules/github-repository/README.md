@@ -8,7 +8,6 @@ This module manages GitHub repository creation and configuration.
 - Branch protection rules
 - Team access management
 - Repository webhooks
-- Repository secrets and variables
 - GitHub Pages configuration
 
 ## Usage

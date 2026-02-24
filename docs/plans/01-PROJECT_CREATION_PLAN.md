@@ -86,8 +86,6 @@ Manages organization-level settings and configurations.
 - `description` - Organization description
 - `default_repository_permission` - Default permission level for organization members
 - `members_can_create_repositories` - Whether members can create repositories
-- `organization_secrets` - Organization-level secrets
-- `organization_variables` - Organization-level variables
 
 **Example Usage:**
 
@@ -101,8 +99,6 @@ module "github_organization" {
   description                        = var.organization.description
   default_repository_permission      = var.organization.default_repository_permission
   members_can_create_repositories    = var.organization.members_can_create_repositories
-  organization_secrets               = var.organization_secrets
-  organization_variables             = var.organization_variables
 }
 ```
 
@@ -116,7 +112,6 @@ Creates and manages repository configurations.
 - Branch protection rules
 - Repository collaborators/teams
 - Repository webhooks
-- Repository secrets/variables
 - Deploy keys
 - Repository topics and settings
 
@@ -255,22 +250,6 @@ organization = {
   description                     = "Paloitmbb GitHub Organization"
   default_repository_permission   = "read"
   members_can_create_repositories = false
-}
-
-# Organization-level Secrets (reference to secret management)
-organization_secrets = {
-  AWS_ACCESS_KEY_ID = {
-    description = "AWS Access Key for CI/CD"
-    visibility  = "all"  # all, private, selected
-  }
-}
-
-# Organization-level Variables
-organization_variables = {
-  DEFAULT_REGION = {
-    value      = "ap-southeast-1"
-    visibility = "all"
-  }
 }
 
 # Repositories Configuration
@@ -511,8 +490,6 @@ module "github_organization" {
   description                     = var.organization.description
   default_repository_permission   = var.organization.default_repository_permission
   members_can_create_repositories = var.organization.members_can_create_repositories
-  organization_secrets            = var.organization_secrets
-  organization_variables          = var.organization_variables
 }
 
 # Repository Management

@@ -10,22 +10,6 @@ organization = {
   members_can_create_repositories = false
 }
 
-# Organization-level Secrets (reference to secret management)
-organization_secrets = {
-  AWS_ACCESS_KEY_ID = {
-    description = "AWS Access Key for CI/CD"
-    visibility  = "all" # all, private, selected
-  }
-}
-
-# Organization-level Variables
-organization_variables = {
-  DEFAULT_REGION = {
-    value      = "us-east-1"
-    visibility = "all"
-  }
-}
-
 # Repositories Configuration
 repositories = [
   {
@@ -67,10 +51,6 @@ repositories = [
         permission = "push"
       }
     ]
-
-    secrets = {}
-
-    variables = {}
   }
 ]
 

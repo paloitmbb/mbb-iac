@@ -52,7 +52,7 @@ All modules use the same version constraints to ensure consistency.
 
 The project follows a modular architecture with four core modules:
 
-1. **github-organization** - Organization-level settings and secrets
+1. **github-organization** - Organization-level settings
 2. **github-repository** - Repository creation and configuration
 3. **github-security** - GHAS and security features (standalone, currently unused)
 4. **github-copilot** - Copilot seat management and policies
@@ -180,12 +180,6 @@ repositories:
     teams: # Optional: team access
       - team: team-slug
         permission: push
-    secrets: # Optional: repository secrets
-      SECRET_KEY:
-        description: "Secret description"
-    variables: # Optional: repository variables
-      VAR_KEY:
-        value: "variable-value"
 ```
 
 ### Local Values
@@ -205,8 +199,6 @@ locals {
   # Normalize YAML repositories
   yaml_repositories = [
     for repo in local.repositories_data.repositories : merge(repo, {
-      secrets   = try(repo.secrets, null)
-      variables = try(repo.variables, null)
       security  = try(repo.security, null)
     })
   ]
