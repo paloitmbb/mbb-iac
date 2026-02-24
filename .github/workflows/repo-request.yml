@@ -58,7 +58,8 @@ jobs:
             const finalTechStack = techStack === 'Others (specify below)' ? techStackOther : techStack;
 
             // Set outputs (only required fields)
-            core.setOutput('repo-name', repoName);
+            // Slugify repo name to avoid capitalisation mismatch
+            core.setOutput('repo-name', repoName ? repoName.toLowerCase().replace(/\s+/g, '-') : '');
             core.setOutput('tech-stack', finalTechStack);
             core.setOutput('justification', justification);
             core.setOutput('teams', teams);
@@ -104,7 +105,8 @@ jobs:
             const teamList = teamsString
               .split(',')
               .map(t => t.trim())
-              .filter(t => t && t !== '_No response_');
+              .filter(t => t && t !== '_No response_')
+              .map(t => t.toLowerCase().replace(/\s+/g, '-'));
 
             console.log(`🔍 Validating teams in organization: ${context.repo.owner}`);
             console.log(`📋 Teams to validate: ${teamList.length > 0 ? teamList.join(', ') : 'None (team access is optional)'}`);

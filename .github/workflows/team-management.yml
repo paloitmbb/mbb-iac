@@ -55,9 +55,10 @@ jobs:
             }
 
             core.setOutput('request-type', requestType);
-            core.setOutput('team-name', teamName);
+            // Slugify team name and repository to avoid capitalisation mismatch with GitHub slugs
+            core.setOutput('team-name', teamName ? teamName.toLowerCase().replace(/\s+/g, '-') : '');
             core.setOutput('team-maintainer', teamMaintainer || '');
-            core.setOutput('repository', repository || '');
+            core.setOutput('repository', repository ? repository.toLowerCase().replace(/\s+/g, '-') : '');
             core.setOutput('permission', permission);
             core.setOutput('justification', justification);
 
