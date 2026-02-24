@@ -50,6 +50,6 @@ module "admin_team" {
 
 ## Requirements
 
-- Terraform >= 1.5.7
+- Terraform >= 1.14.5
 - GitHub Provider ~> 6.0
 - GitHub token with `admin:org` permissions

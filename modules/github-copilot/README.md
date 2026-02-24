@@ -42,7 +42,7 @@ module "copilot" {
 
 | Name      | Version  |
 | --------- | -------- |
-| terraform | >= 1.6.0 |
+| terraform | >= 1.14.5 |
 | github    | ~> 6.0   |
 
 ## Inputs
