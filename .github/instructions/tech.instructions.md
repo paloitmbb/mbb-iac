@@ -227,7 +227,7 @@ export GITHUB_TOKEN="ghp_xxxxxxxxxxxxxxxxxxxx"
 
 ```hcl
 provider "github" {
-  owner = var.organization_name
+  owner = var.organization.name
   # Token read from GITHUB_TOKEN environment variable
 }
 ```

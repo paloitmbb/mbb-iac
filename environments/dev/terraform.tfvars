@@ -1,7 +1,5 @@
 # Development Environment Configuration
 
-organization_name = "paloitmbb"
-
 organization = {
   name                            = "paloitmbb"
   billing_email                   = "zang@palo-it.com"

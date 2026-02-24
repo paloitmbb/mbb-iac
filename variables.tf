@@ -1,8 +1,3 @@
-variable "organization_name" {
-  description = "Name of the GitHub organization"
-  type        = string
-}
-
 variable "organization" {
   description = "Organization configuration"
   type = object({
