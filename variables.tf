@@ -44,10 +44,6 @@ variable "repositories" {
       require_signed_commits          = bool
       enforce_admins                  = bool
     }))
-    teams = optional(list(object({
-      team       = string
-      permission = string
-    })))
   }))
   default = []
 }
@@ -63,16 +59,4 @@ variable "ghas_config" {
       enable_dependency_graph  = bool
     })
   })
-}
-
-variable "teams" {
-  description = "GitHub teams configuration"
-  type = list(object({
-    name        = string
-    description = string
-    privacy     = string
-    members     = list(string)
-    maintainers = list(string)
-  }))
-  default = []
 }

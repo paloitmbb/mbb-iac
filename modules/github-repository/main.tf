@@ -92,16 +92,6 @@ resource "github_branch_protection" "this" {
   depends_on = [github_repository.this]
 }
 
-resource "github_team_repository" "this" {
-  for_each = var.teams != null ? { for team in var.teams : team.team => team } : {}
-
-  team_id    = each.value.team
-  repository = github_repository.this.name
-  permission = each.value.permission
-
-  depends_on = [github_repository.this]
-}
-
 resource "github_repository_webhook" "this" {
   for_each = var.webhooks != null ? { for idx, webhook in var.webhooks : idx => webhook } : {}
 

@@ -6,7 +6,6 @@ This module manages GitHub repository creation and configuration.
 
 - Repository creation with customizable settings
 - Branch protection rules
-- Team access management
 - Repository webhooks
 - GitHub Pages configuration
 
@@ -33,13 +32,6 @@ module "repository" {
     require_code_owner_reviews      = true
     dismiss_stale_reviews           = true
   }
-
-  teams = [
-    {
-      team       = "engineering"
-      permission = "push"
-    }
-  ]
 }
 ```
 
