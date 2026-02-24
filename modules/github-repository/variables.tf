@@ -139,15 +139,6 @@ variable "branch_protection_rules" {
   default = null
 }
 
-variable "teams" {
-  description = "Teams with access to the repository"
-  type = list(object({
-    team       = string
-    permission = string
-  }))
-  default = []
-}
-
 variable "webhooks" {
   description = "Repository webhooks"
   type = list(object({

@@ -8,7 +8,6 @@ locals {
     for repo in local.repositories_data.repositories : merge(repo, {
       security          = try(repo.security, null)
       branch_protection = try(repo.branch_protection, null)
-      teams             = try(repo.teams, null)
     })
   ]
 
@@ -42,7 +41,6 @@ module "github_repositories" {
   default_branch          = each.value.default_branch
   topics                  = each.value.topics
   branch_protection_rules = each.value.branch_protection
-  teams                   = each.value.teams
 
   # Security settings
   enable_advanced_security               = try(each.value.security.enable_advanced_security, false)

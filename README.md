@@ -171,13 +171,13 @@ Create repositories via GitHub Issues:
 
 1. Go to **Issues** → **New Issue**
 2. Select **New Repository Request** template
-3. Fill in repository details and specify existing teams
+3. Fill in repository details
 4. Submit issue
-5. Validation runs automatically (checks team existence)
+5. Validation runs automatically
 6. DevSecOps team approves request
 7. Automated PR is created with configuration
 8. Review and merge PR
-9. Run Terraform to create repository and grant team access
+9. Run Terraform to create repository
 
 See [How to Request a Repository](docs/HOW_TO_REQUEST_REPOSITORY.md) for detailed instructions.
 
@@ -200,7 +200,7 @@ Manages organization-level settings.
 
 ### github-repository
 
-Creates and configures repositories with branch protection, team access, and webhooks.
+Creates and configures repositories with branch protection and webhooks.
 
 [Documentation](modules/github-repository/README.md)
 

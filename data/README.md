@@ -46,9 +46,6 @@ repositories:
       dismiss_stale_reviews: true|false
       require_signed_commits: true|false
       enforce_admins: true|false
-    teams:
-      - team: team-name
-        permission: pull|push|admin|maintain|triage
 ```
 
 ## How It Works

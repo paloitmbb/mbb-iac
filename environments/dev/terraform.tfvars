@@ -22,5 +22,3 @@ ghas_config = {
     enable_dependency_graph  = true
   }
 }
-
-teams = []
