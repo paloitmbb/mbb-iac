@@ -11,7 +11,7 @@ Provide project context and coding guidelines that AI should follow when generat
 - 🏢 GitHub Organization settings and policies
 - 📦 Repository creation and configuration management
 - 🔒 GitHub Advanced Security (GHAS) integration
-- 🔄 Multi-environment support (dev, staging, production)
+- 🔄 Multi-environment support (dev and production)
 - 📝 YAML-based repository definitions for scalability
 
 ## Project Structure
@@ -60,11 +60,6 @@ mbb-iac/
 │   ├── dev/
 │   │   ├── terraform.tfvars  # Development variable values
 │   │   ├── backend.tfvars    # Development backend config
-│   │   └── README.md         # Environment-specific docs
-│   │
-│   ├── staging/
-│   │   ├── terraform.tfvars  # Staging variable values
-│   │   ├── backend.tfvars    # Staging backend config
 │   │   └── README.md         # Environment-specific docs
 │   │
 │   └── production/
@@ -152,19 +147,19 @@ All scripts are located in `scripts/` and should be executed from the project ro
 - **init.sh**: Initializes Terraform with environment-specific backend
 
   ```bash
-  ./scripts/init.sh [dev|staging|production]
+  ./scripts/init.sh [dev|production]
   ```
 
 - **plan.sh**: Generates execution plan for review
 
   ```bash
-  ./scripts/plan.sh [dev|staging|production]
+  ./scripts/plan.sh [dev|production]
   ```
 
 - **apply.sh**: Applies infrastructure changes
 
   ```bash
-  ./scripts/apply.sh [dev|staging|production]
+  ./scripts/apply.sh [dev|production]
   ```
 
 - **validate.sh**: Validates Terraform configuration
@@ -231,7 +226,7 @@ The project outputs:
 When working with this codebase:
 
 1. **Always use scripts** for Terraform operations (init, plan, apply)
-2. **Test in dev** environment before staging/production
+2. **Test in dev** environment before production
 3. **Follow conventional commits** (see git.instructions.md)
 4. **Validate** configuration before committing
 5. **Document** module changes in respective README files

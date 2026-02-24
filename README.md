@@ -12,7 +12,6 @@ mbb-iac/
 │   └── github-security/     # GHAS configuration
 ├── environments/            # Environment-specific configs
 │   ├── dev/
-│   ├── staging/
 │   └── production/
 ├── scripts/                 # Helper scripts
 └── .github/                 # GitHub workflows and templates
@@ -24,7 +23,7 @@ mbb-iac/
 - 📦 **Repository Management**: Standardized repository creation and configuration
 - 🔒 **Security**: GitHub Advanced Security (GHAS) integration
 - 🔄 **GitOps**: Automated repository creation via GitHub Issues
-- 🌍 **Multi-Environment**: Separate configurations for dev, staging, and production
+- 🌍 **Multi-Environment**: Separate configurations for dev and production
 - ☁️ **Flexible Backend**: Azure Storage for state management across all environments
 
 ## Prerequisites

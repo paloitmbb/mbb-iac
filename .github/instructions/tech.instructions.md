@@ -261,9 +261,9 @@ Before first initialization, ensure Azure resources exist:
 **Always use scripts** from project root:
 
 ```bash
-./scripts/init.sh [dev|staging|production]    # Initialize with backend
-./scripts/plan.sh [dev|staging|production]    # Preview changes
-./scripts/apply.sh [dev|staging|production]   # Apply changes
+./scripts/init.sh [dev|production]    # Initialize with backend
+./scripts/plan.sh [dev|production]    # Preview changes
+./scripts/apply.sh [dev|production]   # Apply changes
 ./scripts/validate.sh                         # Validate syntax
 ```
 
@@ -288,13 +288,13 @@ Each environment directory must contain:
 
 ```bash
 # Initialize for specific environment
-./scripts/init.sh staging
+./scripts/init.sh production
 
 # Plan for that environment
-./scripts/plan.sh staging
+./scripts/plan.sh production
 
 # Apply to that environment
-./scripts/apply.sh staging
+./scripts/apply.sh production
 ```
 
 ## Module Development
@@ -429,7 +429,7 @@ terraform validate
 2. **Review plan output** carefully
 3. **Apply incrementally** for large changes
 4. **Verify resources** in GitHub UI
-5. **Promote to staging/production** after validation
+5. **Promote to production** after validation
 
 ## Error Handling
 
@@ -515,7 +515,7 @@ Recommended CI/CD pipeline:
 
 1. **On PR**: Run `terraform fmt -check`, `validate`, and `plan`
 2. **On merge to main**: Auto-apply to dev environment
-3. **Manual approval**: Promote to staging/production
+3. **Manual approval**: Promote to production
 
 ### GitHub Actions Security
 

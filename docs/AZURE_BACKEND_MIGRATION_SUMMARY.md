@@ -5,7 +5,7 @@
 This document summarizes the changes made to migrate the Terraform backend for all environments from GitHub Releases (HTTP backend) to Azure Blob Storage (azurerm backend).
 
 **Date**: 2026-02-18
-**Scope**: All environments (dev, staging, production)
+**Scope**: All environments (dev, production)
 **Status**: Configuration complete
 
 ## Changes Made
@@ -73,7 +73,7 @@ ARM_USE_OIDC: true
 - `ARM_CLIENT_SECRET` - No longer needed with OIDC
 - GitHub-specific state recovery logic from terraform apply steps
 
-**Impact**: Workflows now use secretless OIDC authentication for Azure across all environments (dev, staging, production).
+**Impact**: Workflows now use secretless OIDC authentication for Azure across all environments (dev, production).
 
 ### 5. Documentation
 
@@ -206,7 +206,6 @@ terraform plan -var-file=environments/dev/terraform.tfvars
 | Environment | Backend Type | State Location | Status |
 |-------------|-------------|----------------|---------|
 | **dev** | Azure Blob Storage | `mbbtfstate/tfstate/github.terraform.tfstate` | ✅ Configured |
-| **staging** | Azure Blob Storage | `mbbtfstate/tfstate/github-staging.terraform.tfstate` | ✅ Configured |
 | **production** | Azure Blob Storage | `mbbtfstate/tfstate/github-production.terraform.tfstate` | ✅ Configured |
 
 ## Required GitHub Secrets
@@ -274,4 +273,4 @@ If you encounter issues or have questions:
 
 ## Summary
 
-All environments (dev, staging, production) use Azure Blob Storage as the Terraform backend. This provides a consistent, enterprise-ready solution with native state locking, versioning, and RBAC-based access control.
+All environments (dev, production) use Azure Blob Storage as the Terraform backend. This provides a consistent, enterprise-ready solution with native state locking, versioning, and RBAC-based access control.

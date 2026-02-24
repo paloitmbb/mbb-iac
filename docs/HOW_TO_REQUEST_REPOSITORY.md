@@ -71,7 +71,6 @@ Select the **"New Repository Request"** template.
 **Target Environment** (required)
 
 - `dev` - Development environment (recommended for new repos)
-- `staging` - Staging environment
 - `production` - Production environment
 
 **Repository Features**

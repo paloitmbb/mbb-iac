@@ -21,10 +21,6 @@ mbb-iac/
 │   │   ├── terraform.tfvars
 │   │   ├── backend.tfvars
 │   │   └── README.md
-│   ├── staging/
-│   │   ├── terraform.tfvars
-│   │   ├── backend.tfvars
-│   │   └── README.md
 │   └── production/
 │       ├── terraform.tfvars
 │       ├── backend.tfvars
@@ -329,7 +325,7 @@ key                  = "github.terraform.tfstate"
 
    ```bash
    mkdir -p modules/{github-organization,github-repository,github-security,github-copilot}
-   mkdir -p environments/{dev,staging,production}
+   mkdir -p environments/{dev,production}
    mkdir -p data scripts
    ```
 
@@ -394,7 +390,6 @@ key                  = "github.terraform.tfstate"
 
 2. **Environment Configuration**
    - Create dev environment tfvars
-   - Create staging environment tfvars
    - Create production environment tfvars
    - Document environment differences
 
@@ -717,7 +712,6 @@ body:
       description: Which environment to create this in
       options:
         - dev
-        - staging
         - production
     validations:
       required: true
@@ -1037,7 +1031,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        environment: [dev, staging, production]
+        environment: [dev, production]
 
     steps:
       - name: Checkout
@@ -1167,7 +1161,6 @@ on:
         type: choice
         options:
           - dev
-          - staging
           - production
 
 permissions:
@@ -1196,7 +1189,7 @@ jobs:
             CHANGED_FILES=$(git diff --name-only HEAD^ HEAD)
             ENVIRONMENTS=()
 
-            for env in dev staging production; do
+            for env in dev production; do
               if echo "$CHANGED_FILES" | grep -q "environments/${env}/"; then
                 ENVIRONMENTS+=("\"$env\"")
               fi
@@ -1371,8 +1364,7 @@ ARM_TENANT_ID      # Azure AD Tenant ID
 Configure environment protection rules in GitHub:
 
 1. **Development**: No protection, auto-deploy
-2. **Staging**: Require 1 reviewer
-3. **Production**: Require 2 reviewers, delay timer
+2. **Production**: Require 2 reviewers, delay timer
 
 ### Usage Example
 
