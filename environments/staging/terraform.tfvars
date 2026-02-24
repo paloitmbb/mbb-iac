@@ -1,7 +1,5 @@
 # Staging Environment Configuration
 
-organization_name = "your-github-org"
-
 organization = {
   name                            = "your-github-org"
   billing_email                   = "billing@example.com"
