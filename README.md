@@ -1,6 +1,6 @@
 # Paloitmbb GitHub Infrastructure as Code
 
-Terraform project for managing GitHub organization, repositories, GitHub Advanced Security (GHAS), and GitHub Copilot configurations.
+Terraform project for managing GitHub organization, repositories, and GitHub Advanced Security (GHAS) configurations.
 
 ## Project Structure
 
@@ -9,8 +9,7 @@ mbb-iac/
 ├── modules/                 # Reusable Terraform modules
 │   ├── github-organization/ # Organization settings
 │   ├── github-repository/   # Repository management
-│   ├── github-security/     # GHAS configuration
-│   └── github-copilot/      # Copilot settings
+│   └── github-security/     # GHAS configuration
 ├── environments/            # Environment-specific configs
 │   ├── dev/
 │   ├── staging/
@@ -24,7 +23,6 @@ mbb-iac/
 - 🏢 **Organization Management**: Centralized organization settings and policies
 - 📦 **Repository Management**: Standardized repository creation and configuration
 - 🔒 **Security**: GitHub Advanced Security (GHAS) integration
-- 🤖 **Copilot**: GitHub Copilot seat and policy management
 - 🔄 **GitOps**: Automated repository creation via GitHub Issues
 - 🌍 **Multi-Environment**: Separate configurations for dev, staging, and production
 - ☁️ **Flexible Backend**: Azure Storage (dev) and GitHub Releases (staging/production)
@@ -227,12 +225,6 @@ Manages GHAS features including secret scanning, Dependabot, and code scanning.
 
 [Documentation](modules/github-security/README.md)
 
-### github-copilot
-
-Configures GitHub Copilot organization settings and seat assignments.
-
-[Documentation](modules/github-copilot/README.md)
-
 ## Security Best Practices
 
 - ✅ Never commit secrets or tokens to version control
@@ -308,4 +300,3 @@ Internal use only - Paloitmbb
 
 - [Terraform GitHub Provider](https://registry.terraform.io/providers/integrations/github/latest/docs)
 - [GitHub Advanced Security](https://docs.github.com/en/enterprise-cloud@latest/get-started/learning-about-github/about-github-advanced-security)
-- [GitHub Copilot Documentation](https://docs.github.com/en/copilot)

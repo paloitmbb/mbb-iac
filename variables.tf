@@ -65,22 +65,6 @@ variable "ghas_config" {
   })
 }
 
-variable "copilot_config" {
-  description = "GitHub Copilot configuration"
-  type = object({
-    enabled                 = bool
-    public_code_suggestions = string
-    ide_chat_enabled        = bool
-    cli_enabled             = bool
-    policy_mode             = string
-    seat_assignments = object({
-      teams = list(string)
-      users = list(string)
-    })
-    content_exclusions = list(string)
-  })
-}
-
 variable "teams" {
   description = "GitHub teams configuration"
   type = list(object({

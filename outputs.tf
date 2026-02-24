@@ -23,9 +23,3 @@ output "repositories" {
     }
   }
 }
-
-output "copilot_seats" {
-  description = "Copilot seat assignments"
-  value       = module.github_copilot.seat_assignments
-  sensitive   = true
-}

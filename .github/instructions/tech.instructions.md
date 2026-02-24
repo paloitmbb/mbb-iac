@@ -55,7 +55,6 @@ The project follows a modular architecture with four core modules:
 1. **github-organization** - Organization-level settings
 2. **github-repository** - Repository creation and configuration
 3. **github-security** - GHAS and security features (standalone, currently unused)
-4. **github-copilot** - Copilot seat management and policies
 
 ### Module Versioning
 
@@ -365,9 +364,9 @@ module "github_repositories" {
 3. Mark **sensitive outputs** appropriately:
 
    ```hcl
-   output "copilot_seats" {
-     description = "Copilot seat assignments"
-     value       = module.github_copilot.seat_assignments
+   output "sensitive_data" {
+     description = "Sensitive output"
+     value       = module.some_module.sensitive_value
      sensitive   = true
    }
    ```
@@ -580,7 +579,6 @@ The root module provides these outputs:
 - `repository_source` - Source of repo config ("yaml" or "tfvars")
 - `repository_count` - Total number of managed repositories
 - `repositories` - Map of repository details (name, URL, SSH URL)
-- `copilot_seats` - Copilot seat assignments (sensitive)
 
 ### Querying Outputs
 
