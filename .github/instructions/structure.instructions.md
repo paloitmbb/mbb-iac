@@ -101,7 +101,7 @@ mbb-iac/
 
 ## Key Technologies
 
-- **Terraform**: >= 1.5.7
+- **Terraform**: >= 1.14.5
 - **GitHub Provider**: ~> 6.0
 - **Backend**: HTTP backend using GitHub Releases for state storage and GitHub API for locking
 - **Language**: HCL (HashiCorp Configuration Language)

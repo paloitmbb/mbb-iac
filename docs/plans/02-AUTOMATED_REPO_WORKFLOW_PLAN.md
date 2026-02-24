@@ -805,7 +805,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.5.7
+          terraform_version: 1.14.5
 
       - name: Terraform Init
         run: |

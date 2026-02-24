@@ -10,7 +10,7 @@ This document provides technical guidelines, coding standards, and best practice
 
 ### Core Technologies
 
-- **Terraform**: `>= 1.5.7` - Infrastructure as Code tool
+- **Terraform**: `>= 1.14.5` - Infrastructure as Code tool
 - **GitHub Provider**: `~> 6.0` - GitHub resource management
 - **HCL**: HashiCorp Configuration Language for Terraform definitions
 - **YAML**: Repository configuration data format
@@ -29,7 +29,7 @@ This document provides technical guidelines, coding standards, and best practice
 
 ```hcl
 terraform {
-  required_version = ">= 1.5.7"
+  required_version = ">= 1.14.5"
 }
 ```
 
@@ -328,7 +328,7 @@ When creating a new module:
 
    ```hcl
    terraform {
-     required_version = ">= 1.5.7"
+     required_version = ">= 1.14.5"
      required_providers {
        github = {
          source  = "integrations/github"
@@ -562,7 +562,7 @@ jobs:
       # ✅ Verified action from hashicorp/
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.5.7
+          terraform_version: 1.14.5
 
       - name: Terraform Init
         run: ./scripts/init.sh dev

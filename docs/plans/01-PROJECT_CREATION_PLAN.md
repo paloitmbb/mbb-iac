@@ -465,7 +465,7 @@ password       = "${GITHUB_TOKEN}"  # Set via environment variable
 
 ```hcl
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.14.5"
 
   required_providers {
     github = {
@@ -954,7 +954,7 @@ EOF
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.0
+          terraform_version: 1.14.5
 
       - name: Validate Terraform
         run: |
@@ -1073,7 +1073,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.0
+          terraform_version: 1.14.5
 
       - name: Terraform Init
         run: |
@@ -1117,7 +1117,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.0
+          terraform_version: 1.14.5
 
       - name: Terraform Init
         run: |
@@ -1256,7 +1256,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.0
+          terraform_version: 1.14.5
 
       - name: Terraform Init
         run: |
@@ -1478,7 +1478,7 @@ All GitHub Actions workflows provide detailed logs accessible via:
 
 ### Prerequisites
 
-- Terraform >= 1.6.0
+- Terraform >= 1.14.5
 - GitHub organization with admin access
 - GitHub Personal Access Token or App credentials
 - Backend storage configured (S3, Terraform Cloud, etc.)

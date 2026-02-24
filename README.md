@@ -31,7 +31,7 @@ mbb-iac/
 
 ## Prerequisites
 
-- Terraform >= 1.6.0
+- Terraform >= 1.14.5
 - GitHub organization with admin access
 - GitHub Personal Access Token or App with appropriate permissions:
   - `repo` - Full control of repositories
