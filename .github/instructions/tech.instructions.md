@@ -18,10 +18,10 @@ This document provides technical guidelines, coding standards, and best practice
 
 ### Backend Configuration
 
-- **Type**: HTTP backend using GitHub infrastructure
-- **State Storage**: GitHub Releases (tagged state files per environment)
-- **State Locking**: GitHub API (Git refs under `refs/locks/{environment}`)
-- **Authentication**: `GITHUB_TOKEN` environment variable (auto-set as `TF_HTTP_PASSWORD`)
+- **Type**: Azure Blob Storage (azurerm backend)
+- **State Storage**: Azure Blob Storage (per-environment state files)
+- **State Locking**: Azure Blob Lease (automatic, native locking)
+- **Authentication**: Azure OIDC (GitHub Actions) or ARM_ACCESS_KEY / Azure CLI (local development)
 
 ## Version Requirements
 
@@ -223,8 +223,6 @@ Required permissions:
 export GITHUB_TOKEN="ghp_xxxxxxxxxxxxxxxxxxxx"
 ```
 
-The `init.sh` script automatically sets `TF_HTTP_PASSWORD` from `GITHUB_TOKEN`.
-
 ### Provider Configuration
 
 ```hcl
@@ -241,20 +239,21 @@ provider "github" {
 Each environment has dedicated backend configuration in `environments/{env}/backend.tfvars`:
 
 ```hcl
-address        = "https://github.com/org/repo/releases/download/state-{env}/terraform.tfstate"
-lock_address   = "https://api.github.com/repos/org/repo/git/refs/locks/{env}"
-unlock_address = "https://api.github.com/repos/org/repo/git/refs/locks/{env}"
-username       = "terraform"
+resource_group_name  = "mbb"
+storage_account_name = "mbbtfstate"
+container_name       = "tfstate"
+key                  = "github.terraform.tfstate"
 ```
+
+See [AZURE_BACKEND_SETUP.md](../../AZURE_BACKEND_SETUP.md) for detailed setup instructions.
 
 ### Initial Setup
 
-Before first initialization:
+Before first initialization, ensure Azure resources exist:
 
 ```bash
-# Create release tags for state storage
-git tag state-dev state-staging state-production
-git push origin state-dev state-staging state-production
+# Create resource group, storage account, and blob container
+# See AZURE_BACKEND_SETUP.md for detailed instructions
 ```
 
 ### State Operations
@@ -392,8 +391,8 @@ security = {
 
 ### State File Security
 
-- State files stored in **private GitHub Releases**
-- Access controlled via **GitHub repository permissions**
+- State files stored in **Azure Blob Storage** (private, access-controlled)
+- Access controlled via **Azure RBAC**
 - **Never expose** state files publicly
 - Use **state locking** to prevent concurrent modifications
 
@@ -451,8 +450,8 @@ terraform force-unlock <LOCK_ID>
 # Ensure token is set
 echo $GITHUB_TOKEN
 
-# Refresh token for HTTP backend
-export TF_HTTP_PASSWORD="$GITHUB_TOKEN"
+# For Azure backend authentication
+export ARM_ACCESS_KEY="your-storage-account-access-key"
 ./scripts/init.sh dev
 ```
 
@@ -749,7 +748,7 @@ terraform plan
 - [Terraform Documentation](https://www.terraform.io/docs)
 - [GitHub Provider Documentation](https://registry.terraform.io/providers/integrations/github/latest/docs)
 - [Terraform Best Practices](https://www.terraform.io/docs/cloud/guides/recommended-practices/index.html)
-- [HTTP Backend Documentation](https://www.terraform.io/docs/language/settings/backends/http.html)
+- [Azure Backend Documentation](https://www.terraform.io/docs/language/settings/backends/azurerm.html)
 - [Project README](../README.md)
-- [HTTP Backend Setup Guide](../HTTP_BACKEND_SETUP.md)
+- [Azure Backend Setup Guide](../AZURE_BACKEND_SETUP.md)
 - [Data Directory Documentation](../data/README.md)

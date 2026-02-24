@@ -64,7 +64,6 @@ jobs:
           terraform init -backend-config=environments/${{ matrix.environment }}/backend.tfvars
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
-          TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
           # Azure authentication via OIDC (azure/login@v2 handles token)
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
@@ -76,7 +75,6 @@ jobs:
           terraform plan -var-file=environments/${{ matrix.environment }}/terraform.tfvars -out=environments/${{ matrix.environment }}/tfplan
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
-          TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
           # Azure authentication via OIDC (azure/login@v2 handles token)
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
@@ -88,7 +86,6 @@ jobs:
           terraform apply -auto-approve environments/${{ matrix.environment }}/tfplan
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
-          TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
           # Azure authentication via OIDC (azure/login@v2 handles token)
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}

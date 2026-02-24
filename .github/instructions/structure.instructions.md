@@ -25,7 +25,7 @@ mbb-iac/
 ├── outputs.tf                 # Output value definitions
 ├── versions.tf                # Provider and version requirements
 ├── terraform.tfvars.example   # Example variable values
-├── HTTP_BACKEND_SETUP.md      # Backend configuration guide
+├── AZURE_BACKEND_SETUP.md     # Backend configuration guide
 ├── README.md                  # Main project documentation
 │
 ├── .github/                   # GitHub specific files
@@ -95,7 +95,7 @@ mbb-iac/
 
 - **Terraform**: >= 1.14.5
 - **GitHub Provider**: ~> 6.0
-- **Backend**: HTTP backend using GitHub Releases for state storage and GitHub API for locking
+- **Backend**: Azure Blob Storage (azurerm backend) for state storage and Azure Blob Lease for locking
 - **Language**: HCL (HashiCorp Configuration Language)
 - **Data Formats**: YAML for repository definitions, TFVARS for configuration
 
@@ -192,22 +192,22 @@ Required token permissions:
 - `admin:org` - Full control of organizations
 - `workflow` - Update GitHub Actions workflows
 
-For HTTP backend, `TF_HTTP_PASSWORD` is automatically set from `GITHUB_TOKEN` by init script.
+For Azure backend authentication, use `ARM_ACCESS_KEY`, OIDC, or Azure CLI. See [AZURE_BACKEND_SETUP.md](../../AZURE_BACKEND_SETUP.md) for details.
 
 ## State Management
 
-- **Backend Type**: HTTP backend
-- **State Storage**: GitHub Releases (tagged state files)
-- **State Locking**: GitHub API (git refs)
+- **Backend Type**: Azure Blob Storage (azurerm backend)
+- **State Storage**: Azure Blob Storage (per-environment state files)
+- **State Locking**: Azure Blob Lease (automatic)
 - **Configuration**: Per-environment in `backend.tfvars`
 
 Example backend configuration:
 
 ```hcl
-address        = "https://github.com/org/repo/releases/download/state-dev/terraform.tfstate"
-lock_address   = "https://api.github.com/repos/org/repo/git/refs/locks/dev"
-unlock_address = "https://api.github.com/repos/org/repo/git/refs/locks/dev"
-username       = "terraform"
+resource_group_name  = "mbb"
+storage_account_name = "mbbtfstate"
+container_name       = "tfstate"
+key                  = "github.terraform.tfstate"
 ```
 
 ## Variable Hierarchy

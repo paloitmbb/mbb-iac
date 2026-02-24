@@ -24,7 +24,7 @@
 >
 > **Backend Migration:**
 > - ✅ Migrated dev environment to **Azure Blob Storage** backend
-> - ✅ Removed HTTP backend (GitHub Releases) fallback logic
+> - ✅ Removed legacy backend fallback logic
 > - ✅ Simplified scripts to Azure-only backend
 >
 > **OIDC Authentication:**
@@ -1141,7 +1141,7 @@ Required Scopes:
 4. Token is used for:
    - Team validation (read:org)
    - Terraform provider authentication (repo, admin:org)
-   - HTTP backend state management (repo)
+   - Azure backend state management (ARM credentials)
 
 ### Appendix B: Example Workflow Run
 

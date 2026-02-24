@@ -25,7 +25,7 @@ mbb-iac/
 - 🔒 **Security**: GitHub Advanced Security (GHAS) integration
 - 🔄 **GitOps**: Automated repository creation via GitHub Issues
 - 🌍 **Multi-Environment**: Separate configurations for dev, staging, and production
-- ☁️ **Flexible Backend**: Azure Storage (dev) and GitHub Releases (staging/production)
+- ☁️ **Flexible Backend**: Azure Storage for state management across all environments
 
 ## Prerequisites
 
@@ -79,9 +79,9 @@ az login
 
 ### 3. Configure Backend
 
-**Dev Environment**: Uses Azure Blob Storage for state management.
+All environments use Azure Blob Storage for state management.
 
-The dev environment backend is already configured in `environments/dev/backend.tfvars`:
+Edit `environments/<env>/backend.tfvars` with your Azure Storage configuration:
 
 ```hcl
 resource_group_name  = "mbb"
@@ -91,21 +91,6 @@ key                  = "github.terraform.tfstate"
 ```
 
 See [AZURE_BACKEND_SETUP.md](AZURE_BACKEND_SETUP.md) for detailed Azure backend setup instructions.
-
-**Staging/Production Environments**: Use GitHub Releases for state management (HTTP backend).
-
-Edit `environments/<env>/backend.tfvars` with your GitHub organization details:
-
-```hcl
-# Replace 'your-org' with your GitHub organization name
-address        = "https://github.com/your-org/mbb-iac/releases/download/state-<env>/terraform.tfstate"
-lock_address   = "https://api.github.com/repos/your-org/mbb-iac/git/refs/locks/<env>"
-unlock_address = "https://api.github.com/repos/your-org/mbb-iac/git/refs/locks/<env>"
-username       = "terraform"
-# password set via TF_HTTP_PASSWORD environment variable (uses GITHUB_TOKEN)
-```
-
-See [HTTP_BACKEND_SETUP.md](HTTP_BACKEND_SETUP.md) for GitHub backend setup instructions.
 
 ### 4. Initialize Terraform
 
@@ -264,10 +249,7 @@ terraform force-unlock <lock-id>
 
 ### Backend Configuration
 
-The project supports multiple backend types:
-
-- **Dev Environment**: Uses Azure Blob Storage for state management. See [AZURE_BACKEND_SETUP.md](AZURE_BACKEND_SETUP.md) for setup instructions.
-- **Staging/Production**: Use HTTP backend with GitHub Releases. See [HTTP_BACKEND_SETUP.md](HTTP_BACKEND_SETUP.md) for setup instructions.
+The project uses Azure Blob Storage for all environments. See [AZURE_BACKEND_SETUP.md](AZURE_BACKEND_SETUP.md) for setup instructions.
 
 Verify backend is properly configured:
 
@@ -288,7 +270,7 @@ terraform init -backend-config=environments/<env>/backend.tfvars -reconfigure
 For questions or issues:
 
 - Review [PROJECT_CREATION_PLAN.md](PROJECT_CREATION_PLAN.md) for detailed documentation
-- Check [HTTP_BACKEND_SETUP.md](HTTP_BACKEND_SETUP.md) for backend configuration
+- Check [AZURE_BACKEND_SETUP.md](AZURE_BACKEND_SETUP.md) for backend configuration
 - Check module README files
 - Contact the platform team
 
