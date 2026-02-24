@@ -108,6 +108,13 @@ jobs:
       source_secrets_list: ${{ steps.source-stats.outputs.secrets_list }}
       source_webhook_count: ${{ steps.source-stats.outputs.webhook_count }}
       source_webhook_list: ${{ steps.source-stats.outputs.webhook_list }}
+      source_environments_list: ${{ steps.source-stats.outputs.environments_list }}
+      source_env_secrets_list: ${{ steps.source-stats.outputs.env_secrets_list }}
+      source_env_variables_list: ${{ steps.source-stats.outputs.env_variables_list }}
+      source_org_secrets_count: ${{ steps.source-stats.outputs.org_secrets_count }}
+      source_org_secrets_list: ${{ steps.source-stats.outputs.org_secrets_list }}
+      source_org_variables_count: ${{ steps.source-stats.outputs.org_variables_count }}
+      source_org_variables_list: ${{ steps.source-stats.outputs.org_variables_list }}
       archive_source: ${{ steps.options.outputs.archive_source }}
 
     steps:
@@ -172,6 +179,13 @@ jobs:
             const secretsList = '${{ steps.source-stats.outputs.secrets_list }}';
             const webhookCount = '${{ steps.source-stats.outputs.webhook_count }}';
             const webhookList = '${{ steps.source-stats.outputs.webhook_list }}';
+            const environmentsList = '${{ steps.source-stats.outputs.environments_list }}';
+            const envSecretsList = '${{ steps.source-stats.outputs.env_secrets_list }}';
+            const envVariablesList = '${{ steps.source-stats.outputs.env_variables_list }}';
+            const orgSecretsCount = '${{ steps.source-stats.outputs.org_secrets_count }}';
+            const orgSecretsList = '${{ steps.source-stats.outputs.org_secrets_list }}';
+            const orgVariablesCount = '${{ steps.source-stats.outputs.org_variables_count }}';
+            const orgVariablesList = '${{ steps.source-stats.outputs.org_variables_list }}';
 
             // ── Build migration options block ──
             let optionsBlock = '';
@@ -228,7 +242,10 @@ jobs:
             commentBody += `| **CODEOWNERS** | ${hasCodeowners === 'true' ? '✅ Present' : '⚠️ Not found'} |\n`;
             commentBody += `| **Variables** | ${variablesCount} |\n`;
             commentBody += `| **Secrets** | ${secretsCount} |\n`;
-            commentBody += `| **Webhooks** | ${webhookCount} |\n\n`;
+            commentBody += `| **Webhooks** | ${webhookCount} |\n`;
+            commentBody += `| **Environments** | ${environmentsList ? environmentsList.split(',').length : 0} |\n`;
+            commentBody += `| **Org Secrets** | ${orgSecretsCount} |\n`;
+            commentBody += `| **Org Variables** | ${orgVariablesCount} |\n\n`;
 
             // ── Variable names ──
             if (variablesList) {
@@ -264,6 +281,64 @@ jobs:
                 commentBody += `| ${i + 1} | \`${w}\` |\n`;
               });
               commentBody += '\n> ⚠️ **Webhooks are NOT migrated automatically.** You must manually re-create these webhooks on the target repository.\n\n';
+            }
+
+            // ── Environment Secrets ──
+            if (envSecretsList) {
+              commentBody += '### 🔐 Environment Secrets\n\n';
+              const envEntries = envSecretsList.split(',').filter(e => e);
+              commentBody += '| Environment | Secret Name |\n';
+              commentBody += '|-------------|-------------|\n';
+              envEntries.forEach(entry => {
+                const [envName, secrets] = entry.split(':');
+                if (secrets) {
+                  secrets.split('|').forEach(s => {
+                    commentBody += `| \`${envName}\` | \`${s}\` |\n`;
+                  });
+                }
+              });
+              commentBody += '\n> ⚠️ **Environment secret values cannot be read via the API.** You must manually re-create these on the target repository.\n\n';
+            }
+
+            // ── Environment Variables ──
+            if (envVariablesList) {
+              commentBody += '### 🏷️ Environment Variables\n\n';
+              const envVarEntries = envVariablesList.split(',').filter(e => e);
+              commentBody += '| Environment | Variable Name |\n';
+              commentBody += '|-------------|---------------|\n';
+              envVarEntries.forEach(entry => {
+                const [envName, vars] = entry.split(':');
+                if (vars) {
+                  vars.split('|').forEach(v => {
+                    commentBody += `| \`${envName}\` | \`${v}\` |\n`;
+                  });
+                }
+              });
+              commentBody += '\n';
+            }
+
+            // ── Organization Secrets ──
+            if (orgSecretsList) {
+              commentBody += '### 🏢 Organization Secrets\n\n';
+              const orgSecNames = orgSecretsList.split(',').filter(s => s);
+              commentBody += '| # | Secret Name |\n';
+              commentBody += '|---|-------------|\n';
+              orgSecNames.forEach((s, i) => {
+                commentBody += `| ${i + 1} | \`${s}\` |\n`;
+              });
+              commentBody += '\n> ℹ️ Organization secrets are managed at the org level and are not migrated with the repository.\n\n';
+            }
+
+            // ── Organization Variables ──
+            if (orgVariablesList) {
+              commentBody += '### 🏢 Organization Variables\n\n';
+              const orgVarNames = orgVariablesList.split(',').filter(v => v);
+              commentBody += '| # | Variable Name |\n';
+              commentBody += '|---|---------------|\n';
+              orgVarNames.forEach((v, i) => {
+                commentBody += `| ${i + 1} | \`${v}\` |\n`;
+              });
+              commentBody += '\n> ℹ️ Organization variables are managed at the org level and are not migrated with the repository.\n\n';
             }
 
             if (hasCodeowners !== 'true') {
@@ -326,7 +401,10 @@ jobs:
             summary += `| **CODEOWNERS** | ${hasCodeowners === 'true' ? '✅ Present' : '⚠️ Not found'} |\n`;
             summary += `| **Variables** | ${variablesCount} |\n`;
             summary += `| **Secrets** | ${secretsCount} |\n`;
-            summary += `| **Webhooks** | ${webhookCount} |\n\n`;
+            summary += `| **Webhooks** | ${webhookCount} |\n`;
+            summary += `| **Environments** | ${environmentsList ? environmentsList.split(',').length : 0} |\n`;
+            summary += `| **Org Secrets** | ${orgSecretsCount} |\n`;
+            summary += `| **Org Variables** | ${orgVariablesCount} |\n\n`;
 
             // ── Variable names ──
             if (variablesList) {
@@ -362,6 +440,64 @@ jobs:
                 summary += `| ${i + 1} | \`${w}\` |\n`;
               });
               summary += '\n> ⚠️ **Webhooks are NOT migrated automatically.** You must manually re-create these webhooks on the target repository.\n\n';
+            }
+
+            // ── Environment Secrets ──
+            if (envSecretsList) {
+              summary += '### 🔐 Environment Secrets\n\n';
+              const envEntries = envSecretsList.split(',').filter(e => e);
+              summary += '| Environment | Secret Name |\n';
+              summary += '|-------------|-------------|\n';
+              envEntries.forEach(entry => {
+                const [envName, secrets] = entry.split(':');
+                if (secrets) {
+                  secrets.split('|').forEach(s => {
+                    summary += `| \`${envName}\` | \`${s}\` |\n`;
+                  });
+                }
+              });
+              summary += '\n> ⚠️ **Environment secret values cannot be read via the API.** You must manually re-create these on the target repository.\n\n';
+            }
+
+            // ── Environment Variables ──
+            if (envVariablesList) {
+              summary += '### 🏷️ Environment Variables\n\n';
+              const envVarEntries = envVariablesList.split(',').filter(e => e);
+              summary += '| Environment | Variable Name |\n';
+              summary += '|-------------|---------------|\n';
+              envVarEntries.forEach(entry => {
+                const [envName, vars] = entry.split(':');
+                if (vars) {
+                  vars.split('|').forEach(v => {
+                    summary += `| \`${envName}\` | \`${v}\` |\n`;
+                  });
+                }
+              });
+              summary += '\n';
+            }
+
+            // ── Organization Secrets ──
+            if (orgSecretsList) {
+              summary += '### 🏢 Organization Secrets\n\n';
+              const orgSecNames = orgSecretsList.split(',').filter(s => s);
+              summary += '| # | Secret Name |\n';
+              summary += '|---|-------------|\n';
+              orgSecNames.forEach((s, i) => {
+                summary += `| ${i + 1} | \`${s}\` |\n`;
+              });
+              summary += '\n> ℹ️ Organization secrets are managed at the org level and are not migrated with the repository.\n\n';
+            }
+
+            // ── Organization Variables ──
+            if (orgVariablesList) {
+              summary += '### 🏢 Organization Variables\n\n';
+              const orgVarNames = orgVariablesList.split(',').filter(v => v);
+              summary += '| # | Variable Name |\n';
+              summary += '|---|---------------|\n';
+              orgVarNames.forEach((v, i) => {
+                summary += `| ${i + 1} | \`${v}\` |\n`;
+              });
+              summary += '\n> ℹ️ Organization variables are managed at the org level and are not migrated with the repository.\n\n';
             }
 
             if (hasCodeowners !== 'true') {
