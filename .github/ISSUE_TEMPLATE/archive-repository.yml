@@ -1,0 +1,100 @@
+name: Archive Repository
+description: Request to archive an existing GitHub repository
+title: "[REPO ARCHIVE] archive repository"
+labels: ["archive"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Archive Repository Request
+        Use this template to request the archiving of an existing GitHub repository.
+        **⚠️ Important:** Archiving a repository makes it **read-only**. All code, issues, pull requests, and other data will be preserved but no new commits, issues, or PRs can be created.
+
+  - type: input
+    id: repo-name
+    attributes:
+      label: Repository Name
+      description: The exact name of the repository to archive
+      placeholder: my-project
+    validations:
+      required: true
+
+  - type: dropdown
+    id: repo-visibility
+    attributes:
+      label: Current Repository Visibility
+      options:
+        - private
+        - public
+        - internal
+    validations:
+      required: true
+
+  - type: textarea
+    id: reason
+    attributes:
+      label: Business Justification
+      description: Explain why this repository should be archived
+      placeholder: |
+        e.g.,
+        - Project has been decommissioned
+        - Code has been migrated to a new repository
+        - Project is no longer maintained
+        - Replaced by another solution
+    validations:
+      required: true
+
+  - type: dropdown
+    id: replacement
+    attributes:
+      label: Is there a replacement repository?
+      options:
+        - "No"
+        - "Yes"
+    validations:
+      required: true
+
+  - type: textarea
+    id: pre-archive-tasks
+    attributes:
+      label: Pre-Archive Checklist
+      description: Confirm the following items have been addressed before archiving
+      value: |
+        - [ ] All open PRs have been merged or closed
+        - [ ] All open issues have been resolved, transferred, or closed
+        - [ ] README has been updated with archive notice / deprecation note
+        - [ ] Stakeholders and contributors have been notified
+        - [ ] Any active CI/CD pipelines have been disabled
+        - [ ] Repository secrets have been reviewed (no longer needed)
+        - [ ] Dependent services/projects have been updated to remove references
+        - [ ] Final release/tag has been created (if applicable)
+    validations:
+      required: true
+
+  - type: input
+    id: requester
+    attributes:
+      label: Requester
+      description: Who is requesting this archive? (GitHub username or team)
+      placeholder: "@username or @org/team-name"
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ### What happens next?
+        1. ✅ This request will be reviewed by the infrastructure team
+        2. 🔍 Pre-archive checklist items will be verified
+        3. 🧱 The repository will be archived via Terraform (`archived = true`)
+        4. 📝 The `data/repositories.yaml` will be updated
+        5. 🗃️ The repository will become **read-only** on GitHub
+
+        ### Terraform Changes Required
+        ```yaml
+        # data/repositories.yaml
+        - name: repository-name
+          archived: true
+        ```

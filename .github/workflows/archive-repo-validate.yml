@@ -1,0 +1,381 @@
+name: "Archive Repo: Validate & Create PR"
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  # ============================================================================
+  # Job 1: Validate Archive Request
+  # ============================================================================
+  validate-request:
+    name: Validate Archive Request
+    runs-on: ubuntu-latest
+    if: startsWith(github.event.issue.title, '[REPO ARCHIVE]')
+    outputs:
+      validation-passed: ${{ steps.validate.outputs.validation-passed }}
+      repo-name: ${{ steps.parse.outputs.repo-name }}
+      justification: ${{ steps.parse.outputs.justification }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ref: main
+
+      # -----------------------------------------------------------------------
+      # Step 1: Parse issue body to extract fields
+      # -----------------------------------------------------------------------
+      - name: Parse issue form
+        id: parse
+        uses: paloitmbb/mbb-tf-actions/actions/parse-issue-form@main
+        with:
+          issue-body: ${{ github.event.issue.body }}
+          field-mapping: |
+            {
+              "repo-name": "Repository Name",
+              "justification": "Business Justification"
+            }
+
+      # -----------------------------------------------------------------------
+      # Step 2: Validate repository and YAML config
+      # -----------------------------------------------------------------------
+      - name: Validate repository
+        id: validate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ORG_NAME: ${{ github.repository_owner }}
+        run: |
+          REPO_NAME="${{ steps.parse.outputs.repo-name }}"
+          VALIDATION_PASSED="true"
+          VALIDATION_ERRORS=""
+          VALIDATION_SUMMARY=""
+
+          # --- Check required fields ---
+          if [[ -z "$REPO_NAME" ]]; then
+            VALIDATION_PASSED="false"
+            VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository name is required"
+            VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Name | \`(empty)\` | ❌ Missing |\n"
+          else
+            VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Name | \`${REPO_NAME}\` | ✅ Provided |\n"
+          fi
+
+          # --- Check if repository exists on GitHub ---
+          if [[ -n "$REPO_NAME" ]]; then
+            HTTP_STATUS=$(gh api "repos/${ORG_NAME}/${REPO_NAME}" --silent 2>&1 && echo "200" || echo "404")
+            if [[ "$HTTP_STATUS" == "200" ]]; then
+              # Check if already archived
+              IS_ARCHIVED=$(gh api "repos/${ORG_NAME}/${REPO_NAME}" --jq '.archived')
+              if [[ "$IS_ARCHIVED" == "true" ]]; then
+                VALIDATION_PASSED="false"
+                VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${REPO_NAME}\` is already archived"
+                VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Exists | \`${ORG_NAME}/${REPO_NAME}\` | ❌ Already archived |\n"
+              else
+                VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Exists | \`${ORG_NAME}/${REPO_NAME}\` | ✅ Found (Active) |\n"
+              fi
+            else
+              VALIDATION_PASSED="false"
+              VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${ORG_NAME}/${REPO_NAME}\` not found"
+              VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Exists | \`${ORG_NAME}/${REPO_NAME}\` | ❌ Not found |\n"
+            fi
+          fi
+
+          # --- Check if repository exists in YAML config ---
+          if [[ -n "$REPO_NAME" && -f "data/repositories.yaml" ]]; then
+            YAML_MATCH=$(grep -c "name: ${REPO_NAME}" data/repositories.yaml || true)
+            if [[ "$YAML_MATCH" -gt 0 ]]; then
+              VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ✅ Found |\n"
+            else
+              VALIDATION_PASSED="false"
+              VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${REPO_NAME}\` not found in \`data/repositories.yaml\`"
+              VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ❌ Not found |\n"
+            fi
+          fi
+
+          # --- Build full summary ---
+          FULL_SUMMARY="| Check | Detail | Result |\n|-------|--------|--------|\n${VALIDATION_SUMMARY}"
+          if [[ -n "$VALIDATION_ERRORS" ]]; then
+            FULL_SUMMARY="${FULL_SUMMARY}\n### Errors\n${VALIDATION_ERRORS}"
+          fi
+
+          # --- Set outputs ---
+          echo "validation-passed=${VALIDATION_PASSED}" >> $GITHUB_OUTPUT
+
+          echo "validation-summary<<VSEOF" >> $GITHUB_OUTPUT
+          echo -e "$FULL_SUMMARY" >> $GITHUB_OUTPUT
+          echo "VSEOF" >> $GITHUB_OUTPUT
+
+          echo "validation-errors<<VEEOF" >> $GITHUB_OUTPUT
+          echo -e "$VALIDATION_ERRORS" >> $GITHUB_OUTPUT
+          echo "VEEOF" >> $GITHUB_OUTPUT
+
+      # -----------------------------------------------------------------------
+      # Step 3: Build validation details
+      # -----------------------------------------------------------------------
+      - name: Build validation details
+        if: always()
+        id: build-details
+        shell: bash
+        run: |
+          REPO_NAME="${{ steps.parse.outputs.repo-name }}"
+          ORG_NAME="${{ github.repository_owner }}"
+          JUSTIFICATION="${{ steps.parse.outputs.justification }}"
+          VALIDATION_PASSED="${{ steps.validate.outputs.validation-passed }}"
+          VALIDATION_TABLE="${{ steps.validate.outputs.validation-summary }}"
+          VALIDATION_ERRORS="${{ steps.validate.outputs.validation-errors }}"
+
+          # --- Build summary-table JSON ---
+          SUMMARY_TABLE=$(jq -nc \
+            --arg repo "$REPO_NAME" \
+            --arg org "$ORG_NAME" \
+            --arg justification "${JUSTIFICATION:-_Not provided_}" \
+            '[
+              {field: "Repository Name", value: ("`" + $repo + "`")},
+              {field: "Organization", value: ("`" + $org + "`")},
+              {field: "Business Justification", value: $justification}
+            ]')
+
+          # --- Build details-sections JSON ---
+          ARCHIVE_WARNING="⚠️ **Archiving a repository will:**\n- Make the repository **read-only**\n- Disable push access, issues, pull requests, labels, milestones, projects, wiki, releases, commits, tags, branches, reactions, and comments\n- The repository will still be **visible** and **cloneable**\n- This action **can be reversed** by unarchiving the repository"
+
+          DETAILS_JSON=$(jq -nc \
+            --arg validation "$VALIDATION_TABLE" \
+            --arg warning "$ARCHIVE_WARNING" \
+            '[
+              {heading: "🔍 Validation Results", body: $validation},
+              {heading: "⚠️ Archive Impact", body: $warning}
+            ]')
+
+          # --- Build next-steps ---
+          if [[ "$VALIDATION_PASSED" == "true" ]]; then
+            NEXT_STEPS="- A PR will be created to update \`data/repositories.yaml\` with \`archived: true\`
+          - **Terraform CI** will automatically run \`terraform plan\` on the PR and post results as a comment
+          - A reviewer must **review the plan**, then **approve and merge** the PR
+          - Once merged, the **Terraform Apply** workflow runs automatically against the \`dev\` environment
+          - This issue will be **closed automatically** when the PR merges"
+          else
+            NEXT_STEPS=""
+          fi
+
+          # --- Build error-details ---
+          if [[ "$VALIDATION_PASSED" != "true" && -n "$VALIDATION_ERRORS" ]]; then
+            ERROR_DETAILS="${VALIDATION_ERRORS}\n\nPlease fix the validation errors above and create a new archive request issue."
+          else
+            ERROR_DETAILS=""
+          fi
+
+          # --- Validate JSON ---
+          for json_var in "$SUMMARY_TABLE" "$DETAILS_JSON"; do
+            if ! echo "$json_var" | jq empty 2>/dev/null; then
+              echo "::error::Failed to build valid JSON"
+              exit 1
+            fi
+          done
+
+          # --- Set outputs ---
+          echo "summary-table<<STEOF" >> $GITHUB_OUTPUT
+          echo "$SUMMARY_TABLE" >> $GITHUB_OUTPUT
+          echo "STEOF" >> $GITHUB_OUTPUT
+
+          echo "details-json<<DJEOF" >> $GITHUB_OUTPUT
+          echo "$DETAILS_JSON" >> $GITHUB_OUTPUT
+          echo "DJEOF" >> $GITHUB_OUTPUT
+
+          echo "next-steps<<NSEOF" >> $GITHUB_OUTPUT
+          echo -e "$NEXT_STEPS" >> $GITHUB_OUTPUT
+          echo "NSEOF" >> $GITHUB_OUTPUT
+
+          echo "error-details<<EDEOF" >> $GITHUB_OUTPUT
+          echo -e "$ERROR_DETAILS" >> $GITHUB_OUTPUT
+          echo "EDEOF" >> $GITHUB_OUTPUT
+
+      # -----------------------------------------------------------------------
+      # Step 4: Notify validation result on the issue
+      # -----------------------------------------------------------------------
+      - name: Notify validation result
+        if: always()
+        uses: paloitmbb/mbb-tf-actions/actions/notify-issue-status@main
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          issue-number: ${{ github.event.issue.number }}
+          status: ${{ steps.validate.outputs.validation-passed == 'true' && 'validation-passed' || 'validation-failed' }}
+          title: ${{ steps.validate.outputs.validation-passed == 'true' && 'Archive Request — Validation Passed' || 'Archive Request — Validation Failed' }}
+          summary-table: ${{ steps.build-details.outputs.summary-table }}
+          details-sections: ${{ steps.build-details.outputs.details-json }}
+          next-steps: ${{ steps.build-details.outputs.next-steps }}
+          error-details: ${{ steps.build-details.outputs.error-details }}
+          labels-add: ${{ steps.validate.outputs.validation-passed == 'true' && 'archive-validation-passed' || 'archive-validation-failed' }}
+          close-issue: ${{ steps.validate.outputs.validation-passed != 'true' }}
+          close-reason: 'not_planned'
+
+  # ============================================================================
+  # Job 2: Create PR with YAML change
+  # ============================================================================
+  create-archive-pr:
+    name: Create Archive PR
+    runs-on: ubuntu-latest
+    needs: validate-request
+    if: needs.validate-request.outputs.validation-passed == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ref: main
+
+      # -----------------------------------------------------------------------
+      # Step 1: Install yq and update YAML
+      # -----------------------------------------------------------------------
+      - name: Install yq
+        shell: bash
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.6/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Update YAML configuration
+        id: update-yaml
+        shell: bash
+        run: |
+          REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
+
+          echo "📝 Setting archived: true for repository '${REPO_NAME}' in data/repositories.yaml"
+
+          # Find the repository index
+          REPO_INDEX=$(yq eval '.repositories | to_entries | .[] | select(.value.name == "'"${REPO_NAME}"'") | .key' data/repositories.yaml)
+
+          if [[ -z "$REPO_INDEX" ]]; then
+            echo "::error::Repository '${REPO_NAME}' not found in data/repositories.yaml"
+            exit 1
+          fi
+
+          echo "Found repository at index: ${REPO_INDEX}"
+
+          # Set archived: true
+          yq eval -i ".repositories[${REPO_INDEX}].archived = true" data/repositories.yaml
+
+          # Verify the change
+          ARCHIVED_VALUE=$(yq eval ".repositories[${REPO_INDEX}].archived" data/repositories.yaml)
+          echo "Verified: archived = ${ARCHIVED_VALUE}"
+
+          if [[ "$ARCHIVED_VALUE" != "true" ]]; then
+            echo "::error::Failed to set archived: true"
+            exit 1
+          fi
+
+          echo "repo-index=${REPO_INDEX}" >> $GITHUB_OUTPUT
+
+      # -----------------------------------------------------------------------
+      # Step 2: Create branch and PR
+      # -----------------------------------------------------------------------
+      - name: Create branch and PR
+        id: create-pr
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+        run: |
+          REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
+          ORG_NAME="${{ github.repository_owner }}"
+          ISSUE_NUMBER="${{ github.event.issue.number }}"
+          BRANCH_NAME="archive/${REPO_NAME}-${ISSUE_NUMBER}"
+
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create and switch to feature branch
+          git checkout -b "${BRANCH_NAME}"
+
+          # Commit the YAML change
+          git add data/repositories.yaml
+          git commit -m "feat: 🗃️ archive repository \`${REPO_NAME}\`
+
+          Set archived: true for ${ORG_NAME}/${REPO_NAME} in data/repositories.yaml
+
+          - Repository: ${ORG_NAME}/${REPO_NAME}
+          - Requested by: @${{ github.event.issue.user.login }}
+          - Issue: #${ISSUE_NUMBER}"
+
+          # Push the branch
+          git push origin "${BRANCH_NAME}"
+
+          # Create PR
+          PR_URL=$(gh pr create \
+            --base main \
+            --head "${BRANCH_NAME}" \
+            --title "feat: 🗃️ archive repository \`${REPO_NAME}\`" \
+            --body "## 🗃️ Archive Repository: \`${REPO_NAME}\`
+
+          ### Summary
+          | Field | Value |
+          |-------|-------|
+          | **Repository** | \`${ORG_NAME}/${REPO_NAME}\` |
+          | **Requested by** | @${{ github.event.issue.user.login }} |
+          | **Issue** | #${ISSUE_NUMBER} |
+          | **Justification** | ${{ needs.validate-request.outputs.justification }} |
+
+          ### Changes
+          - Sets \`archived: true\` for \`${REPO_NAME}\` in \`data/repositories.yaml\`
+
+          ### CI Checks
+          - **Terraform CI** will run \`terraform plan\` automatically on this PR
+          - Review the plan output in the PR comment before approving
+
+          ### ⚠️ What happens after merge
+          1. The **Terraform Apply** workflow triggers automatically (push to \`main\` on \`data/*.yaml\`)
+          2. Terraform runs \`init\` → \`plan\` → \`apply\` against the \`dev\` environment
+          3. The repository \`${ORG_NAME}/${REPO_NAME}\` becomes **read-only** on GitHub
+          4. Issue #${ISSUE_NUMBER} is closed automatically
+
+          ### Review Checklist
+          - [ ] Review the Terraform plan output (posted as PR comment by CI)
+          - [ ] Verify the correct repository is being archived
+          - [ ] Confirm business justification is valid
+          - [ ] Ensure no active development depends on this repository
+
+          ---
+          > 🤖 *Automated by [Archive Repo: Validate & Create PR](/${{ github.repository }}/actions/runs/${{ github.run_id }}) workflow*
+
+          Closes #${ISSUE_NUMBER}" \
+            --label "archive" \
+            --label "infrastructure")
+
+          PR_NUMBER=$(echo "$PR_URL" | grep -oP '\d+$')
+
+          echo "pr-url=${PR_URL}" >> $GITHUB_OUTPUT
+          echo "pr-number=${PR_NUMBER}" >> $GITHUB_OUTPUT
+          echo "branch-name=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+
+          echo "✅ PR created: ${PR_URL}"
+
+      # -----------------------------------------------------------------------
+      # Step 3: Comment on issue with PR link
+      # -----------------------------------------------------------------------
+      - name: Notify issue with PR link
+        uses: paloitmbb/mbb-tf-actions/actions/notify-issue-status@main
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          issue-number: ${{ github.event.issue.number }}
+          status: 'in-progress'
+          title: 'Archive PR Created — Awaiting Review & Merge'
+          summary-table: |
+            [
+              {"field": "Pull Request", "value": "${{ steps.create-pr.outputs.pr-url }}"},
+              {"field": "Branch", "value": "`${{ steps.create-pr.outputs.branch-name }}`"},
+              {"field": "Repository", "value": "`${{ github.repository_owner }}/${{ needs.validate-request.outputs.repo-name }}`"},
+              {"field": "CI Status", "value": "Terraform CI will run `plan` automatically on this PR"}
+            ]
+          next-steps: |
+            - **Terraform CI** will run `terraform plan` and post results as a PR comment
+            - A reviewer must **review the plan**, then **approve and merge** the PR
+            - Once merged, the **Terraform Apply** workflow runs automatically against `dev`
+            - This issue will be **closed automatically** when the PR merges (`Closes #${{ github.event.issue.number }}`)
+          labels-add: 'archive-pr-created'
