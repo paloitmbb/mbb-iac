@@ -1,0 +1,1058 @@
+name: "MBB GHES to GHEC Migration Workflow"
+
+on:
+  issues:
+    types: [opened]
+
+# Uses separate PATs for source and target:
+# - GH_SOURCE_PAT: PAT with read access to source GHES repository
+# - GH_TARGET_PAT: PAT with write access to target GHEC organization/user
+
+jobs:
+  # ─────────────────────────────────────────────
+  # Job 1: Validate migration request
+  # ─────────────────────────────────────────────
+  validate:
+    name: "Validate Migration Request"
+    if: startsWith(github.event.issue.title, '[GHES Migration]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      source_server_url: ${{ steps.parse.outputs.issueparser_source_server_url }}
+      source_organization: ${{ steps.parse.outputs.issueparser_source_organization }}
+      source_repo: ${{ steps.parse.outputs.issueparser_source_repo }}
+      target_organization: ${{ steps.parse.outputs.issueparser_target_organization }}
+      target_repo: ${{ steps.parse.outputs.issueparser_target_repo }}
+      target_visibility: ${{ steps.parse.outputs.issueparser_target_visibility }}
+      migration_options: ${{ steps.parse.outputs.issueparser_migration_options }}
+      admins: ${{ steps.parse.outputs.issueparser_admins }}
+      team_mappings: ${{ steps.parse.outputs.issueparser_team_mappings }}
+      justification: ${{ steps.parse.outputs.issueparser_justification }}
+      issue_number: ${{ github.event.issue.number }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse Issue Form
+        id: parse
+        uses: paloitmbb/mbb-tf-actions/actions/ghes-migration-parse-issue-form@main
+        with:
+          issue-body: ${{ github.event.issue.body }}
+          field-mapping: |
+            {
+              "source_server_url": "Source GHES URL",
+              "source_organization": "Source Organization",
+              "source_repo": "Source Repository Name",
+              "target_organization": "Target Organization",
+              "target_repo": "Target Repository Name",
+              "target_visibility": "Target Visibility",
+              "admins": "Admins",
+              "team_mappings": "Team Access Mappings",
+              "justification": "Justification",
+              "migration_options": "Migration Options"
+            }
+          textarea-fields: |
+            ["team_mappings", "justification"]
+          checkbox-fields: |
+            ["migration_options"]
+
+      - name: Validate GHES connectivity
+        uses: paloitmbb/mbb-tf-actions/actions/ghes-validate-connectivity@main
+        with:
+          source-server-url: ${{ steps.parse.outputs.issueparser_source_server_url }}
+          source-pat: ${{ secrets.GH_SOURCE_PAT }}
+          issue-number: ${{ github.event.issue.number }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate migration repositories
+        uses: paloitmbb/mbb-tf-actions/actions/ghes-validate-repos@main
+        with:
+          source-server-url: ${{ steps.parse.outputs.issueparser_source_server_url }}
+          source-org: ${{ steps.parse.outputs.issueparser_source_organization }}
+          source-repo: ${{ steps.parse.outputs.issueparser_source_repo }}
+          target-org: ${{ steps.parse.outputs.issueparser_target_organization }}
+          target-repo: ${{ steps.parse.outputs.issueparser_target_repo }}
+          source-pat: ${{ secrets.GH_SOURCE_PAT }}
+          target-pat: ${{ secrets.GH_TARGET_PAT }}
+          issue-number: ${{ github.event.issue.number }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Label as in-progress
+        run: |
+          gh label create "in-progress" --color "FBCA04" --description "Request is being processed" --force 2>/dev/null || true
+          gh issue edit ${{ github.event.issue.number }} --add-label "in-progress"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─────────────────────────────────────────────
+  # Job 2: Pre-migration — record state & lock
+  # ─────────────────────────────────────────────
+  pre-migration:
+    name: "Pre-Migration Setup"
+    needs: [validate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      source_branches: ${{ steps.source-stats.outputs.branches }}
+      source_tags: ${{ steps.source-stats.outputs.tags }}
+      source_head_sha: ${{ steps.source-stats.outputs.head_sha }}
+      source_default_branch: ${{ steps.source-stats.outputs.default_branch }}
+      source_protected_branches: ${{ steps.source-stats.outputs.protected_branches }}
+      source_pr_count: ${{ steps.source-stats.outputs.pr_count }}
+      source_issue_count: ${{ steps.source-stats.outputs.issue_count }}
+      source_release_count: ${{ steps.source-stats.outputs.release_count }}
+      source_repo_size: ${{ steps.source-stats.outputs.repo_size }}
+      source_is_archived: ${{ steps.source-stats.outputs.is_archived }}
+      source_last_push: ${{ steps.source-stats.outputs.last_push }}
+      source_last_update: ${{ steps.source-stats.outputs.last_update }}
+      source_pr_review_count: ${{ steps.source-stats.outputs.pr_review_count }}
+      source_created: ${{ steps.source-stats.outputs.created }}
+      source_has_codeowners: ${{ steps.source-stats.outputs.has_codeowners }}
+      source_code_scanning: ${{ steps.source-stats.outputs.code_scanning_enabled }}
+      source_secret_scanning: ${{ steps.source-stats.outputs.secret_scanning_enabled }}
+      source_dependabot_alerts: ${{ steps.source-stats.outputs.dependabot_alerts_enabled }}
+      source_variables_count: ${{ steps.source-stats.outputs.variables_count }}
+      source_variables_list: ${{ steps.source-stats.outputs.variables_list }}
+      source_secrets_count: ${{ steps.source-stats.outputs.secrets_count }}
+      source_secrets_list: ${{ steps.source-stats.outputs.secrets_list }}
+      source_environments_list: ${{ steps.source-stats.outputs.environments_list }}
+      source_env_secrets_list: ${{ steps.source-stats.outputs.env_secrets_list }}
+      source_env_variables_list: ${{ steps.source-stats.outputs.env_variables_list }}
+      source_org_secrets_count: ${{ steps.source-stats.outputs.org_secrets_count }}
+      source_org_secrets_list: ${{ steps.source-stats.outputs.org_secrets_list }}
+      source_org_variables_count: ${{ steps.source-stats.outputs.org_variables_count }}
+      source_org_variables_list: ${{ steps.source-stats.outputs.org_variables_list }}
+      dependabot_alerts_count: ${{ steps.security-alerts.outputs.dependabot_alerts_count }}
+      dependabot_critical_count: ${{ steps.security-alerts.outputs.dependabot_critical_count }}
+      dependabot_high_count: ${{ steps.security-alerts.outputs.dependabot_high_count }}
+      dependabot_medium_count: ${{ steps.security-alerts.outputs.dependabot_medium_count }}
+      dependabot_low_count: ${{ steps.security-alerts.outputs.dependabot_low_count }}
+      dependabot_alert_names: ${{ steps.security-alerts.outputs.dependabot_alert_names }}
+      dependabot_summary: ${{ steps.security-alerts.outputs.dependabot_summary }}
+      code_scanning_alerts_count: ${{ steps.security-alerts.outputs.code_scanning_alerts_count }}
+      code_scanning_critical_count: ${{ steps.security-alerts.outputs.code_scanning_critical_count }}
+      code_scanning_high_count: ${{ steps.security-alerts.outputs.code_scanning_high_count }}
+      code_scanning_medium_count: ${{ steps.security-alerts.outputs.code_scanning_medium_count }}
+      code_scanning_low_count: ${{ steps.security-alerts.outputs.code_scanning_low_count }}
+      code_scanning_alert_names: ${{ steps.security-alerts.outputs.code_scanning_alert_names }}
+      code_scanning_summary: ${{ steps.security-alerts.outputs.code_scanning_summary }}
+      total_alerts_count: ${{ steps.security-alerts.outputs.total_alerts_count }}
+      has_critical_alerts: ${{ steps.security-alerts.outputs.has_critical_alerts }}
+      overall_security_summary: ${{ steps.security-alerts.outputs.overall_summary }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse migration options
+        id: options
+        run: |
+          OPTIONS="${{ needs.validate.outputs.migration_options }}"
+          echo "Raw options: $OPTIONS"
+
+          if echo "$OPTIONS" | grep -qi "Preserve full commit history"; then
+            echo "preserve_history=true" >> $GITHUB_OUTPUT
+          else
+            echo "preserve_history=false" >> $GITHUB_OUTPUT
+          fi
+
+          if echo "$OPTIONS" | grep -qi "Migrate Pull Requests"; then
+            echo "migrate_prs=true" >> $GITHUB_OUTPUT
+          else
+            echo "migrate_prs=false" >> $GITHUB_OUTPUT
+          fi
+
+          if echo "$OPTIONS" | grep -qi "Migrate Issues"; then
+            echo "migrate_issues=true" >> $GITHUB_OUTPUT
+          else
+            echo "migrate_issues=false" >> $GITHUB_OUTPUT
+          fi
+
+          if echo "$OPTIONS" | grep -qi "Migrate Releases"; then
+            echo "migrate_releases=true" >> $GITHUB_OUTPUT
+          else
+            echo "migrate_releases=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Gather source repository stats from GHES
+        id: source-stats
+        uses: paloitmbb/mbb-tf-actions/actions/ghes-source-repo-stats@main
+        with:
+          source-server-url: ${{ needs.validate.outputs.source_server_url }}
+          source-org: ${{ needs.validate.outputs.source_organization }}
+          source-repo: ${{ needs.validate.outputs.source_repo }}
+          source-pat: ${{ secrets.GH_SOURCE_PAT }}
+
+      - name: Gather security alerts from source repository
+        id: security-alerts
+        uses: paloitmbb/mbb-tf-actions/actions/ghes-security-alerts@main
+        with:
+          repository: ${{ needs.validate.outputs.source_organization }}/${{ needs.validate.outputs.source_repo }}
+          token: ${{ secrets.GH_SOURCE_PAT }}
+
+      - name: Post pre-migration summary
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sourceServerUrl = '${{ needs.validate.outputs.source_server_url }}';
+            const sourceOrg = '${{ needs.validate.outputs.source_organization }}';
+            const sourceRepo = '${{ needs.validate.outputs.source_repo }}';
+            const targetOrg = '${{ needs.validate.outputs.target_organization }}';
+            const targetRepo = '${{ needs.validate.outputs.target_repo }}';
+            const targetVisibility = '${{ needs.validate.outputs.target_visibility }}';
+            const migrationOptions = '${{ needs.validate.outputs.migration_options }}';
+            const admins = '${{ needs.validate.outputs.admins }}';
+            const teamMappings = '${{ needs.validate.outputs.team_mappings }}';
+            const justification = '${{ needs.validate.outputs.justification }}';
+
+            // Repo stats from source-stats step
+            const repoSize = '${{ steps.source-stats.outputs.repo_size }}';
+            const defaultBranch = '${{ steps.source-stats.outputs.default_branch }}';
+            const headSha = '${{ steps.source-stats.outputs.head_sha }}';
+            const branches = '${{ steps.source-stats.outputs.branches }}';
+            const tags = '${{ steps.source-stats.outputs.tags }}';
+            const protectedBranches = '${{ steps.source-stats.outputs.protected_branches }}';
+            const prCount = '${{ steps.source-stats.outputs.pr_count }}';
+            const issueCount = '${{ steps.source-stats.outputs.issue_count }}';
+            const releaseCount = '${{ steps.source-stats.outputs.release_count }}';
+            const codeScanningEnabled = '${{ steps.source-stats.outputs.code_scanning_enabled }}';
+            const secretScanningEnabled = '${{ steps.source-stats.outputs.secret_scanning_enabled }}';
+            const dependabotAlertsEnabled = '${{ steps.source-stats.outputs.dependabot_alerts_enabled }}';
+            const lastPush = '${{ steps.source-stats.outputs.last_push }}';
+            const lastUpdate = '${{ steps.source-stats.outputs.last_update }}';
+            const prReviewCount = '${{ steps.source-stats.outputs.pr_review_count }}';
+            const created = '${{ steps.source-stats.outputs.created }}';
+            const hasCodeowners = '${{ steps.source-stats.outputs.has_codeowners }}';
+
+            // ── Build migration options block ──
+            let optionsBlock = '';
+            if (migrationOptions) {
+              const options = migrationOptions.split(',').map(opt => opt.trim()).filter(opt => opt);
+              if (options.length > 0) {
+                for (const option of options) {
+                  optionsBlock += `- ✅ ${option}\n`;
+                }
+              } else {
+                optionsBlock += '- No additional migration options selected\n';
+              }
+            }
+
+            let teamBlock = '';
+            if (teamMappings && teamMappings.trim()) {
+              teamBlock = '```\n' + teamMappings + '\n```\n';
+            }
+
+            let justificationBlock = '';
+            if (justification && justification.trim()) {
+              justificationBlock = '> ' + justification.split('\n').join('\n> ') + '\n';
+            }
+
+            // ── 1. Post issue comment ──
+            let commentBody = '## 📋 Pre-Migration Summary (GHES → GHEC)\n\n';
+            commentBody += '✅ **Validation passed — pre-migration setup complete!**\n\n';
+            commentBody += '### Migration Details\n';
+            commentBody += `- **Migration Type:** GHES → GHEC (via GitHub-owned storage)\n`;
+            commentBody += `- **Source GHES URL:** \`${sourceServerUrl}\`\n`;
+            commentBody += `- **Source Repository:** \`${sourceOrg}/${sourceRepo}\`\n`;
+            commentBody += `- **Target Repository (GHEC):** \`${targetOrg}/${targetRepo}\`\n`;
+            commentBody += `- **Target Visibility:** \`${targetVisibility}\`\n`;
+            commentBody += `- **Admins:** ${admins}\n\n`;
+
+            commentBody += '### 📊 Source Repository Stats (GHES)\n\n';
+            commentBody += '| Metric | Value |\n';
+            commentBody += '|--------|-------|\n';
+            commentBody += `| **Size** | ${repoSize} |\n`;
+            commentBody += `| **Default Branch** | ${defaultBranch} |\n`;
+            commentBody += `| **HEAD SHA** | \`${headSha}\` |\n`;
+            commentBody += `| **Branches** | ${branches} |\n`;
+            commentBody += `| **Tags** | ${tags} |\n`;
+            commentBody += `| **Protected Branches** | ${protectedBranches} |\n`;
+            commentBody += `| **PR Count** | ${prCount} |\n`;
+            commentBody += `| **Issue Count** | ${issueCount} |\n`;
+            commentBody += `| **Releases** | ${releaseCount} |\n`;
+            commentBody += `| **Code Scanning** | ${codeScanningEnabled} |\n`;
+            commentBody += `| **Secret Scanning** | ${secretScanningEnabled} |\n`;
+            commentBody += `| **Dependabot Alerts** | ${dependabotAlertsEnabled} |\n`;
+            commentBody += `| **Last Push** | ${lastPush} |\n`;
+            commentBody += `| **Last Update** | ${lastUpdate} |\n`;
+            commentBody += `| **PR Review Count** | ${prReviewCount} |\n`;
+            commentBody += `| **Created** | ${created} |\n`;
+            commentBody += `| **CODEOWNERS** | ${hasCodeowners === 'true' ? '✅ Present' : '⚠️ Not found'} |\n\n`;
+
+            if (hasCodeowners !== 'true') {
+              commentBody += '### ⚠️ CODEOWNERS Alert\n';
+              commentBody += '> **The CODEOWNERS file is not present in the source repository and it will be injected by default in the destination repo.**\n\n';
+            }
+
+            if (optionsBlock) commentBody += '### ⚙️ Migration Options\n' + optionsBlock + '\n';
+            if (teamBlock) commentBody += '### 👥 Team Access Mappings\n' + teamBlock + '\n';
+            if (justificationBlock) commentBody += '### 📝 Justification\n' + justificationBlock + '\n';
+            commentBody += '---\n\n';
+            commentBody += '⏳ **Awaiting approval to proceed with GHES → GHEC migration...**\n';
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: commentBody
+            });
+
+            // ── 2. Add labels ──
+            await github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['validation-passed', 'ghes-to-ghec-migration']
+            });
+
+            // ── 3. Write workflow job summary ──
+            let summary = '# 📋 Pre-Migration Summary (GHES → GHEC)\n\n';
+            summary += '## ✅ Validation passed — pre-migration setup complete!\n\n';
+            summary += '### 📋 Migration Details\n\n';
+            summary += '| Field | Value |\n';
+            summary += '|-------|-------|\n';
+            summary += `| **Migration Type** | GHES → GHEC (via GitHub-owned storage) |\n`;
+            summary += `| **Source GHES URL** | \`${sourceServerUrl}\` |\n`;
+            summary += `| **Source Repository** | \`${sourceOrg}/${sourceRepo}\` |\n`;
+            summary += `| **Target Repository** | \`${targetOrg}/${targetRepo}\` |\n`;
+            summary += `| **Target Visibility** | \`${targetVisibility}\` |\n`;
+            summary += `| **Admins** | ${admins} |\n\n`;
+
+            summary += '### 📊 Source Repository Stats (GHES)\n\n';
+            summary += '| Metric | Value |\n';
+            summary += '|--------|-------|\n';
+            summary += `| **Size** | ${repoSize} |\n`;
+            summary += `| **Default Branch** | ${defaultBranch} |\n`;
+            summary += `| **HEAD SHA** | \`${headSha}\` |\n`;
+            summary += `| **Branches** | ${branches} |\n`;
+            summary += `| **Tags** | ${tags} |\n`;
+            summary += `| **Protected Branches** | ${protectedBranches} |\n`;
+            summary += `| **PR Count** | ${prCount} |\n`;
+            summary += `| **Issue Count** | ${issueCount} |\n`;
+            summary += `| **Releases** | ${releaseCount} |\n`;
+            summary += `| **Code Scanning** | ${codeScanningEnabled} |\n`;
+            summary += `| **Secret Scanning** | ${secretScanningEnabled} |\n`;
+            summary += `| **Dependabot Alerts** | ${dependabotAlertsEnabled} |\n`;
+            summary += `| **Last Push** | ${lastPush} |\n`;
+            summary += `| **Last Update** | ${lastUpdate} |\n`;
+            summary += `| **PR Review Count** | ${prReviewCount} |\n`;
+            summary += `| **Created** | ${created} |\n`;
+            summary += `| **CODEOWNERS** | ${hasCodeowners === 'true' ? '✅ Present' : '⚠️ Not found'} |\n\n`;
+
+            if (hasCodeowners !== 'true') {
+              summary += '### ⚠️ CODEOWNERS Alert\n\n';
+              summary += '> **The CODEOWNERS file is not present in the source repository and it will be injected by default in the destination repo.**\n\n';
+            }
+
+            if (optionsBlock) summary += '### ⚙️ Migration Options\n\n' + optionsBlock;
+            if (teamBlock) summary += '\n### 👥 Team Access Mappings\n\n' + teamBlock;
+            if (justificationBlock) summary += '\n### 📝 Justification\n\n' + justificationBlock;
+            summary += '\n---\n';
+
+            await core.summary.addRaw(summary).write();
+
+  # ─────────────────────────────────────────────
+  # Job 3: Approval Gate - requires manual approval after validation
+  # ─────────────────────────────────────────────
+  approval:
+    name: "Migration Approval Gate"
+    needs: [validate, pre-migration]
+    runs-on: ubuntu-latest
+    environment:
+      name: migration-approval
+    permissions:
+      issues: write
+    steps:
+      - name: Comment approval requested
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "### 🔐 Approval Required
+
+          Validation has passed for **GHES → GHEC** migration. A manual approval is now required to proceed.
+
+          | Field | Value |
+          |-------|-------|
+          | **Source GHES** | \`${SOURCE_URL}\` |
+          | **Source Repo** | \`${SOURCE_ORG}/${SOURCE_REPO}\` |
+          | **Target (GHEC)** | \`${TARGET_ORG}/${TARGET_REPO}\` |
+          | **Visibility** | \`${VISIBILITY}\` |
+
+          ⏳ Waiting for a member of the **migration-approval** environment reviewers to approve...
+
+          ---
+          *Automated by GitHub Actions workflow*"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          SOURCE_URL: ${{ needs.validate.outputs.source_server_url }}
+          SOURCE_ORG: ${{ needs.validate.outputs.source_organization }}
+          SOURCE_REPO: ${{ needs.validate.outputs.source_repo }}
+          TARGET_ORG: ${{ needs.validate.outputs.target_organization }}
+          TARGET_REPO: ${{ needs.validate.outputs.target_repo }}
+          VISIBILITY: ${{ needs.validate.outputs.target_visibility }}
+
+      - name: Approval granted
+        run: echo "✅ Migration approved — proceeding to next steps."
+
+      - name: Comment approval granted
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "### ✅ Migration Approved
+
+          The GHES → GHEC migration has been approved. Proceeding with the next steps.
+
+          ---
+          *Automated by GitHub Actions workflow*"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+
+  # ─────────────────────────────────────────────
+  # Job 4: Execute migration via GEI (GHES → GHEC)
+  # ─────────────────────────────────────────────
+  migrate:
+    name: "Execute GEI Migration (GHES → GHEC)"
+    needs: [validate, approval]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Install GEI CLI
+        run: |
+          gh extension install github/gh-gei || true
+          gh gei --version
+        env:
+          GH_TOKEN: ${{ secrets.GH_TARGET_PAT }}
+
+      - name: Run GEI migration (GHES → GHEC)
+        id: gei
+        run: |
+          SOURCE_URL="${{ needs.validate.outputs.source_server_url }}"
+          SOURCE_URL="${SOURCE_URL%/}"
+          SRC_ORG="${{ needs.validate.outputs.source_organization }}"
+          SRC_REPO="${{ needs.validate.outputs.source_repo }}"
+          TGT_ORG="${{ needs.validate.outputs.target_organization }}"
+          TGT_REPO="${{ needs.validate.outputs.target_repo }}"
+          VISIBILITY="${{ needs.validate.outputs.target_visibility }}"
+
+          echo "🚀 Starting GEI migration (GHES → GHEC)..."
+          echo "   Source GHES: ${SOURCE_URL}"
+          echo "   Source Repo: ${SRC_ORG}/${SRC_REPO}"
+          echo "   Target GHEC: ${TGT_ORG}/${TGT_REPO}"
+          echo "   Visibility: ${VISIBILITY}"
+          echo "   Mode: GitHub-owned storage (GHES 3.15.3)"
+          echo "🔒 Source repository will be locked during migration to prevent changes"
+
+          gh gei migrate-repo \
+            --github-source-org "$SRC_ORG" \
+            --source-repo "$SRC_REPO" \
+            --github-target-org "$TGT_ORG" \
+            --target-repo "$TGT_REPO" \
+            --target-repo-visibility "$VISIBILITY" \
+            --ghes-api-url "${SOURCE_URL}/api/v3" \
+            --use-github-storage \
+            --lock-source-repo \
+            --verbose 2>&1 | tee /tmp/gei_output.txt
+
+          GEI_EXIT=$?
+          echo "exit_code=$GEI_EXIT" >> $GITHUB_OUTPUT
+
+          if [ "$GEI_EXIT" -ne 0 ]; then
+            echo "❌ GEI migration failed"
+            exit 1
+          fi
+
+          echo "✅ GEI migration command completed (GHES → GHEC)"
+        env:
+          GH_SOURCE_PAT: ${{ secrets.GH_SOURCE_PAT }}
+          GH_PAT: ${{ secrets.GH_TARGET_PAT }}
+
+
+  # ─────────────────────────────────────────────
+  # Job 5: Post-migration setup
+  # ─────────────────────────────────────────────
+  post-migration:
+    name: "Post-Migration Setup"
+    needs: [validate, pre-migration, migrate]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Wait for GitHub.com to finalize
+        run: |
+          echo "⏳ Waiting 15 seconds for GitHub.com to finalize import..."
+          sleep 15
+
+      - name: Add admin collaborators
+        run: |
+          TGT_ORG="${{ needs.validate.outputs.target_organization }}"
+          TGT_REPO="${{ needs.validate.outputs.target_repo }}"
+          ADMINS="${{ needs.validate.outputs.admins }}"
+          TOKEN="${{ secrets.GH_TARGET_PAT }}"
+
+          echo "👥 Adding admin collaborators..."
+
+          IFS=',' read -ra ADMIN_ARRAY <<< "$ADMINS"
+          for RAW_ADMIN in "${ADMIN_ARRAY[@]}"; do
+            ADMIN=$(echo "$RAW_ADMIN" | xargs | sed 's/^@//')
+            if [ -z "$ADMIN" ]; then continue; fi
+
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X PUT \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/json" \
+              -d '{"permission": "admin"}' \
+              "https://api.github.com/repos/${TGT_ORG}/${TGT_REPO}/collaborators/${ADMIN}")
+
+            if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "204" ]; then
+              echo "   ✅ $ADMIN — added as admin"
+            else
+              echo "   ⚠️ $ADMIN — HTTP $HTTP_CODE"
+            fi
+          done
+
+      - name: Apply team access mappings
+        if: needs.validate.outputs.team_mappings != ''
+        run: |
+          TGT_ORG="${{ needs.validate.outputs.target_organization }}"
+          TGT_REPO="${{ needs.validate.outputs.target_repo }}"
+          TOKEN="${{ secrets.GH_TARGET_PAT }}"
+
+          echo "👥 Applying team access mappings..."
+
+          MAPPINGS="${{ needs.validate.outputs.team_mappings }}"
+          echo "$MAPPINGS" | while IFS= read -r LINE; do
+            LINE=$(echo "$LINE" | xargs)
+            [ -z "$LINE" ] && continue
+            [[ "$LINE" == \#* ]] && continue
+
+            # Parse: source-team → target-team : permission
+            if echo "$LINE" | grep -q "→"; then
+              TARGET_PART=$(echo "$LINE" | sed 's/.*→//' | xargs)
+            elif echo "$LINE" | grep -q "->"; then
+              TARGET_PART=$(echo "$LINE" | sed 's/.*->//' | xargs)
+            else
+              echo "   ⚠️ Skipping invalid mapping: $LINE"
+              continue
+            fi
+
+            if echo "$TARGET_PART" | grep -q ":"; then
+              TARGET_TEAM=$(echo "$TARGET_PART" | sed 's/:.*//' | xargs)
+              PERMISSION=$(echo "$TARGET_PART" | sed 's/.*://' | xargs)
+            else
+              TARGET_TEAM="$TARGET_PART"
+              PERMISSION="push"
+            fi
+
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X PUT \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/json" \
+              -d "{\"permission\": \"$PERMISSION\"}" \
+              "https://api.github.com/orgs/${TGT_ORG}/teams/${TARGET_TEAM}/repos/${TGT_ORG}/${TGT_REPO}")
+
+            if [ "$HTTP_CODE" = "204" ]; then
+              echo "   ✅ $TARGET_TEAM — $PERMISSION"
+            else
+              echo "   ⚠️ $TARGET_TEAM — HTTP $HTTP_CODE"
+            fi
+          done
+
+
+  
+   
+      - name: Comment post-migration setup
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "### 🔧 Post-Migration Setup Complete (GHES → GHEC)
+
+          - ✅ Admin collaborators added: \`${ADMINS}\`
+          - ✅ Team access mappings applied (if provided)
+          - ⚠️ **Secrets must be re-created manually** (secret values are not readable via API)
+          - ⚠️ **Branch protection rules** may need manual re-configuration (GHES and GHEC may differ in supported features)
+          - ⚠️ **GHAS settings** should be reviewed and enabled on GHEC as needed
+
+          📋 Running verification checks..."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ needs.validate.outputs.issue_number }}
+          ADMINS: ${{ needs.validate.outputs.admins }}
+          TARGET_ORG: ${{ needs.validate.outputs.target_organization }}
+          TARGET_REPO: ${{ needs.validate.outputs.target_repo }}
+
+  # ─────────────────────────────────────────────
+  # Job 6: Verify migration integrity
+  # ─────────────────────────────────────────────
+  verify:
+    name: "Verify Migration Integrity"
+    needs: [validate, pre-migration, post-migration]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    outputs:
+      target_branches: ${{ steps.target-stats.outputs.branches }}
+      target_tags: ${{ steps.target-stats.outputs.tags }}
+      target_head_sha: ${{ steps.target-stats.outputs.head_sha }}
+      branches_match: ${{ steps.compare.outputs.branches_match }}
+      tags_match: ${{ steps.compare.outputs.tags_match }}
+      sha_match: ${{ steps.compare.outputs.sha_match }}
+      verification_passed: ${{ steps.compare.outputs.verification_passed }}
+
+    steps:
+      - name: Fetch target repository stats from GHEC
+        id: target-stats
+        run: |
+          TGT_ORG="${{ needs.validate.outputs.target_organization }}"
+          TGT_REPO="${{ needs.validate.outputs.target_repo }}"
+          DEFAULT_BRANCH="${{ needs.pre-migration.outputs.source_default_branch }}"
+          TOKEN="${{ secrets.GH_TARGET_PAT }}"
+
+          echo "📊 Fetching target repository stats from GHEC..."
+
+          # Get branch count (paginated)
+          BRANCHES=0
+          PAGE=1
+          while true; do
+            RESPONSE=$(curl -s -w "\n%{http_code}" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${TGT_ORG}/${TGT_REPO}/branches?per_page=100&page=${PAGE}")
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | sed '$d')
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "⚠️ Failed to fetch branches (HTTP $HTTP_CODE)"
+              break
+            fi
+            COUNT=$(echo "$BODY" | jq '. | length')
+            BRANCHES=$((BRANCHES + COUNT))
+            [ "$COUNT" -lt 100 ] && break
+            PAGE=$((PAGE + 1))
+          done
+          echo "branches=${BRANCHES}" >> $GITHUB_OUTPUT
+          echo "   Branches: ${BRANCHES}"
+
+          # Get tag count (paginated)
+          TAGS=0
+          PAGE=1
+          while true; do
+            RESPONSE=$(curl -s -w "\n%{http_code}" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${TGT_ORG}/${TGT_REPO}/tags?per_page=100&page=${PAGE}")
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | sed '$d')
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "⚠️ Failed to fetch tags (HTTP $HTTP_CODE)"
+              break
+            fi
+            COUNT=$(echo "$BODY" | jq '. | length')
+            TAGS=$((TAGS + COUNT))
+            [ "$COUNT" -lt 100 ] && break
+            PAGE=$((PAGE + 1))
+          done
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "   Tags: ${TAGS}"
+
+          # Get HEAD SHA of default branch
+          HEAD_RESPONSE=$(curl -s \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${TGT_ORG}/${TGT_REPO}/branches/${DEFAULT_BRANCH}")
+          HEAD_SHA=$(echo "$HEAD_RESPONSE" | jq -r '.commit.sha // "unknown"')
+          echo "head_sha=${HEAD_SHA}" >> $GITHUB_OUTPUT
+          echo "   HEAD SHA: ${HEAD_SHA}"
+
+          echo "✅ Target stats collected from GHEC"
+
+      - name: Compare source and target stats
+        id: compare
+        run: |
+          SRC_BRANCHES="${{ needs.pre-migration.outputs.source_branches }}"
+          TGT_BRANCHES="${{ steps.target-stats.outputs.branches }}"
+          SRC_TAGS="${{ needs.pre-migration.outputs.source_tags }}"
+          TGT_TAGS="${{ steps.target-stats.outputs.tags }}"
+          SRC_SHA="${{ needs.pre-migration.outputs.source_head_sha }}"
+          TGT_SHA="${{ steps.target-stats.outputs.head_sha }}"
+
+          PASSED="true"
+
+          echo "🔍 Comparing migration integrity..."
+          echo "   Branches: source=${SRC_BRANCHES} target=${TGT_BRANCHES}"
+          echo "   Tags:     source=${SRC_TAGS} target=${TGT_TAGS}"
+          echo "   HEAD SHA: source=${SRC_SHA:0:12} target=${TGT_SHA:0:12}"
+
+          # Compare branches
+          if [ "$SRC_BRANCHES" = "$TGT_BRANCHES" ]; then
+            echo "branches_match=true" >> $GITHUB_OUTPUT
+            echo "   ✅ Branches match"
+          else
+            echo "branches_match=false" >> $GITHUB_OUTPUT
+            echo "   ⚠️ Branches mismatch"
+            PASSED="false"
+          fi
+
+          # Compare tags
+          if [ "$SRC_TAGS" = "$TGT_TAGS" ]; then
+            echo "tags_match=true" >> $GITHUB_OUTPUT
+            echo "   ✅ Tags match"
+          else
+            echo "tags_match=false" >> $GITHUB_OUTPUT
+            echo "   ⚠️ Tags mismatch"
+            PASSED="false"
+          fi
+
+          # Compare HEAD SHA (first 12 chars)
+          if [ "${SRC_SHA:0:12}" = "${TGT_SHA:0:12}" ]; then
+            echo "sha_match=true" >> $GITHUB_OUTPUT
+            echo "   ✅ HEAD SHA match"
+          else
+            echo "sha_match=false" >> $GITHUB_OUTPUT
+            echo "   ⚠️ HEAD SHA mismatch"
+            PASSED="false"
+          fi
+
+          echo "verification_passed=${PASSED}" >> $GITHUB_OUTPUT
+          echo ""
+          echo "📋 Verification result: ${PASSED}"
+
+      - name: Post verification results to issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const srcBranches = '${{ needs.pre-migration.outputs.source_branches }}';
+            const tgtBranches = '${{ steps.target-stats.outputs.branches }}';
+            const srcTags = '${{ needs.pre-migration.outputs.source_tags }}';
+            const tgtTags = '${{ steps.target-stats.outputs.tags }}';
+            const srcSha = '${{ needs.pre-migration.outputs.source_head_sha }}';
+            const tgtSha = '${{ steps.target-stats.outputs.head_sha }}';
+            const branchesMatch = '${{ steps.compare.outputs.branches_match }}' === 'true';
+            const tagsMatch = '${{ steps.compare.outputs.tags_match }}' === 'true';
+            const shaMatch = '${{ steps.compare.outputs.sha_match }}' === 'true';
+            const passed = '${{ steps.compare.outputs.verification_passed }}' === 'true';
+
+            let body = passed
+              ? '### ✅ Migration Verification Passed\n\n'
+              : '### ⚠️ Migration Verification — Mismatches Detected\n\n';
+
+            body += '| Check | Source (GHES) | Target (GHEC) | Status |\n';
+            body += '|-------|---------------|---------------|--------|\n';
+            body += `| **Branches** | ${srcBranches} | ${tgtBranches} | ${branchesMatch ? '✅ PASS' : '⚠️ MISMATCH'} |\n`;
+            body += `| **Tags** | ${srcTags} | ${tgtTags} | ${tagsMatch ? '✅ PASS' : '⚠️ MISMATCH'} |\n`;
+            body += `| **HEAD SHA** | \`${srcSha.substring(0, 12)}\` | \`${tgtSha.substring(0, 12)}\` | ${shaMatch ? '✅ PASS' : '⚠️ MISMATCH'} |\n\n`;
+
+            if (!passed) {
+              body += '> ⚠️ Some verification checks did not match. Please review the target repository manually.\n';
+            }
+
+            await github.rest.issues.createComment({
+              issue_number: parseInt('${{ needs.validate.outputs.issue_number }}'),
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
+
+  # ─────────────────────────────────────────────
+  # Job 7: Close issue
+  # ─────────────────────────────────────────────
+  close-issue:
+    name: "Close Issue"
+    needs: [validate, pre-migration, verify, post-migration]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Generate apply summary
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sourceServerUrl = '${{ needs.validate.outputs.source_server_url }}';
+            const sourceOrg = '${{ needs.validate.outputs.source_organization }}';
+            const sourceRepo = '${{ needs.validate.outputs.source_repo }}';
+            const targetOrg = '${{ needs.validate.outputs.target_organization }}';
+            const targetRepo = '${{ needs.validate.outputs.target_repo }}';
+            const targetVisibility = '${{ needs.validate.outputs.target_visibility }}';
+            const admins = '${{ needs.validate.outputs.admins }}';
+            const migrationOptions = '${{ needs.validate.outputs.migration_options }}';
+            const issueNumber = '${{ needs.validate.outputs.issue_number }}';
+            const runId = context.runId;
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const sourceBranches = '${{ needs.pre-migration.outputs.source_branches }}';
+            const sourceTags = '${{ needs.pre-migration.outputs.source_tags }}';
+            const sourceHeadSha = '${{ needs.pre-migration.outputs.source_head_sha }}';
+            const defaultBranch = '${{ needs.pre-migration.outputs.source_default_branch }}';
+            const targetBranches = '${{ needs.verify.outputs.target_branches }}';
+            const targetTags = '${{ needs.verify.outputs.target_tags }}';
+            const targetHeadSha = '${{ needs.verify.outputs.target_head_sha }}';
+            const branchesMatch = '${{ needs.verify.outputs.branches_match }}' === 'true';
+            const tagsMatch = '${{ needs.verify.outputs.tags_match }}' === 'true';
+            const shaMatch = '${{ needs.verify.outputs.sha_match }}' === 'true';
+            const verificationPassed = '${{ needs.verify.outputs.verification_passed }}' === 'true';
+
+            let summary = '# ✅ GHES → GHEC Migration Completed Successfully!\n\n';
+            summary += '## 🎉 Migration Details\n\n';
+            summary += '| Field | Value |\n';
+            summary += '|-------|-------|\n';
+            summary += `| **Migration Type** | GHES → GHEC (via GitHub-owned storage) |\n`;
+            summary += `| **Source GHES URL** | \`${sourceServerUrl}\` |\n`;
+            summary += `| **Source Repository** | \`${sourceOrg}/${sourceRepo}\` |\n`;
+            summary += `| **Target Repository (GHEC)** | [\`${targetOrg}/${targetRepo}\`](https://github.com/${targetOrg}/${targetRepo}) |\n`;
+            summary += `| **Target Visibility** | \`${targetVisibility}\` |\n`;
+            summary += `| **Default Branch** | \`${defaultBranch}\` |\n`;
+            summary += `| **Workflow Run** | [#${runId}](${runUrl}) |\n`;
+            summary += `| **Source Issue** | [#${issueNumber}](https://github.com/${context.repo.owner}/${context.repo.repo}/issues/${issueNumber}) |\n\n`;
+
+            summary += '## 📊 Migration Verification\n\n';
+            summary += '| Check | Source (GHES) | Target (GHEC) | Status |\n';
+            summary += '|-------|---------------|---------------|--------|\n';
+            summary += `| **Branches** | ${sourceBranches} | ${targetBranches} | ${branchesMatch ? '✅ PASS' : '⚠️ MISMATCH'} |\n`;
+            summary += `| **Tags** | ${sourceTags} | ${targetTags} | ${tagsMatch ? '✅ PASS' : '⚠️ MISMATCH'} |\n`;
+            summary += `| **HEAD SHA** | \`${sourceHeadSha.substring(0, 12)}\` | \`${targetHeadSha.substring(0, 12)}\` | ${shaMatch ? '✅ PASS' : '⚠️ MISMATCH'} |\n`;
+            summary += `| **Overall** | | | ${verificationPassed ? '✅ ALL PASSED' : '⚠️ REVIEW NEEDED'} |\n\n`;
+
+            if (migrationOptions) {
+              summary += '## ⚙️ Migration Options Applied\n\n';
+              const options = migrationOptions.split(',').map(o => o.trim()).filter(o => o);
+              for (const option of options) {
+                summary += `- ✅ ${option}\n`;
+              }
+              summary += '\n';
+            }
+
+            if (admins) {
+              summary += '## 👤 Admin Access\n\n';
+              summary += '| Admin | Permission | Status |\n';
+              summary += '|-------|------------|--------|\n';
+              const adminList = admins.split(',').map(a => a.trim().replace(/^@/, '')).filter(a => a);
+              for (const admin of adminList) {
+                summary += `| \`${admin}\` | admin | ✅ Added |\n`;
+              }
+              summary += '\n';
+            }
+
+            summary += '## 📦 Post-Migration Actions\n\n';
+            summary += `- ✅ Team access mappings applied\n\n`;
+
+            const secretNames = '${{ needs.post-migration.outputs.secret_names }}';
+            const secretCount = '${{ needs.post-migration.outputs.secret_count }}';
+            const secretError = '${{ needs.post-migration.outputs.secret_error }}';
+
+            if (secretError) {
+              summary += '## ⚠️ Secrets\n\n';
+              summary += `Could not list secrets: ${secretError}\n\n`;
+            } else if (secretCount && secretCount !== '0') {
+              summary += '## 🔑 Secrets Requiring Manual Re-creation\n\n';
+              summary += 'The following secret **names** were found in the source GHES repo. Values cannot be read via API — you must re-create them manually on GHEC.\n\n';
+              summary += '| Secret Name | Scope |\n';
+              summary += '|-------------|-------|\n';
+              const parts = secretNames.split(' | ');
+              for (const part of parts) {
+                const [scope, ...names] = part.split(': ');
+                if (names.length > 0) {
+                  const nameList = names.join(': ').split(', ');
+                  for (const name of nameList) {
+                    summary += `| \`${name.trim()}\` | ${scope} |\n`;
+                  }
+                }
+              }
+              summary += `\n> **Total: ${secretCount} secret(s)**\n\n`;
+              summary += `Use \`gh secret set <NAME> --repo ${targetOrg}/${targetRepo}\` or the GitHub UI to set them.\n\n`;
+            } else {
+              summary += '## ✅ Secrets\n\nNo repository-level secrets to re-create.\n\n';
+            }
+
+            summary += '## 📋 Next Steps\n\n';
+            summary += `1. 🔗 Visit your migrated repository: https://github.com/${targetOrg}/${targetRepo}\n`;
+            summary += `2. 🔍 Verify repository contents and settings\n`;
+            summary += `3. 🔒 Review and re-configure branch protection rules (GHES rules may not fully map to GHEC)\n`;
+            summary += `4. 🛡️ Enable GHAS features on GHEC (Advanced Security, Secret Scanning, Code Scanning)\n`;
+            summary += `5. 👥 Verify team access and collaborator permissions\n`;
+            summary += `6. 🔑 Re-create any secrets listed above\n`;
+            summary += `7. 🔄 Update CI/CD pipelines to point to GHEC\n`;
+            summary += `8. 🚀 Start developing!\n\n`;
+
+            summary += '---\n\n';
+            summary += `*GHES → GHEC migration completed via GEI workflow run #${runId}, completing issue #${issueNumber}*\n`;
+
+            await core.summary
+              .addRaw(summary)
+              .write();
+
+      - name: Post success comment to issue
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sourceOrg = '${{ needs.validate.outputs.source_organization }}';
+            const sourceRepo = '${{ needs.validate.outputs.source_repo }}';
+            const targetOrg = '${{ needs.validate.outputs.target_organization }}';
+            const targetRepo = '${{ needs.validate.outputs.target_repo }}';
+            const targetVisibility = '${{ needs.validate.outputs.target_visibility }}';
+            const admins = '${{ needs.validate.outputs.admins }}';
+            const migrationOptions = '${{ needs.validate.outputs.migration_options }}';
+            const issueNumber = '${{ needs.validate.outputs.issue_number }}';
+            const runId = context.runId;
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const sourceBranches = '${{ needs.pre-migration.outputs.source_branches }}';
+            const sourceTags = '${{ needs.pre-migration.outputs.source_tags }}';
+            const sourceHeadSha = '${{ needs.pre-migration.outputs.source_head_sha }}';
+            const defaultBranch = '${{ needs.pre-migration.outputs.source_default_branch }}';
+            const targetBranches = '${{ needs.verify.outputs.target_branches }}';
+            const targetTags = '${{ needs.verify.outputs.target_tags }}';
+            const targetHeadSha = '${{ needs.verify.outputs.target_head_sha }}';
+            const branchesMatch = '${{ needs.verify.outputs.branches_match }}' === 'true';
+            const tagsMatch = '${{ needs.verify.outputs.tags_match }}' === 'true';
+            const shaMatch = '${{ needs.verify.outputs.sha_match }}' === 'true';
+            const verificationPassed = '${{ needs.verify.outputs.verification_passed }}' === 'true';
+
+            let adminsSection = '';
+            if (admins) {
+              const adminList = admins.split(',').map(a => a.trim().replace(/^@/, '')).filter(a => a);
+              adminsSection = '\n\n### 👤 Admin Access\n';
+              for (const admin of adminList) {
+                adminsSection += `- \`${admin}\` — admin ✅\n`;
+              }
+            }
+
+            let optionsSection = '';
+            if (migrationOptions) {
+              const options = migrationOptions.split(',').map(o => o.trim()).filter(o => o);
+              if (options.length > 0) {
+                optionsSection = '\n\n### ⚙️ Migration Options Applied\n';
+                for (const option of options) {
+                  optionsSection += `- ✅ ${option}\n`;
+                }
+              }
+            }
+
+            const commentBody = `## ✅ GHES → GHEC Migration Completed Successfully!
+
+            Your repository has been migrated from GHES to GHEC via GEI.
+
+            ### 🎉 Migration Details
+            - **Source Repository:** \`${sourceOrg}/${sourceRepo}\`
+            - **Target Repository:** [${targetOrg}/${targetRepo}](https://github.com/${targetOrg}/${targetRepo})
+            - **Target Visibility:** ${targetVisibility}
+            - **Default Branch:** ${defaultBranch}
+            - **Workflow Run:** [#${runId}](${runUrl})
+
+            ### 📊 Verification Results
+            | Check | Source | Target | Status |
+            |-------|--------|--------|--------|
+            | **Branches** | ${sourceBranches} | ${targetBranches} | ${branchesMatch ? '✅' : '⚠️'} |
+            | **Tags** | ${sourceTags} | ${targetTags} | ${tagsMatch ? '✅' : '⚠️'} |
+            | **HEAD SHA** | \`${sourceHeadSha.substring(0, 12)}\` | \`${targetHeadSha.substring(0, 12)}\` | ${shaMatch ? '✅' : '⚠️'} |
+            | **Overall** | | | ${verificationPassed ? '✅ All passed' : '⚠️ Review needed'} |
+
+            ### 📦 Post-Migration Actions
+            - ✅ Team access mappings applied${adminsSection}${optionsSection}
+
+            ### 🔑 Secrets Requiring Manual Re-creation
+            ${(() => {
+              const sn = '${{ needs.post-migration.outputs.secret_names }}';
+              const sc = '${{ needs.post-migration.outputs.secret_count }}';
+              const se = '${{ needs.post-migration.outputs.secret_error }}';
+              if (se) return `⚠️ Could not list secrets: ${se}`;
+              if (!sc || sc === '0') return '✅ No repository-level secrets to re-create.';
+              let table = '| Secret Name | Scope |\n|-------------|-------|\n';
+              const parts = sn.split(' | ');
+              for (const part of parts) {
+                const [scope, ...names] = part.split(': ');
+                if (names.length > 0) {
+                  for (const name of names.join(': ').split(', ')) {
+                    table += `| \`${name.trim()}\` | ${scope} |\n`;
+                  }
+                }
+              }
+              return table + `\n> **Total: ${sc} secret(s)** — Use \`gh secret set <NAME> --repo ${targetOrg}/${targetRepo}\` to re-create them.`;
+            })()}
+
+            ### 📋 Next Steps
+            1. Visit your migrated repository: https://github.com/${targetOrg}/${targetRepo}
+            2. Verify repository contents and settings
+            3. Review actor-specific branch protection settings (push restrictions, dismissal restrictions, bypass allowances, lock branch, deployments)
+            4. Verify team access and collaborator permissions
+            5. Re-create any secrets listed above
+            6. Start developing! 🚀
+
+            ---
+            *Automated by GitHub Actions workflow — GEI migration applied successfully*`;
+
+            await github.rest.issues.createComment({
+              issue_number: parseInt(issueNumber),
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: commentBody
+            });
+      - name: Close issue
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = '${{ needs.validate.outputs.issue_number }}';
+            const sourceServerUrl = '${{ needs.validate.outputs.source_server_url }}';
+            const sourceOrg = '${{ needs.validate.outputs.source_organization }}';
+            const sourceRepo = '${{ needs.validate.outputs.source_repo }}';
+            const targetOrg = '${{ needs.validate.outputs.target_organization }}';
+            const targetRepo = '${{ needs.validate.outputs.target_repo }}';
+            const sourceBranches = '${{ needs.pre-migration.outputs.source_branches }}';
+            const sourceTags = '${{ needs.pre-migration.outputs.source_tags }}';
+            const sourceHeadSha = '${{ needs.pre-migration.outputs.source_head_sha }}';
+            const targetUrl = `https://github.com/${targetOrg}/${targetRepo}`;
+
+            const commentBody = `### 🎉 GHES → GHEC Migration Completed Successfully!
+
+            | Detail | Value |
+            |--------|-------|
+            | **Source (GHES)** | \`${sourceServerUrl}/${sourceOrg}/${sourceRepo}\` |
+            | **Target (GHEC)** | [\`${targetOrg}/${targetRepo}\`](${targetUrl}) |
+            | **Branches** | ${sourceBranches} |
+            | **Tags** | ${sourceTags} |
+            | **HEAD SHA** | \`${sourceHeadSha}\` |
+            | **Verification** | ✅ All checks passed |
+
+            The repository has been successfully migrated from GHES to GHEC.`;
+
+            // Post completion comment
+            await github.rest.issues.createComment({
+              issue_number: parseInt(issueNumber),
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: commentBody
+            });
+
+            // Close issue
+            await github.rest.issues.update({
+              issue_number: parseInt(issueNumber),
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'closed',
+              state_reason: 'completed'
+            });
+
+            // Add completion label and remove in-progress
+            try {
+              await github.rest.issues.removeLabel({
+                issue_number: parseInt(issueNumber),
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: 'in-progress'
+              });
+            } catch (e) {
+              // Label may not exist, ignore
+            }
+
+            await github.rest.issues.addLabels({
+              issue_number: parseInt(issueNumber),
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['completed']
+            });
