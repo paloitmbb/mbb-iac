@@ -15,7 +15,7 @@ jobs:
   validate:
     name: "Validate Migration Request"
     if: startsWith(github.event.issue.title, '[GHES Migration]')
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, maybank-ghes-runners]
     permissions:
       contents: read
       issues: write
@@ -93,7 +93,7 @@ jobs:
   pre-migration:
     name: "Pre-Migration Setup"
     needs: [validate]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, maybank-ghes-runners]
     permissions:
       contents: read
       issues: write
@@ -362,7 +362,7 @@ jobs:
   approval:
     name: "Migration Approval Gate"
     needs: [validate, pre-migration]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, maybank-ghes-runners]
     environment:
       name: migration-approval
     permissions:
@@ -416,7 +416,7 @@ jobs:
   migrate:
     name: "Execute GEI Migration (GHES → GHEC)"
     needs: [validate, approval]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, maybank-ghes-runners]
     permissions:
       issues: write
 
@@ -478,7 +478,7 @@ jobs:
   post-migration:
     name: "Post-Migration Setup"
     needs: [validate, pre-migration, migrate]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, maybank-ghes-runners]
     permissions:
       issues: write
 
@@ -592,7 +592,7 @@ jobs:
   verify:
     name: "Verify Migration Integrity"
     needs: [validate, pre-migration, post-migration]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, maybank-ghes-runners]
     permissions:
       issues: write
     outputs:
@@ -764,7 +764,7 @@ jobs:
     name: "Close Issue"
     needs: [validate, pre-migration, verify, post-migration]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, maybank-ghes-runners]
     permissions:
       issues: write
 
