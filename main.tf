@@ -25,6 +25,14 @@ module "github_organization" {
   description                     = var.organization.description
   default_repository_permission   = var.organization.default_repository_permission
   members_can_create_repositories = var.organization.members_can_create_repositories
+
+  # GHAS organization-level defaults (applies to new repositories)
+  advanced_security_enabled_for_new_repositories               = var.ghas_config.default_enabled
+  secret_scanning_enabled_for_new_repositories                 = var.ghas_config.organization_level.enable_secret_scanning
+  secret_scanning_push_protection_enabled_for_new_repositories = var.ghas_config.organization_level.enable_push_protection
+  dependabot_alerts_enabled_for_new_repositories                    = var.ghas_config.organization_level.enable_dependabot_alerts
+  dependabot_security_updates_enabled_for_new_repositories          = var.ghas_config.organization_level.enable_dependabot_security_updates
+  dependency_graph_enabled_for_new_repositories                     = var.ghas_config.organization_level.enable_dependency_graph
 }
 
 # Repository Management
@@ -42,10 +50,21 @@ module "github_repositories" {
   topics                  = each.value.topics
   branch_protection_rules = each.value.branch_protection
 
-  # Security settings
+  # GHAS settings managed within the repository resource
   enable_advanced_security               = try(each.value.security.enable_advanced_security, false)
   enable_secret_scanning                 = try(each.value.security.enable_secret_scanning, false)
   enable_secret_scanning_push_protection = try(each.value.security.enable_secret_scanning_push_protection, false)
 
   depends_on = [module.github_organization]
+}
+
+# Security Configuration (Dependabot security updates)
+module "github_security" {
+  source   = "./modules/github-security"
+  for_each = { for repo in local.all_repositories : repo.name => repo if try(repo.security, null) != null }
+
+  repository_name                    = each.value.name
+  enable_dependabot_security_updates = try(each.value.security.enable_dependabot_security_updates, true)
+
+  depends_on = [module.github_repositories]
 }

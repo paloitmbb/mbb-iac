@@ -48,10 +48,11 @@ variable "ghas_config" {
   type = object({
     default_enabled = bool
     organization_level = object({
-      enable_secret_scanning   = bool
-      enable_push_protection   = bool
-      enable_dependabot_alerts = bool
-      enable_dependency_graph  = bool
+      enable_secret_scanning              = bool
+      enable_push_protection              = bool
+      enable_dependabot_alerts            = bool
+      enable_dependabot_security_updates  = bool
+      enable_dependency_graph             = bool
     })
   })
 }
