@@ -14,9 +14,10 @@ repositories = []
 ghas_config = {
   default_enabled = true
   organization_level = {
-    enable_secret_scanning   = true
-    enable_push_protection   = true
-    enable_dependabot_alerts = true
-    enable_dependency_graph  = true
+    enable_secret_scanning             = true
+    enable_push_protection             = true
+    enable_dependabot_alerts           = true
+    enable_dependabot_security_updates = true
+    enable_dependency_graph            = true
   }
 }

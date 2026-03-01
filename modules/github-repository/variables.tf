@@ -190,3 +190,4 @@ variable "enable_secret_scanning_push_protection" {
   type        = bool
   default     = false
 }
+
