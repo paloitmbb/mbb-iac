@@ -1,0 +1,59 @@
+name: "Issue Dispatcher"
+
+# Lightweight dispatcher that routes issue-based requests to the correct workflow
+# via repository_dispatch. This prevents ALL issue-triggered workflows from running
+# on every new issue — only the matching workflow will be triggered.
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    name: "Route Issue to Workflow"
+    runs-on: [self-hosted, maybank-ghes-runners]
+    steps:
+      - name: Determine issue type and dispatch
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const title = context.payload.issue.title;
+            const issueNumber = context.payload.issue.number;
+            const issueBody = context.payload.issue.body || '';
+
+            // ── Routing table ──
+            // Maps issue title prefixes to repository_dispatch event types
+            const routes = [
+              { prefix: '[GHES Migration]', eventType: 'ghes-migration' }
+            ];
+
+            let matched = false;
+
+            for (const route of routes) {
+              if (title.startsWith(route.prefix)) {
+                console.log(`✅ Matched: "${route.prefix}" → dispatching "${route.eventType}"`);
+
+                await github.rest.repos.createDispatchEvent({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  event_type: route.eventType,
+                  client_payload: {
+                    issue_number: issueNumber,
+                    issue_title: title,
+                    issue_body: issueBody
+                  }
+                });
+
+                matched = true;
+                break;
+              }
+            }
+
+            if (!matched) {
+              console.log(`ℹ️ No route matched for issue title: "${title}"`);
+              console.log('   This issue will not trigger any dispatched workflow.');
+            }
