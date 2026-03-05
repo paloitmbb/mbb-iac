@@ -104,7 +104,7 @@ runs:
         output: 'trivy-results.sarif'
         severity: ${{ inputs.severity }}
 
-    - name: Create empty SARIF if missing
+    - name: Ensure SARIF file exists
       if: inputs.enabled == 'true' && always()
       shell: bash
       run: |
@@ -177,7 +177,7 @@ runs:
 ### Key Changes
 
 1. **Always continue-on-error for scan step**: Changed to always use `continue-on-error: true` in the scan step to allow proper outcome handling
-2. **Create empty SARIF if missing**: Added a new step that creates a valid empty SARIF file when the scan fails, preventing the upload-sarif step from failing due to missing file
+2. **Ensure SARIF file exists**: Added a new step that creates a valid empty SARIF file when the scan fails, preventing the upload-sarif step from failing due to missing file
 3. **Improved outcome handling**: The outcome step now respects the `continue-on-error` input parameter to decide whether to exit with failure
 
 ## Alternative Fix (Simpler)
@@ -208,5 +208,13 @@ Add this step between the "Run Security - Scan Trivy" and "Upload Trivy SARIF" s
 This fix needs to be applied to the `mbb-tf-actions` repository:
 - **Repository**: `paloitmbb/mbb-tf-actions`
 - **File**: `actions/security-scan-trivy/action.yml`
+
+### How to Apply the Fix
+
+**Option 1: Replace the entire file**
+Copy the contents of `docs/security-scan-trivy-fixed-action.yml` to `mbb-tf-actions/actions/security-scan-trivy/action.yml`
+
+**Option 2: Apply the patch**
+Use the patch file `docs/trivy-fix.patch` to apply the changes
 
 After the fix is merged to main, the `mbb-iac` workflows will automatically pick up the fix since they reference `@main`.

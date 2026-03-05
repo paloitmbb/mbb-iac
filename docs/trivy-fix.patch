@@ -1,0 +1,51 @@
+--- a/actions/security-scan-trivy/action.yml
++++ b/actions/security-scan-trivy/action.yml
+@@ -24,6 +24,7 @@ runs:
+   steps:
+     - name: Run Security - Scan Trivy
+       id: scan
+       if: inputs.enabled == 'true'
+-      continue-on-error: ${{ inputs.continue-on-error == 'true' }}
++      continue-on-error: true
+       uses: aquasecurity/trivy-action@22438a435773de8c97dc0958cc0b823c45b064ac  # v0.33.1
+       with:
+         scan-type: 'config'
+@@ -31,6 +32,19 @@ runs:
+         format: 'sarif'
+         output: 'trivy-results.sarif'
+         severity: ${{ inputs.severity }}
+
++    - name: Ensure SARIF file exists
++      if: inputs.enabled == 'true' && always()
++      shell: bash
++      run: |
++        if [ ! -f "trivy-results.sarif" ]; then
++          echo "::warning::Trivy scan failed or did not produce output, creating empty SARIF"
++          echo '{"$schema":"https://json.schemastore.org/sarif-2.1.0.json","version":"2.1.0","runs":[{"tool":{"driver":{"name":"Trivy","informationUri":"https://github.com/aquasecurity/trivy","version":"unknown","rules":[]}},"results":[],"invocations":[{"executionSuccessful":false,"toolExecutionNotifications":[{"message":{"text":"Trivy scan failed to execute or produce results. Check workflow logs for details."},"level":"error"}]}]}]}' > trivy-results.sarif
++        fi
++
+     - name: Upload Trivy SARIF
+       if: inputs.enabled == 'true' && always()
+       continue-on-error: true
+@@ -45,12 +59,14 @@ runs:
+       shell: bash
+       run: |
+         if [ "${{ inputs.enabled }}" != "true" ]; then
+           echo "outcome=skipped" >> $GITHUB_OUTPUT
+           echo "⏭️ Trivy: Skipped (disabled)"
+-        elif [ "${{ steps.scan.outcome }}" == "success" ] && [ -f "trivy-results.sarif" ]; then
++        elif [ "${{ steps.scan.outcome }}" == "success" ]; then
+           echo "outcome=success" >> $GITHUB_OUTPUT
+           echo "✅ Trivy: Passed"
+         else
+           echo "outcome=failure" >> $GITHUB_OUTPUT
+-          echo "❌ Trivy: Failed"
+-          if [ ! -f "trivy-results.sarif" ]; then
+-            echo "::warning::Trivy SARIF file not generated - scan may have errored"
++          echo "❌ Trivy: Failed (scan outcome: ${{ steps.scan.outcome }})"
++          # Exit with appropriate code based on continue-on-error setting
++          if [ "${{ inputs.continue-on-error }}" != "true" ]; then
++            exit 1
+           fi
+-          exit 1
+         fi
