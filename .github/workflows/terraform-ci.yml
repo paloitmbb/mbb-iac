@@ -89,7 +89,10 @@ jobs:
 
       # Security Scanning
       enable-tfsec: ${{ github.event_name != 'workflow_dispatch' || inputs.enable-tfsec }}
-      enable-trivy: ${{ github.event_name != 'workflow_dispatch' || inputs.enable-trivy }}
+      # Trivy is handled by the standalone trivy-scan job below to use a current
+      # version of aquasecurity/trivy-action, bypassing the broken pinned version
+      # in mbb-tf-actions (v0.33.1 was affected by the March 2026 security incident).
+      enable-trivy: false
       tfsec-severity: ${{ inputs.tfsec-severity || 'CRITICAL' }}
       trivy-severity: ${{ inputs.trivy-severity || 'HIGH' }}
 
@@ -109,3 +112,62 @@ jobs:
       ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
       ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+  # Standalone Trivy scan job using aquasecurity/trivy-action@v0.34.2 directly.
+  # The mbb-tf-actions/security-scan-trivy composite action pins v0.33.1 via a
+  # commit hash that stopped working after the Trivy security incident in early
+  # March 2026 (mass deletion of releases from the aquasecurity/trivy-action repo).
+  # By running Trivy here with a current tagged release, we ensure the SARIF file
+  # is always generated and uploaded to the GitHub Security tab.
+  trivy-scan:
+    name: 🔒 Security Scan - Trivy
+    runs-on: ${{ vars.RUNNER_OS || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    continue-on-error: true
+    if: github.event_name != 'workflow_dispatch' || inputs.enable-trivy == true
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Trivy config scanner
+        id: trivy
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.34.2
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: ${{ inputs.trivy-severity || 'HIGH' }}
+          exit-code: '0'
+
+      - name: Upload Trivy SARIF to GitHub Security tab
+        if: always() && hashFiles('trivy-results.sarif') != ''
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-${{ inputs.environment || 'dev' }}
+          wait-for-processing: true
+
+      - name: Trivy scan summary
+        if: always()
+        shell: bash
+        run: |
+          echo "## 🔒 Trivy Security Scan" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.trivy.outcome }}" == "success" ] && [ -f "trivy-results.sarif" ]; then
+            echo "**Status:** ✅ Passed" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Trivy: Passed"
+          elif [ ! -f "trivy-results.sarif" ]; then
+            echo "**Status:** ⚠️ SARIF file not generated - scan may have errored" >> $GITHUB_STEP_SUMMARY
+            echo "::warning::Trivy SARIF file not generated - scan may have errored"
+          else
+            echo "**Status:** ⚠️ Issues found (see GitHub Security tab)" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ Trivy: Issues found (see GitHub Security tab)"
+          fi
