@@ -631,6 +631,10 @@ jobs:
       secret_names: ${{ steps.list-repo-secrets.outputs.secret_names }}
       secret_count: ${{ steps.list-repo-secrets.outputs.secret_count }}
       secret_error: ${{ steps.list-repo-secrets.outputs.secret_error }}
+      detected_stack: ${{ steps.dependabot.outputs.detected_stack }}
+      dependabot_status: ${{ steps.dependabot.outputs.status }}
+      devcontainer_status: ${{ steps.devcontainer.outputs.status }}
+      codeowners_status: ${{ steps.codeowners.outputs.status }}
 
     steps:
       - name: Wait for GitHub.com to finalize
@@ -667,51 +671,7 @@ jobs:
             fi
           done
 
-      - name: Inject CODEOWNERS file if not present in source
-        if: needs.pre-migration.outputs.source_has_codeowners != 'true'
-        run: |
-          TGT_ORG="${{ needs.validate.outputs.target_organization }}"
-          TGT_REPO="${{ needs.validate.outputs.target_repo }}"
-          ADMINS="${{ needs.validate.outputs.admins }}"
-          TOKEN="${{ secrets.GH_TARGET_PAT }}"
-          DEFAULT_BRANCH="${{ needs.pre-migration.outputs.source_default_branch }}"
-
-          echo "📝 CODEOWNERS file not found in source — creating one in target repo..."
-
-          # Build CODEOWNERS content from admin collaborators
-          OWNERS=""
-          IFS=',' read -ra ADMIN_ARRAY <<< "$ADMINS"
-          for RAW_ADMIN in "${ADMIN_ARRAY[@]}"; do
-            ADMIN=$(echo "$RAW_ADMIN" | xargs | sed 's/^@//')
-            if [ -z "$ADMIN" ]; then continue; fi
-            OWNERS="${OWNERS} @${ADMIN}"
-          done
-          OWNERS=$(echo "$OWNERS" | xargs)
-
-          if [ -z "$OWNERS" ]; then
-            echo "   ⚠️ No admin collaborators found — skipping CODEOWNERS creation"
-          else
-            CODEOWNERS_CONTENT="# This CODEOWNERS file was auto-generated during GHEC migration.\n# Source repository did not contain a CODEOWNERS file.\n# All files are owned by the admin collaborators listed below.\n\n* ${OWNERS}\n"
-
-            # Base64 encode the content
-            ENCODED_CONTENT=$(printf "$CODEOWNERS_CONTENT" | base64)
-
-            HTTP_CODE=$(curl -s -o /tmp/codeowners_response.json -w "%{http_code}" \
-              -X PUT \
-              -H "Authorization: Bearer $TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "Content-Type: application/json" \
-              -d "{\"message\": \"chore: add CODEOWNERS file (auto-generated during migration)\", \"content\": \"${ENCODED_CONTENT}\", \"branch\": \"${DEFAULT_BRANCH}\"}" \
-              "https://api.github.com/repos/${TGT_ORG}/${TGT_REPO}/contents/.github/CODEOWNERS")
-
-            if [[ "$HTTP_CODE" =~ ^2 ]]; then
-              echo "   ✅ CODEOWNERS file created at .github/CODEOWNERS with owners: ${OWNERS}"
-            else
-              ERROR_MSG=$(cat /tmp/codeowners_response.json | jq -r '.message // "Unknown error"')
-              echo "   ⚠️ Failed to create CODEOWNERS file — HTTP $HTTP_CODE — $ERROR_MSG"
-            fi
-          fi
-
+      
       - name: Apply team access mappings
         if: needs.validate.outputs.team_mappings != ''
         run: |
@@ -1336,6 +1296,37 @@ jobs:
           rm -f "$GHAS_MANUAL_FILE"
           echo "✅ Advanced Security permissions migration complete."
 
+      # ── Inject template files from paloitmbb/mbb-repo-templates ──
+      - name: Create dependabot.yml
+        id: dependabot
+        uses: paloitmbb/mbb-tf-actions/actions/ghes-create-dependabot@main
+        with:
+          target-organization: ${{ needs.validate.outputs.target_organization }}
+          target-repo: ${{ needs.validate.outputs.target_repo }}
+          target-pat: ${{ secrets.GH_TARGET_PAT }}
+          default-branch: ${{ needs.pre-migration.outputs.source_default_branch }}
+
+      - name: Create devcontainer
+        id: devcontainer
+        uses: paloitmbb/mbb-tf-actions/actions/ghes-create-devcontainer@main
+        with:
+          target-organization: ${{ needs.validate.outputs.target_organization }}
+          target-repo: ${{ needs.validate.outputs.target_repo }}
+          target-pat: ${{ secrets.GH_TARGET_PAT }}
+          default-branch: ${{ needs.pre-migration.outputs.source_default_branch }}
+          detected-stack: ${{ steps.dependabot.outputs.detected_stack }}
+
+      - name: Create CODEOWNERS
+        id: codeowners
+        uses: paloitmbb/mbb-tf-actions/actions/ghes-create-codeowners@main
+        with:
+          target-organization: ${{ needs.validate.outputs.target_organization }}
+          target-repo: ${{ needs.validate.outputs.target_repo }}
+          target-pat: ${{ secrets.GH_TARGET_PAT }}
+          default-branch: ${{ needs.pre-migration.outputs.source_default_branch }}
+          detected-stack: ${{ steps.dependabot.outputs.detected_stack }}
+          has-codeowners: ${{ needs.pre-migration.outputs.source_has_codeowners }}
+
       - name: Comment post-migration setup
         run: |
           # Build ruleset status line
@@ -1403,6 +1394,42 @@ jobs:
             SECRETS_SECTION="#### ✅ No repository-level secrets to re-create"
           fi
 
+          # Build template injection status
+          DEPENDABOT_MSG=""
+          if [ "$DEPENDABOT_STATUS" = "created" ]; then
+            DEPENDABOT_MSG="- ✅ **Dependabot** configured for **${DETECTED_STACK}** stack (weekly updates)"
+          elif [ "$DEPENDABOT_STATUS" = "skipped" ]; then
+            DEPENDABOT_MSG="- ⚠️ **Dependabot** configuration already exists (skipped)"
+          elif [ "$DEPENDABOT_STATUS" = "no-stack" ]; then
+            DEPENDABOT_MSG="- ⚠️ **Dependabot** could not detect tech stack (skipped)"
+          elif [ "$DEPENDABOT_STATUS" = "template-not-found" ]; then
+            DEPENDABOT_MSG="- ⚠️ **Dependabot** template not found for **${DETECTED_STACK}** stack"
+          else
+            DEPENDABOT_MSG="- ❌ **Dependabot** configuration failed"
+          fi
+
+          DEVCONTAINER_MSG=""
+          if [ "$DEVCONTAINER_STATUS" = "created" ]; then
+            DEVCONTAINER_MSG="- ✅ **Devcontainer** configured for **${DETECTED_STACK}** stack"
+          elif [ "$DEVCONTAINER_STATUS" = "partial" ]; then
+            DEVCONTAINER_MSG="- ⚠️ **Devcontainer** partially configured (some files failed)"
+          elif [ "$DEVCONTAINER_STATUS" = "skipped" ]; then
+            DEVCONTAINER_MSG="- ⚠️ **Devcontainer** already exists (skipped)"
+          elif [ "$DEVCONTAINER_STATUS" = "no-stack" ]; then
+            DEVCONTAINER_MSG="- ⚠️ **Devcontainer** could not detect tech stack (skipped)"
+          else
+            DEVCONTAINER_MSG="- ❌ **Devcontainer** configuration failed"
+          fi
+
+          CODEOWNERS_MSG=""
+          if [ "$CODEOWNERS_STATUS" = "created" ]; then
+            CODEOWNERS_MSG="- ✅ **CODEOWNERS** file created"
+          elif [ "$CODEOWNERS_STATUS" = "exists" ]; then
+            CODEOWNERS_MSG="- ⚠️ **CODEOWNERS** file already exists (skipped)"
+          else
+            CODEOWNERS_MSG="- ❌ **CODEOWNERS** file creation failed"
+          fi
+
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "### 🔧 Post-Migration Setup Complete
 
           - ✅ Admin collaborators added: \`${ADMINS}\`
@@ -1418,6 +1445,11 @@ jobs:
           - ⚠️ **Secrets must be re-created manually** (secret values are not readable via API)
 
           ${SECRETS_SECTION}
+
+          #### 📦 Template Files Injected (from mbb-repo-templates)
+          ${DEPENDABOT_MSG}
+          ${DEVCONTAINER_MSG}
+          ${CODEOWNERS_MSG}
 
           📋 Running verification checks..."
         env:
@@ -1439,6 +1471,10 @@ jobs:
           SECRET_ERROR: ${{ steps.list-repo-secrets.outputs.secret_error }}
           SECRET_COUNT: ${{ steps.list-repo-secrets.outputs.secret_count }}
           SECRET_NAMES: ${{ steps.list-repo-secrets.outputs.secret_names }}
+          DETECTED_STACK: ${{ steps.dependabot.outputs.detected_stack }}
+          DEPENDABOT_STATUS: ${{ steps.dependabot.outputs.status }}
+          DEVCONTAINER_STATUS: ${{ steps.devcontainer.outputs.status }}
+          CODEOWNERS_STATUS: ${{ steps.codeowners.outputs.status }}
 
   # ─────────────────────────────────────────────
   # Job 6: Cutover — archive source & cleanup
