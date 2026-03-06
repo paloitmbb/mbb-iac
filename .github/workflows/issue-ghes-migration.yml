@@ -1,8 +1,8 @@
 name: "MBB GHES to GHEC Migration Workflow"
 
 on:
-  issues:
-    types: [opened]
+  repository_dispatch:
+    types: [ghes-migration]
 
 # Uses separate PATs for source and target:
 # - GH_SOURCE_PAT: PAT with read access to source GHES repository
@@ -14,7 +14,6 @@ jobs:
   # ─────────────────────────────────────────────
   validate:
     name: "Validate Migration Request"
-    if: startsWith(github.event.issue.title, '[GHES Migration]')
     runs-on: [self-hosted, maybank-ghes-runners]
     permissions:
       contents: read
@@ -30,7 +29,7 @@ jobs:
       admins: ${{ steps.parse.outputs.issueparser_admins }}
       team_mappings: ${{ steps.parse.outputs.issueparser_team_mappings }}
       justification: ${{ steps.parse.outputs.issueparser_justification }}
-      issue_number: ${{ github.event.issue.number }}
+      issue_number: ${{ github.event.client_payload.issue_number }}
 
     steps:
       - name: Checkout
@@ -40,7 +39,7 @@ jobs:
         id: parse
         uses: paloitmbb/mbb-tf-actions/actions/ghes-migration-parse-issue-form@main
         with:
-          issue-body: ${{ github.event.issue.body }}
+          issue-body: ${{ github.event.client_payload.issue_body }}
           field-mapping: |
             {
               "source_server_url": "Source GHES URL",
@@ -64,7 +63,7 @@ jobs:
         with:
           source-server-url: ${{ steps.parse.outputs.issueparser_source_server_url }}
           source-pat: ${{ secrets.GH_SOURCE_PAT }}
-          issue-number: ${{ github.event.issue.number }}
+          issue-number: ${{ github.event.client_payload.issue_number }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Validate migration repositories
@@ -77,13 +76,13 @@ jobs:
           target-repo: ${{ steps.parse.outputs.issueparser_target_repo }}
           source-pat: ${{ secrets.GH_SOURCE_PAT }}
           target-pat: ${{ secrets.GH_TARGET_PAT }}
-          issue-number: ${{ github.event.issue.number }}
+          issue-number: ${{ github.event.client_payload.issue_number }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Label as in-progress
         run: |
           gh label create "in-progress" --color "FBCA04" --description "Request is being processed" --force 2>/dev/null || true
-          gh issue edit ${{ github.event.issue.number }} --add-label "in-progress"
+          gh issue edit ${{ github.event.client_payload.issue_number }} --add-label "in-progress"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -127,6 +126,8 @@ jobs:
       source_org_secrets_list: ${{ steps.source-stats.outputs.org_secrets_list }}
       source_org_variables_count: ${{ steps.source-stats.outputs.org_variables_count }}
       source_org_variables_list: ${{ steps.source-stats.outputs.org_variables_list }}
+      source_stale_branches_count: ${{ steps.source-stats.outputs.stale_branches_count }}
+      source_stale_branches_names: ${{ steps.source-stats.outputs.stale_branches_names }}
       dependabot_alerts_count: ${{ steps.security-alerts.outputs.dependabot_alerts_count }}
       dependabot_critical_count: ${{ steps.security-alerts.outputs.dependabot_critical_count }}
       dependabot_high_count: ${{ steps.security-alerts.outputs.dependabot_high_count }}
@@ -187,6 +188,7 @@ jobs:
           source-org: ${{ needs.validate.outputs.source_organization }}
           source-repo: ${{ needs.validate.outputs.source_repo }}
           source-pat: ${{ secrets.GH_SOURCE_PAT }}
+          stale-branch-days: '90'
 
       - name: Gather security alerts from source repository
         id: security-alerts
@@ -228,6 +230,8 @@ jobs:
             const prReviewCount = '${{ steps.source-stats.outputs.pr_review_count }}';
             const created = '${{ steps.source-stats.outputs.created }}';
             const hasCodeowners = '${{ steps.source-stats.outputs.has_codeowners }}';
+            const staleBranchesCount = '${{ steps.source-stats.outputs.stale_branches_count }}';
+            const staleBranchesNames = '${{ steps.source-stats.outputs.stale_branches_names }}';
 
             // ── Build migration options block ──
             let optionsBlock = '';
@@ -282,7 +286,18 @@ jobs:
             commentBody += `| **Last Update** | ${lastUpdate} |\n`;
             commentBody += `| **PR Review Count** | ${prReviewCount} |\n`;
             commentBody += `| **Created** | ${created} |\n`;
-            commentBody += `| **CODEOWNERS** | ${hasCodeowners === 'true' ? '✅ Present' : '⚠️ Not found'} |\n\n`;
+            commentBody += `| **CODEOWNERS** | ${hasCodeowners === 'true' ? '✅ Present' : '⚠️ Not found'} |\n`;
+            commentBody += `| **Stale Branches (>${90} days)** | ${staleBranchesCount || '0'} |\n\n`;
+
+            if (staleBranchesCount && staleBranchesCount !== '0' && staleBranchesNames) {
+              commentBody += '### ⚠️ Stale Branches\n';
+              commentBody += `> The following branches have not been updated in over 90 days:\n`;
+              const staleList = staleBranchesNames.split(',').map(b => b.trim()).filter(b => b);
+              for (const branch of staleList) {
+                commentBody += `> - \`${branch}\`\n`;
+              }
+              commentBody += '\n';
+            }
 
             if (hasCodeowners !== 'true') {
               commentBody += '### ⚠️ CODEOWNERS Alert\n';
@@ -295,8 +310,10 @@ jobs:
             commentBody += '---\n\n';
             commentBody += '⏳ **Awaiting approval to proceed with GHES → GHEC migration...**\n';
 
+            const issueNum = ${{ github.event.client_payload.issue_number }};
+
             await github.rest.issues.createComment({
-              issue_number: context.issue.number,
+              issue_number: issueNum,
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: commentBody
@@ -304,7 +321,7 @@ jobs:
 
             // ── 2. Add labels ──
             await github.rest.issues.addLabels({
-              issue_number: context.issue.number,
+              issue_number: issueNum,
               owner: context.repo.owner,
               repo: context.repo.repo,
               labels: ['validation-passed', 'ghes-to-ghec-migration']
@@ -342,7 +359,18 @@ jobs:
             summary += `| **Last Update** | ${lastUpdate} |\n`;
             summary += `| **PR Review Count** | ${prReviewCount} |\n`;
             summary += `| **Created** | ${created} |\n`;
-            summary += `| **CODEOWNERS** | ${hasCodeowners === 'true' ? '✅ Present' : '⚠️ Not found'} |\n\n`;
+            summary += `| **CODEOWNERS** | ${hasCodeowners === 'true' ? '✅ Present' : '⚠️ Not found'} |\n`;
+            summary += `| **Stale Branches (>${90} days)** | ${staleBranchesCount || '0'} |\n\n`;
+
+            if (staleBranchesCount && staleBranchesCount !== '0' && staleBranchesNames) {
+              summary += '### ⚠️ Stale Branches\n\n';
+              summary += `> The following branches have not been updated in over 90 days:\n`;
+              const staleListSummary = staleBranchesNames.split(',').map(b => b.trim()).filter(b => b);
+              for (const branch of staleListSummary) {
+                summary += `> - \`${branch}\`\n`;
+              }
+              summary += '\n';
+            }
 
             if (hasCodeowners !== 'true') {
               summary += '### ⚠️ CODEOWNERS Alert\n\n';
@@ -387,7 +415,7 @@ jobs:
           *Automated by GitHub Actions workflow*"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
           SOURCE_URL: ${{ needs.validate.outputs.source_server_url }}
           SOURCE_ORG: ${{ needs.validate.outputs.source_organization }}
           SOURCE_REPO: ${{ needs.validate.outputs.source_repo }}
@@ -408,7 +436,7 @@ jobs:
           *Automated by GitHub Actions workflow*"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
 
   # ─────────────────────────────────────────────
   # Job 4: Execute migration via GEI (GHES → GHEC)
@@ -565,20 +593,100 @@ jobs:
             fi
           done
 
+      - name: Remove stale branches from target repository
+        if: needs.pre-migration.outputs.source_stale_branches_count != '0' && needs.pre-migration.outputs.source_stale_branches_names != ''
+        id: remove-stale
+        run: |
+          TGT_ORG="${{ needs.validate.outputs.target_organization }}"
+          TGT_REPO="${{ needs.validate.outputs.target_repo }}"
+          TOKEN="${{ secrets.GH_TARGET_PAT }}"
+          STALE_BRANCHES="${{ needs.pre-migration.outputs.source_stale_branches_names }}"
+          STALE_COUNT="${{ needs.pre-migration.outputs.source_stale_branches_count }}"
+          DEFAULT_BRANCH="${{ needs.pre-migration.outputs.source_default_branch }}"
 
-  
-   
+          echo "🧹 Removing ${STALE_COUNT} stale branch(es) from target repository..."
+
+          DELETED=0
+          FAILED=0
+          SKIPPED=0
+          DELETED_LIST=""
+          FAILED_LIST=""
+
+          IFS=',' read -ra BRANCH_ARRAY <<< "$STALE_BRANCHES"
+          for RAW_BRANCH in "${BRANCH_ARRAY[@]}"; do
+            BRANCH=$(echo "$RAW_BRANCH" | xargs)
+            if [ -z "$BRANCH" ]; then continue; fi
+
+            # Never delete the default branch
+            if [ "$BRANCH" = "$DEFAULT_BRANCH" ]; then
+              echo "   ⚠️ Skipping default branch: $BRANCH"
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+
+            # URL-encode the branch name (handle slashes in branch names)
+            ENCODED_BRANCH=$(echo "$BRANCH" | sed 's|/|%2F|g')
+
+            HTTP_CODE=$(curl -s -o /tmp/delete_response.txt -w "%{http_code}" \
+              -X DELETE \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${TGT_ORG}/${TGT_REPO}/git/refs/heads/${ENCODED_BRANCH}")
+
+            if [ "$HTTP_CODE" = "204" ]; then
+              echo "   ✅ Deleted: $BRANCH"
+              DELETED=$((DELETED + 1))
+              if [ -n "$DELETED_LIST" ]; then
+                DELETED_LIST="${DELETED_LIST}, ${BRANCH}"
+              else
+                DELETED_LIST="$BRANCH"
+              fi
+            else
+              echo "   ❌ Failed to delete: $BRANCH (HTTP $HTTP_CODE)"
+              FAILED=$((FAILED + 1))
+              if [ -n "$FAILED_LIST" ]; then
+                FAILED_LIST="${FAILED_LIST}, ${BRANCH}"
+              else
+                FAILED_LIST="$BRANCH"
+              fi
+            fi
+          done
+
+          echo ""
+          echo "📊 Stale branch cleanup summary:"
+          echo "   Deleted: $DELETED"
+          echo "   Failed:  $FAILED"
+          echo "   Skipped: $SKIPPED"
+
+          echo "deleted_count=$DELETED" >> $GITHUB_OUTPUT
+          echo "failed_count=$FAILED" >> $GITHUB_OUTPUT
+          echo "skipped_count=$SKIPPED" >> $GITHUB_OUTPUT
+          echo "deleted_list=$DELETED_LIST" >> $GITHUB_OUTPUT
+          echo "failed_list=$FAILED_LIST" >> $GITHUB_OUTPUT
+
       - name: Comment post-migration setup
         run: |
+          STALE_COUNT="${{ needs.pre-migration.outputs.source_stale_branches_count }}"
+          DELETED_COUNT="${{ steps.remove-stale.outputs.deleted_count }}"
+          FAILED_COUNT="${{ steps.remove-stale.outputs.failed_count }}"
+
+          STALE_MSG=""
+          if [ -n "$STALE_COUNT" ] && [ "$STALE_COUNT" != "0" ]; then
+            STALE_MSG="- 🧹 Stale branches cleanup: **${DELETED_COUNT:-0}** deleted, **${FAILED_COUNT:-0}** failed (out of ${STALE_COUNT} stale)"
+          else
+            STALE_MSG="- ✅ No stale branches to clean up"
+          fi
+
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "### 🔧 Post-Migration Setup Complete (GHES → GHEC)
 
           - ✅ Admin collaborators added: \`${ADMINS}\`
           - ✅ Team access mappings applied (if provided)
+          ${STALE_MSG}
           - ⚠️ **Secrets must be re-created manually** (secret values are not readable via API)
           - ⚠️ **Branch protection rules** may need manual re-configuration (GHES and GHEC may differ in supported features)
           - ⚠️ **GHAS settings** should be reviewed and enabled on GHEC as needed
 
-          📋 Running verification checks..."
+          📋 Proceeding to close issue..."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ needs.validate.outputs.issue_number }}
@@ -587,182 +695,11 @@ jobs:
           TARGET_REPO: ${{ needs.validate.outputs.target_repo }}
 
   # ─────────────────────────────────────────────
-  # Job 6: Verify migration integrity
-  # ─────────────────────────────────────────────
-  verify:
-    name: "Verify Migration Integrity"
-    needs: [validate, pre-migration, post-migration]
-    runs-on: [self-hosted, maybank-ghes-runners]
-    permissions:
-      issues: write
-    outputs:
-      target_branches: ${{ steps.target-stats.outputs.branches }}
-      target_tags: ${{ steps.target-stats.outputs.tags }}
-      target_head_sha: ${{ steps.target-stats.outputs.head_sha }}
-      branches_match: ${{ steps.compare.outputs.branches_match }}
-      tags_match: ${{ steps.compare.outputs.tags_match }}
-      sha_match: ${{ steps.compare.outputs.sha_match }}
-      verification_passed: ${{ steps.compare.outputs.verification_passed }}
-
-    steps:
-      - name: Fetch target repository stats from GHEC
-        id: target-stats
-        run: |
-          TGT_ORG="${{ needs.validate.outputs.target_organization }}"
-          TGT_REPO="${{ needs.validate.outputs.target_repo }}"
-          DEFAULT_BRANCH="${{ needs.pre-migration.outputs.source_default_branch }}"
-          TOKEN="${{ secrets.GH_TARGET_PAT }}"
-
-          echo "📊 Fetching target repository stats from GHEC..."
-
-          # Get branch count (paginated)
-          BRANCHES=0
-          PAGE=1
-          while true; do
-            RESPONSE=$(curl -s -w "\n%{http_code}" \
-              -H "Authorization: Bearer $TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${TGT_ORG}/${TGT_REPO}/branches?per_page=100&page=${PAGE}")
-            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-            BODY=$(echo "$RESPONSE" | sed '$d')
-            if [ "$HTTP_CODE" != "200" ]; then
-              echo "⚠️ Failed to fetch branches (HTTP $HTTP_CODE)"
-              break
-            fi
-            COUNT=$(echo "$BODY" | jq '. | length')
-            BRANCHES=$((BRANCHES + COUNT))
-            [ "$COUNT" -lt 100 ] && break
-            PAGE=$((PAGE + 1))
-          done
-          echo "branches=${BRANCHES}" >> $GITHUB_OUTPUT
-          echo "   Branches: ${BRANCHES}"
-
-          # Get tag count (paginated)
-          TAGS=0
-          PAGE=1
-          while true; do
-            RESPONSE=$(curl -s -w "\n%{http_code}" \
-              -H "Authorization: Bearer $TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${TGT_ORG}/${TGT_REPO}/tags?per_page=100&page=${PAGE}")
-            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-            BODY=$(echo "$RESPONSE" | sed '$d')
-            if [ "$HTTP_CODE" != "200" ]; then
-              echo "⚠️ Failed to fetch tags (HTTP $HTTP_CODE)"
-              break
-            fi
-            COUNT=$(echo "$BODY" | jq '. | length')
-            TAGS=$((TAGS + COUNT))
-            [ "$COUNT" -lt 100 ] && break
-            PAGE=$((PAGE + 1))
-          done
-          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
-          echo "   Tags: ${TAGS}"
-
-          # Get HEAD SHA of default branch
-          HEAD_RESPONSE=$(curl -s \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${TGT_ORG}/${TGT_REPO}/branches/${DEFAULT_BRANCH}")
-          HEAD_SHA=$(echo "$HEAD_RESPONSE" | jq -r '.commit.sha // "unknown"')
-          echo "head_sha=${HEAD_SHA}" >> $GITHUB_OUTPUT
-          echo "   HEAD SHA: ${HEAD_SHA}"
-
-          echo "✅ Target stats collected from GHEC"
-
-      - name: Compare source and target stats
-        id: compare
-        run: |
-          SRC_BRANCHES="${{ needs.pre-migration.outputs.source_branches }}"
-          TGT_BRANCHES="${{ steps.target-stats.outputs.branches }}"
-          SRC_TAGS="${{ needs.pre-migration.outputs.source_tags }}"
-          TGT_TAGS="${{ steps.target-stats.outputs.tags }}"
-          SRC_SHA="${{ needs.pre-migration.outputs.source_head_sha }}"
-          TGT_SHA="${{ steps.target-stats.outputs.head_sha }}"
-
-          PASSED="true"
-
-          echo "🔍 Comparing migration integrity..."
-          echo "   Branches: source=${SRC_BRANCHES} target=${TGT_BRANCHES}"
-          echo "   Tags:     source=${SRC_TAGS} target=${TGT_TAGS}"
-          echo "   HEAD SHA: source=${SRC_SHA:0:12} target=${TGT_SHA:0:12}"
-
-          # Compare branches
-          if [ "$SRC_BRANCHES" = "$TGT_BRANCHES" ]; then
-            echo "branches_match=true" >> $GITHUB_OUTPUT
-            echo "   ✅ Branches match"
-          else
-            echo "branches_match=false" >> $GITHUB_OUTPUT
-            echo "   ⚠️ Branches mismatch"
-            PASSED="false"
-          fi
-
-          # Compare tags
-          if [ "$SRC_TAGS" = "$TGT_TAGS" ]; then
-            echo "tags_match=true" >> $GITHUB_OUTPUT
-            echo "   ✅ Tags match"
-          else
-            echo "tags_match=false" >> $GITHUB_OUTPUT
-            echo "   ⚠️ Tags mismatch"
-            PASSED="false"
-          fi
-
-          # Compare HEAD SHA (first 12 chars)
-          if [ "${SRC_SHA:0:12}" = "${TGT_SHA:0:12}" ]; then
-            echo "sha_match=true" >> $GITHUB_OUTPUT
-            echo "   ✅ HEAD SHA match"
-          else
-            echo "sha_match=false" >> $GITHUB_OUTPUT
-            echo "   ⚠️ HEAD SHA mismatch"
-            PASSED="false"
-          fi
-
-          echo "verification_passed=${PASSED}" >> $GITHUB_OUTPUT
-          echo ""
-          echo "📋 Verification result: ${PASSED}"
-
-      - name: Post verification results to issue
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const srcBranches = '${{ needs.pre-migration.outputs.source_branches }}';
-            const tgtBranches = '${{ steps.target-stats.outputs.branches }}';
-            const srcTags = '${{ needs.pre-migration.outputs.source_tags }}';
-            const tgtTags = '${{ steps.target-stats.outputs.tags }}';
-            const srcSha = '${{ needs.pre-migration.outputs.source_head_sha }}';
-            const tgtSha = '${{ steps.target-stats.outputs.head_sha }}';
-            const branchesMatch = '${{ steps.compare.outputs.branches_match }}' === 'true';
-            const tagsMatch = '${{ steps.compare.outputs.tags_match }}' === 'true';
-            const shaMatch = '${{ steps.compare.outputs.sha_match }}' === 'true';
-            const passed = '${{ steps.compare.outputs.verification_passed }}' === 'true';
-
-            let body = passed
-              ? '### ✅ Migration Verification Passed\n\n'
-              : '### ⚠️ Migration Verification — Mismatches Detected\n\n';
-
-            body += '| Check | Source (GHES) | Target (GHEC) | Status |\n';
-            body += '|-------|---------------|---------------|--------|\n';
-            body += `| **Branches** | ${srcBranches} | ${tgtBranches} | ${branchesMatch ? '✅ PASS' : '⚠️ MISMATCH'} |\n`;
-            body += `| **Tags** | ${srcTags} | ${tgtTags} | ${tagsMatch ? '✅ PASS' : '⚠️ MISMATCH'} |\n`;
-            body += `| **HEAD SHA** | \`${srcSha.substring(0, 12)}\` | \`${tgtSha.substring(0, 12)}\` | ${shaMatch ? '✅ PASS' : '⚠️ MISMATCH'} |\n\n`;
-
-            if (!passed) {
-              body += '> ⚠️ Some verification checks did not match. Please review the target repository manually.\n';
-            }
-
-            await github.rest.issues.createComment({
-              issue_number: parseInt('${{ needs.validate.outputs.issue_number }}'),
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body
-            });
-
-  # ─────────────────────────────────────────────
-  # Job 7: Close issue
+  # Job 6: Close issue
   # ─────────────────────────────────────────────
   close-issue:
     name: "Close Issue"
-    needs: [validate, pre-migration, verify, post-migration]
+    needs: [validate, pre-migration, post-migration]
     if: always()
     runs-on: [self-hosted, maybank-ghes-runners]
     permissions:
@@ -789,13 +726,8 @@ jobs:
             const sourceTags = '${{ needs.pre-migration.outputs.source_tags }}';
             const sourceHeadSha = '${{ needs.pre-migration.outputs.source_head_sha }}';
             const defaultBranch = '${{ needs.pre-migration.outputs.source_default_branch }}';
-            const targetBranches = '${{ needs.verify.outputs.target_branches }}';
-            const targetTags = '${{ needs.verify.outputs.target_tags }}';
-            const targetHeadSha = '${{ needs.verify.outputs.target_head_sha }}';
-            const branchesMatch = '${{ needs.verify.outputs.branches_match }}' === 'true';
-            const tagsMatch = '${{ needs.verify.outputs.tags_match }}' === 'true';
-            const shaMatch = '${{ needs.verify.outputs.sha_match }}' === 'true';
-            const verificationPassed = '${{ needs.verify.outputs.verification_passed }}' === 'true';
+            const staleBranchesCount = '${{ needs.pre-migration.outputs.source_stale_branches_count }}';
+            const staleBranchesNames = '${{ needs.pre-migration.outputs.source_stale_branches_names }}';
 
             let summary = '# ✅ GHES → GHEC Migration Completed Successfully!\n\n';
             summary += '## 🎉 Migration Details\n\n';
@@ -810,13 +742,13 @@ jobs:
             summary += `| **Workflow Run** | [#${runId}](${runUrl}) |\n`;
             summary += `| **Source Issue** | [#${issueNumber}](https://github.com/${context.repo.owner}/${context.repo.repo}/issues/${issueNumber}) |\n\n`;
 
-            summary += '## 📊 Migration Verification\n\n';
-            summary += '| Check | Source (GHES) | Target (GHEC) | Status |\n';
-            summary += '|-------|---------------|---------------|--------|\n';
-            summary += `| **Branches** | ${sourceBranches} | ${targetBranches} | ${branchesMatch ? '✅ PASS' : '⚠️ MISMATCH'} |\n`;
-            summary += `| **Tags** | ${sourceTags} | ${targetTags} | ${tagsMatch ? '✅ PASS' : '⚠️ MISMATCH'} |\n`;
-            summary += `| **HEAD SHA** | \`${sourceHeadSha.substring(0, 12)}\` | \`${targetHeadSha.substring(0, 12)}\` | ${shaMatch ? '✅ PASS' : '⚠️ MISMATCH'} |\n`;
-            summary += `| **Overall** | | | ${verificationPassed ? '✅ ALL PASSED' : '⚠️ REVIEW NEEDED'} |\n\n`;
+            summary += '## 📊 Source Repository Stats\n\n';
+            summary += '| Metric | Value |\n';
+            summary += '|--------|-------|\n';
+            summary += `| **Branches** | ${sourceBranches} |\n`;
+            summary += `| **Tags** | ${sourceTags} |\n`;
+            summary += `| **HEAD SHA** | \`${sourceHeadSha.substring(0, 12)}\` |\n`;
+            summary += `| **Stale Branches** | ${staleBranchesCount || '0'} |\n\n`;
 
             if (migrationOptions) {
               summary += '## ⚙️ Migration Options Applied\n\n';
@@ -905,13 +837,8 @@ jobs:
             const sourceTags = '${{ needs.pre-migration.outputs.source_tags }}';
             const sourceHeadSha = '${{ needs.pre-migration.outputs.source_head_sha }}';
             const defaultBranch = '${{ needs.pre-migration.outputs.source_default_branch }}';
-            const targetBranches = '${{ needs.verify.outputs.target_branches }}';
-            const targetTags = '${{ needs.verify.outputs.target_tags }}';
-            const targetHeadSha = '${{ needs.verify.outputs.target_head_sha }}';
-            const branchesMatch = '${{ needs.verify.outputs.branches_match }}' === 'true';
-            const tagsMatch = '${{ needs.verify.outputs.tags_match }}' === 'true';
-            const shaMatch = '${{ needs.verify.outputs.sha_match }}' === 'true';
-            const verificationPassed = '${{ needs.verify.outputs.verification_passed }}' === 'true';
+            const staleBranchesCount = '${{ needs.pre-migration.outputs.source_stale_branches_count }}';
+            const staleBranchesNames = '${{ needs.pre-migration.outputs.source_stale_branches_names }}';
 
             let adminsSection = '';
             if (admins) {
@@ -944,13 +871,13 @@ jobs:
             - **Default Branch:** ${defaultBranch}
             - **Workflow Run:** [#${runId}](${runUrl})
 
-            ### 📊 Verification Results
-            | Check | Source | Target | Status |
-            |-------|--------|--------|--------|
-            | **Branches** | ${sourceBranches} | ${targetBranches} | ${branchesMatch ? '✅' : '⚠️'} |
-            | **Tags** | ${sourceTags} | ${targetTags} | ${tagsMatch ? '✅' : '⚠️'} |
-            | **HEAD SHA** | \`${sourceHeadSha.substring(0, 12)}\` | \`${targetHeadSha.substring(0, 12)}\` | ${shaMatch ? '✅' : '⚠️'} |
-            | **Overall** | | | ${verificationPassed ? '✅ All passed' : '⚠️ Review needed'} |
+            ### 📊 Source Repository Stats
+            | Metric | Value |
+            |--------|-------|
+            | **Branches** | ${sourceBranches} |
+            | **Tags** | ${sourceTags} |
+            | **HEAD SHA** | \`${sourceHeadSha.substring(0, 12)}\` |
+            | **Stale Branches** | ${staleBranchesCount || '0'} |
 
             ### 📦 Post-Migration Actions
             - ✅ Team access mappings applied${adminsSection}${optionsSection}
@@ -1006,6 +933,7 @@ jobs:
             const sourceBranches = '${{ needs.pre-migration.outputs.source_branches }}';
             const sourceTags = '${{ needs.pre-migration.outputs.source_tags }}';
             const sourceHeadSha = '${{ needs.pre-migration.outputs.source_head_sha }}';
+            const staleBranchesCount = '${{ needs.pre-migration.outputs.source_stale_branches_count }}';
             const targetUrl = `https://github.com/${targetOrg}/${targetRepo}`;
 
             const commentBody = `### 🎉 GHES → GHEC Migration Completed Successfully!
@@ -1017,7 +945,7 @@ jobs:
             | **Branches** | ${sourceBranches} |
             | **Tags** | ${sourceTags} |
             | **HEAD SHA** | \`${sourceHeadSha}\` |
-            | **Verification** | ✅ All checks passed |
+            | **Stale Branches** | ${staleBranchesCount || '0'} |
 
             The repository has been successfully migrated from GHES to GHEC.`;
 
