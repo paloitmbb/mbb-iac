@@ -631,7 +631,7 @@ jobs:
       secret_names: ${{ steps.list-repo-secrets.outputs.secret_names }}
       secret_count: ${{ steps.list-repo-secrets.outputs.secret_count }}
       secret_error: ${{ steps.list-repo-secrets.outputs.secret_error }}
-      detected_stack: ${{ steps.dependabot.outputs.detected_stack }}
+      detected_stack: ${{ steps.dependabot.outputs.detected-stack }}
       dependabot_status: ${{ steps.dependabot.outputs.status }}
       devcontainer_status: ${{ steps.devcontainer.outputs.status }}
       codeowners_status: ${{ steps.codeowners.outputs.status }}
@@ -1314,7 +1314,7 @@ jobs:
           target-repo: ${{ needs.validate.outputs.target_repo }}
           target-pat: ${{ secrets.GH_TARGET_PAT }}
           default-branch: ${{ needs.pre-migration.outputs.source_default_branch }}
-          detected-stack: ${{ steps.dependabot.outputs.detected_stack }}
+          detected-stack: ${{ steps.dependabot.outputs.detected-stack }}
 
       - name: Create CODEOWNERS
         id: codeowners
@@ -1324,7 +1324,7 @@ jobs:
           target-repo: ${{ needs.validate.outputs.target_repo }}
           target-pat: ${{ secrets.GH_TARGET_PAT }}
           default-branch: ${{ needs.pre-migration.outputs.source_default_branch }}
-          detected-stack: ${{ steps.dependabot.outputs.detected_stack }}
+          detected-stack: ${{ steps.dependabot.outputs.detected-stack }}
           has-codeowners: ${{ needs.pre-migration.outputs.source_has_codeowners }}
 
       - name: Comment post-migration setup
@@ -1471,7 +1471,7 @@ jobs:
           SECRET_ERROR: ${{ steps.list-repo-secrets.outputs.secret_error }}
           SECRET_COUNT: ${{ steps.list-repo-secrets.outputs.secret_count }}
           SECRET_NAMES: ${{ steps.list-repo-secrets.outputs.secret_names }}
-          DETECTED_STACK: ${{ steps.dependabot.outputs.detected_stack }}
+          DETECTED_STACK: ${{ steps.dependabot.outputs.detected-stack }}
           DEPENDABOT_STATUS: ${{ steps.dependabot.outputs.status }}
           DEVCONTAINER_STATUS: ${{ steps.devcontainer.outputs.status }}
           CODEOWNERS_STATUS: ${{ steps.codeowners.outputs.status }}
