@@ -1,0 +1,40 @@
+name: Copilot License Request
+description: Request to assign or revoke a GitHub Copilot license for a user
+title: "[COPILOT LICENSE] "
+labels: ["copilot"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Copilot License Request
+        Use this form to request assigning or revoking a GitHub Copilot license for an existing user.
+
+  - type: dropdown
+    id: action
+    attributes:
+      label: Action
+      description: Choose whether to assign or revoke a Copilot license
+      options:
+        - assign
+        - revoke
+    validations:
+      required: true
+
+  - type: input
+    id: github-username
+    attributes:
+      label: GitHub Username
+      description: The GitHub username of the user
+      placeholder: octocat
+    validations:
+      required: true
+
+  - type: textarea
+    id: justification
+    attributes:
+      label: Business Justification
+      description: Brief reason for this request
+      placeholder: "e.g., New developer onboarding / User has left the project"
+    validations:
+      required: true

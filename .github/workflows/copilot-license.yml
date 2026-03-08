@@ -1,0 +1,296 @@
+name: "Copilot License: Validate & Execute"
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  # ============================================================================
+  # Job 1: Validate Copilot License Request
+  # ============================================================================
+  validate-request:
+    name: Validate Copilot License Request
+    runs-on: ubuntu-latest
+    if: startsWith(github.event.issue.title, '[COPILOT LICENSE]')
+    outputs:
+      validation-passed: ${{ steps.validate.outputs.validation-passed }}
+      action: ${{ steps.parse.outputs.action }}
+      github-username: ${{ steps.parse.outputs.github-username }}
+      justification: ${{ steps.parse.outputs.justification }}
+
+    steps:
+      - name: Parse issue form
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueBody = context.payload.issue.body;
+
+            function extractField(body, fieldLabel) {
+              const regex = new RegExp(`### ${fieldLabel}\\s*\\n\\s*([^\\n#]+)`, 'i');
+              const match = body.match(regex);
+              return match ? match[1].trim() : '';
+            }
+
+            const action = extractField(issueBody, 'Action');
+            const githubUsername = extractField(issueBody, 'GitHub Username');
+            const justification = extractField(issueBody, 'Business Justification');
+
+            core.setOutput('action', action);
+            core.setOutput('github-username', githubUsername);
+            core.setOutput('justification', justification);
+
+            console.log(`Action: ${action}`);
+            console.log(`GitHub Username: ${githubUsername}`);
+            console.log(`Justification: ${justification}`);
+
+      # -----------------------------------------------------------------------
+      # Step 2: Validate user and current Copilot seat status
+      # -----------------------------------------------------------------------
+      - name: Validate request
+        id: validate
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const org = context.repo.owner;
+            const action = '${{ steps.parse.outputs.action }}';
+            const username = '${{ steps.parse.outputs.github-username }}';
+            const errors = [];
+            const validations = [];
+
+            // --- Validate action ---
+            if (!['assign', 'revoke'].includes(action)) {
+              errors.push(`Invalid action: "${action}". Must be "assign" or "revoke".`);
+            } else {
+              validations.push({ check: 'Action is valid', result: '✅ Passed' });
+            }
+
+            // --- Validate username is provided ---
+            if (!username || username === '_No response_') {
+              errors.push('GitHub username is required');
+            } else {
+              validations.push({ check: 'Username provided', result: '✅ Passed' });
+
+              // --- Check user exists on GitHub ---
+              try {
+                await github.rest.users.getByUsername({ username });
+                validations.push({ check: `User "${username}" exists`, result: '✅ Passed' });
+              } catch (e) {
+                errors.push(`User "${username}" does not exist on GitHub`);
+                validations.push({ check: `User "${username}" exists`, result: '❌ Not found' });
+              }
+
+              // --- Check org membership ---
+              try {
+                await github.rest.orgs.checkMembershipForUser({ org, username });
+                validations.push({ check: `User "${username}" is org member`, result: '✅ Passed' });
+              } catch (e) {
+                errors.push(`User "${username}" is not a member of the organization`);
+                validations.push({ check: `User "${username}" is org member`, result: '❌ Not a member' });
+              }
+            }
+
+            // --- Output results ---
+            const passed = errors.length === 0;
+            core.setOutput('validation-passed', passed.toString());
+            core.setOutput('errors', JSON.stringify(errors));
+            core.setOutput('validations', JSON.stringify(validations));
+
+            console.log(`Validation ${passed ? 'PASSED' : 'FAILED'} - ${errors.length} error(s)`);
+
+      # -----------------------------------------------------------------------
+      # Step 3: Post validation result on issue
+      # -----------------------------------------------------------------------
+      - name: Post validation summary to issue
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const passed = '${{ steps.validate.outputs.validation-passed }}' === 'true';
+            const errors = JSON.parse('${{ steps.validate.outputs.errors }}' || '[]');
+            const validations = JSON.parse('${{ steps.validate.outputs.validations }}' || '[]');
+
+            const action = '${{ steps.parse.outputs.action }}';
+            const username = '${{ steps.parse.outputs.github-username }}';
+            const justification = '${{ steps.parse.outputs.justification }}';
+
+            let comment = passed
+              ? '## ✅ Validation Passed\n\n'
+              : '## ❌ Validation Failed\n\n';
+
+            comment += '### 📋 Request Summary\n\n';
+            comment += '| Field | Value |\n';
+            comment += '|-------|-------|\n';
+            comment += `| **Action** | ${action} |\n`;
+            comment += `| **GitHub Username** | \`${username}\` |\n`;
+            comment += `| **Justification** | ${justification || '_Not provided_'} |\n`;
+            comment += `| **Requested By** | @${context.payload.issue.user.login} |\n\n`;
+
+            comment += '### 🔍 Validation Results\n\n';
+            comment += '| Check | Result |\n';
+            comment += '|-------|--------|\n';
+            for (const v of validations) {
+              comment += `| ${v.check} | ${v.result} |\n`;
+            }
+            comment += '\n';
+
+            if (errors.length > 0) {
+              comment += '### ⚠️ Errors\n\n';
+              for (const e of errors) {
+                comment += `- ❌ ${e}\n`;
+              }
+              comment += '\n';
+            }
+
+            if (passed) {
+              comment += '### 📝 Next Steps\n\n';
+              comment += '- ⏳ Awaiting approval from **DevSecOps team**\n';
+              comment += '- Once approved, the Copilot license will be updated automatically\n';
+            } else {
+              comment += '### 📝 Next Steps\n\n';
+              comment += '- Please fix the validation errors and create a new request issue.\n';
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment,
+            });
+
+            const labels = passed
+              ? ['copilot', 'validation-passed']
+              : ['copilot', 'validation-failed'];
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels,
+            });
+
+            if (!passed) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                state: 'closed',
+                state_reason: 'not_planned',
+              });
+            }
+
+  # ============================================================================
+  # Job 2: Execute Copilot License Change (Requires Approval)
+  # ============================================================================
+  execute-request:
+    name: Execute Copilot License Change
+    runs-on: ubuntu-latest
+    needs: validate-request
+    if: needs.validate-request.outputs.validation-passed == 'true'
+    environment: copilot-license-approval
+
+    steps:
+      - name: Execute Copilot license change
+        id: execute
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const org = context.repo.owner;
+            const action = '${{ needs.validate-request.outputs.action }}';
+            const username = '${{ needs.validate-request.outputs.github-username }}';
+            let result = {};
+
+            if (action === 'assign') {
+              // Assign Copilot seat to user
+              await github.request('POST /orgs/{org}/copilot/billing/selected_users', {
+                org,
+                selected_usernames: [username],
+              });
+              result = {
+                action: 'Copilot license assigned',
+                details: `GitHub Copilot license has been **assigned** to \`${username}\``,
+              };
+            } else if (action === 'revoke') {
+              // Revoke Copilot seat from user
+              await github.request('DELETE /orgs/{org}/copilot/billing/selected_users', {
+                org,
+                selected_usernames: [username],
+              });
+              result = {
+                action: 'Copilot license revoked',
+                details: `GitHub Copilot license has been **revoked** from \`${username}\``,
+              };
+            } else {
+              throw new Error(`Unknown action: ${action}`);
+            }
+
+            core.setOutput('action', result.action);
+            core.setOutput('details', result.details);
+            console.log(`✅ ${result.action}: ${result.details}`);
+
+      # -----------------------------------------------------------------------
+      # Step 2: Post execution result on issue
+      # -----------------------------------------------------------------------
+      - name: Post execution summary to issue
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const success = '${{ steps.execute.outcome }}' === 'success';
+            const action = '${{ steps.execute.outputs.action }}' || 'Unknown action';
+            const details = '${{ steps.execute.outputs.details }}' || 'No details available';
+
+            let comment = success
+              ? '## ✅ Request Executed Successfully\n\n'
+              : '## ❌ Request Execution Failed\n\n';
+
+            comment += '### 📋 Execution Summary\n\n';
+            comment += '| Field | Value |\n';
+            comment += '|-------|-------|\n';
+            comment += `| **Action** | ${action} |\n`;
+            comment += `| **Details** | ${details} |\n`;
+            comment += `| **Executed By** | Automated Workflow |\n`;
+            comment += `| **Approved By** | DevSecOps Team |\n\n`;
+
+            if (!success) {
+              const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+              comment += `### 🔧 Troubleshooting\n\n`;
+              comment += `- [View Workflow Logs](${runUrl})\n`;
+              comment += `- Contact DevSecOps team for assistance\n`;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment,
+            });
+
+            if (success) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                state: 'closed',
+                state_reason: 'completed',
+              });
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: ['completed'],
+              });
+            } else {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: ['execution-failed'],
+              });
+            }
