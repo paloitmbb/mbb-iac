@@ -47,7 +47,7 @@ jobs:
               "target_organization": "Target Organization",
               "target_repo": "Target Repository Name",
               "application_tier": "Application Tier",
-              "team_mappings": "Team Access Mappings (Optional)",
+              "team_mappings": "Team Access Mappings",
               "justification": "Justification"
             }
           textarea-fields: |

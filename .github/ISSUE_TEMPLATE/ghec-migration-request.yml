@@ -134,9 +134,9 @@ body:
   - type: textarea
     id: team_mappings
     attributes:
-      label: "Team Access Mappings (Optional)"
+      label: "Team Access Mappings"
       description: |
-        Map source teams to target teams for repository access. One mapping per line.
+        Optional: Map source teams to target teams for repository access. One mapping per line.
         Format: `<source-team-slug> → <target-team-slug> : <permission>`
         Permissions: pull, push, admin, maintain, triage
       placeholder: |
