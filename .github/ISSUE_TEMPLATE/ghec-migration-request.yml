@@ -140,9 +140,9 @@ body:
         Format: `<source-team-slug> → <target-team-slug> : <permission>`
         Permissions: pull, push, admin, maintain, triage
       placeholder: |
-        dev-team → dev-team : push
-        platform-team → platform-team : admin
-        qa-team → qa-team : triage
+        mss-devsecops-team : admin
+        platform-team : push
+        qa-team : triage
 
   - type: textarea
     id: justification

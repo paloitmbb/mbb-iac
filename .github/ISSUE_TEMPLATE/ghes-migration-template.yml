@@ -56,12 +56,8 @@ body:
       label: "Target Organization"
       description: "The target GitHub.com (GHEC) organization where the repository will be migrated to"
       options:
-        - MSS-DB 
-        - MSS-ENGINEERING
-        - MSS-DEVOPS
-        - MSS-CFS-DB
-        - ETIQA 
-        - ETIQA-CHANNELS
+        - maybank-ghes
+        - maybank-group
     validations:
       required: true
 
@@ -101,9 +97,9 @@ body:
         Format: `<source-team-slug> → <target-team-slug> : <permission>`
         Permissions: pull, push, admin, maintain, triage
       placeholder: |
-        dev-team → dev-team : push
-        platform-team → platform-team : admin
-        qa-team → qa-team : triage
+        mss-devsecops-team : admin
+        platform-team : push
+        qa-team : triage
 
   - type: textarea
     id: justification
