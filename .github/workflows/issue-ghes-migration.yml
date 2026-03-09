@@ -47,11 +47,20 @@ jobs:
               "target_organization": "Target Organization",
               "target_repo": "Target Repository Name",
               "application_tier": "Application Tier",
-              "team_mappings": "Team Access Mappings",
+              "team_mappings": "Team Access Mappings (Optional)",
               "justification": "Justification"
             }
           textarea-fields: |
             ["team_mappings", "justification"]
+
+      - name: Debug parser outputs
+        run: |
+          echo "🔍 Parser Output Values:"
+          echo "team_mappings: '${{ steps.parse.outputs.issueparser_team_mappings }}'"
+          echo "Length: ${#TEAM_VAL}"
+          echo "---"
+        env:
+          TEAM_VAL: ${{ steps.parse.outputs.issueparser_team_mappings }}
 
       - name: Validate GHES connectivity
         uses: paloitmbb/mbb-tf-actions/actions/ghes-validate-connectivity@main
@@ -506,8 +515,36 @@ jobs:
           echo "⏳ Waiting 15 seconds for GitHub.com to finalize import..."
           sleep 15
 
+      - name: Debug team mappings value
+        run: |
+          echo "📋 Team mappings value check in post-migration job:"
+          echo "Raw value from validate job: '${{ needs.validate.outputs.team_mappings }}'"
+          echo "Is empty check: $([ -z '${{ needs.validate.outputs.team_mappings }}' ] && echo 'YES - EMPTY' || echo 'NO - HAS VALUE')"
+          echo "Is null check: $([ '${{ needs.validate.outputs.team_mappings }}' = 'null' ] && echo 'YES - NULL' || echo 'NO - NOT NULL')"
+          echo "Length in bash: ${#TEAM_MAPPINGS}"
+          
+          if [ -z "$TEAM_MAPPINGS" ]; then
+            echo ""
+            echo "❌ PROBLEM IDENTIFIED: Team mappings is EMPTY"
+            echo "Possible reasons:"
+            echo "  1. 'Team Access Mappings' field was not filled in the issue form"
+            echo "  2. Field name in issue form does not match exactly: 'Team Access Mappings'"
+            echo "  3. Parser action failed to extract the value"
+            echo ""
+            echo "Expected format in issue form field:"
+            echo "  mss-devsecops-team:admin"
+            echo "  OR"
+            echo "  mss-devsecops-team : admin"
+          else
+            echo ""
+            echo "✅ Team mappings has content - step will run"
+            echo "Content preview: ${TEAM_MAPPINGS:0:100}..."
+          fi
+        env:
+          TEAM_MAPPINGS: ${{ needs.validate.outputs.team_mappings }}
+
       - name: Apply team access mappings
-        if: needs.validate.outputs.team_mappings != ''
+        if: needs.validate.outputs.team_mappings != '' && needs.validate.outputs.team_mappings != null
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TEAM_MAPPINGS: ${{ needs.validate.outputs.team_mappings }}
@@ -683,6 +720,15 @@ jobs:
           DEVCONTAINER_STATUS="${{ steps.devcontainer.outputs.status }}"
           CODEOWNERS_STATUS="${{ steps.codeowners.outputs.status }}"
           DETECTED_STACK="${{ steps.dependabot.outputs.detected-stack }}"
+          TEAM_MAPPINGS="${{ needs.validate.outputs.team_mappings }}"
+
+          # Team mappings status
+          TEAM_MSG=""
+          if [ -n "$TEAM_MAPPINGS" ]; then
+            TEAM_MSG="- ✅ **Team access mappings** applied"
+          else
+            TEAM_MSG="- ⚠️ **Team access mappings** skipped (not provided in issue form)"
+          fi
 
           STALE_MSG=""
           if [ -n "$STALE_COUNT" ] && [ "$STALE_COUNT" != "0" ]; then
@@ -736,7 +782,7 @@ jobs:
 
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "### 🔧 Post-Migration Setup Complete (GHES → GHEC)
 
-          - ✅ Team access mappings applied (if provided)
+          ${TEAM_MSG}
           ${STALE_MSG}
           ${DEPENDABOT_MSG}
           ${DEVCONTAINER_MSG}

@@ -50,7 +50,7 @@ jobs:
               "target_visibility": "Target Visibility",
               "application_tier": "Application Tier",
               "admins": "Admins",
-              "team_mappings": "Team Access Mappings",
+              "team_mappings": "Team Access Mappings (Optional)",
               "justification": "Justification",
               "migration_options": "Migration Options"
             }
@@ -1334,6 +1334,19 @@ jobs:
           default-branch: ${{ needs.pre-migration.outputs.source_default_branch }}
           detected-stack: ${{ steps.dependabot.outputs.detected-stack }}
           has-codeowners: ${{ needs.pre-migration.outputs.source_has_codeowners }}
+
+      - name: Debug application tier value
+        run: |
+          echo "🔍 Checking application tier value..."
+          echo "Raw value from validate job: '${{ needs.validate.outputs.application_tier }}'"
+          if [ -z "$APP_TIER" ]; then
+            echo "⚠️ Application tier is EMPTY or not provided in issue form"
+            echo "   The 'Application Tier' field in the issue form must contain: Tier 1, Tier 2, Tier 3, or Tier 4"
+          else
+            echo "✅ Application tier detected: '$APP_TIER'"
+          fi
+        env:
+          APP_TIER: ${{ needs.validate.outputs.application_tier }}
 
       - name: Inject backup workflow
         id: backup-workflow
