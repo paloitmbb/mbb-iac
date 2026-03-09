@@ -508,6 +508,9 @@ jobs:
 
       - name: Apply team access mappings
         if: needs.validate.outputs.team_mappings != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TEAM_MAPPINGS: ${{ needs.validate.outputs.team_mappings }}
         run: |
           TGT_ORG="${{ needs.validate.outputs.target_organization }}"
           TGT_REPO="${{ needs.validate.outputs.target_repo }}"
@@ -515,29 +518,33 @@ jobs:
 
           echo "👥 Applying team access mappings..."
 
-          MAPPINGS="${{ needs.validate.outputs.team_mappings }}"
-          echo "$MAPPINGS" | while IFS= read -r LINE; do
+          # Decode %0A (URL-encoded newlines from GHA job outputs)
+          DECODED_MAPPINGS=$(printf '%s' "$TEAM_MAPPINGS" | sed 's/%0A/\n/g; s/%0a/\n/g')
+
+          printf '%s\n' "$DECODED_MAPPINGS" | while IFS= read -r LINE; do
             LINE=$(echo "$LINE" | xargs)
             [ -z "$LINE" ] && continue
             [[ "$LINE" == \#* ]] && continue
 
-            # Parse: source-team → target-team : permission
-            if echo "$LINE" | grep -q "→"; then
-              TARGET_PART=$(echo "$LINE" | sed 's/.*→//' | xargs)
-            elif echo "$LINE" | grep -q "->"; then
-              TARGET_PART=$(echo "$LINE" | sed 's/.*->//' | xargs)
-            else
-              echo "   ⚠️ Skipping invalid mapping: $LINE"
+            # Expect format: "team-slug : permission"
+            if ! printf '%s' "$LINE" | grep -q ":"; then
+              echo "   ⚠️ Skipping invalid mapping (missing ':'): $LINE"
               continue
             fi
 
-            if echo "$TARGET_PART" | grep -q ":"; then
-              TARGET_TEAM=$(echo "$TARGET_PART" | sed 's/:.*//' | xargs)
-              PERMISSION=$(echo "$TARGET_PART" | sed 's/.*://' | xargs)
-            else
-              TARGET_TEAM="$TARGET_PART"
-              PERMISSION="push"
-            fi
+            TARGET_TEAM=$(printf '%s' "$LINE" | sed 's/:.*//' | xargs)
+            PERMISSION=$(printf '%s' "$LINE" | sed 's/.*://' | xargs)
+
+            # Validate permission value
+            case "$PERMISSION" in
+              pull|push|admin|maintain|triage) ;;
+              *)
+                echo "   ⚠️ Invalid permission '$PERMISSION' for team '$TARGET_TEAM' — defaulting to push"
+                PERMISSION="push"
+                ;;
+            esac
+
+            echo "   → Team: $TARGET_TEAM | Permission: $PERMISSION"
 
             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
               -X PUT \
@@ -550,7 +557,7 @@ jobs:
             if [ "$HTTP_CODE" = "204" ]; then
               echo "   ✅ $TARGET_TEAM — $PERMISSION"
             else
-              echo "   ⚠️ $TARGET_TEAM — HTTP $HTTP_CODE"
+              echo "   ⚠️ $TARGET_TEAM — HTTP $HTTP_CODE (check team slug exists in org: $TGT_ORG)"
             fi
           done
 
