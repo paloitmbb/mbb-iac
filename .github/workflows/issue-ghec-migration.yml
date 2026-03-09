@@ -59,6 +59,13 @@ jobs:
           checkbox-fields: |
             ["migration_options"]
 
+      - name: Debug parser outputs
+        run: |
+          echo "🔍 Parser Output Values:"
+          echo "team_mappings: '${{ steps.parse.outputs.issueparser_team_mappings }}'"
+          echo "admins: '${{ steps.parse.outputs.issueparser_admins }}'"
+          echo "source_org: '${{ steps.parse.outputs.issueparser_source_organization }}'"
+
       - name: Validate source and target repositories
         uses: paloitmbb/mbb-tf-actions/actions/migration-validation@main
         with:
@@ -672,9 +679,22 @@ jobs:
             fi
           done
 
-      
+      - name: Debug team mappings value
+        run: |
+          echo "🔍 Checking team mappings value from validate job..."
+          TEAM_VAL="${{ needs.validate.outputs.team_mappings }}"
+          echo "Raw value: '$TEAM_VAL'"
+          echo "Length: ${#TEAM_VAL}"
+          if [ -z "$TEAM_VAL" ]; then
+            echo "❌ Value is EMPTY or NULL"
+            echo "   The 'Team Access Mappings (Optional)' field was likely left blank in the issue form"
+          else
+            echo "✅ Value is present (length: ${#TEAM_VAL})"
+            echo "   First 100 chars: ${TEAM_VAL:0:100}"
+          fi
+
       - name: Apply team access mappings
-        if: needs.validate.outputs.team_mappings != ''
+        if: needs.validate.outputs.team_mappings != '' && needs.validate.outputs.team_mappings != null
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TEAM_MAPPINGS: ${{ needs.validate.outputs.team_mappings }}
