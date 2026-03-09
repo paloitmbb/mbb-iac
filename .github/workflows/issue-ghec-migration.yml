@@ -25,6 +25,7 @@ jobs:
       target_organization: ${{ steps.parse.outputs.issueparser_target_organization }}
       target_repo: ${{ steps.parse.outputs.issueparser_target_repo }}
       target_visibility: ${{ steps.parse.outputs.issueparser_target_visibility }}
+      application_tier: ${{ steps.parse.outputs.issueparser_application_tier }}
       migration_options: ${{ steps.parse.outputs.issueparser_migration_options }}
       admins: ${{ steps.parse.outputs.issueparser_admins }}
       team_mappings: ${{ steps.parse.outputs.issueparser_team_mappings }}
@@ -47,6 +48,7 @@ jobs:
               "target_organization": "Target Organization",
               "target_repo": "Target Repository Name",
               "target_visibility": "Target Visibility",
+              "application_tier": "Application Tier",
               "admins": "Admins",
               "team_mappings": "Team Access Mappings",
               "justification": "Justification",
@@ -628,9 +630,6 @@ jobs:
     permissions:
       issues: write
     outputs:
-      secret_names: ${{ steps.list-repo-secrets.outputs.secret_names }}
-      secret_count: ${{ steps.list-repo-secrets.outputs.secret_count }}
-      secret_error: ${{ steps.list-repo-secrets.outputs.secret_error }}
       detected_stack: ${{ steps.dependabot.outputs.detected-stack }}
       dependabot_status: ${{ steps.dependabot.outputs.status }}
       devcontainer_status: ${{ steps.devcontainer.outputs.status }}
@@ -1327,6 +1326,16 @@ jobs:
           detected-stack: ${{ steps.dependabot.outputs.detected-stack }}
           has-codeowners: ${{ needs.pre-migration.outputs.source_has_codeowners }}
 
+      - name: Inject backup workflow
+        id: backup-workflow
+        uses: paloitmbb/mbb-tf-actions/actions/ghes-inject-backup-workflow@main
+        with:
+          target-organization: ${{ needs.validate.outputs.target_organization }}
+          target-repo: ${{ needs.validate.outputs.target_repo }}
+          target-pat: ${{ secrets.GH_TARGET_PAT }}
+          default-branch: ${{ needs.pre-migration.outputs.source_default_branch }}
+          application-tier: ${{ needs.validate.outputs.application_tier }}
+
       - name: Comment post-migration setup
         run: |
           # Build ruleset status line
@@ -1430,6 +1439,21 @@ jobs:
             CODEOWNERS_MSG="- ❌ **CODEOWNERS** file creation failed"
           fi
 
+          BACKUP_MSG=""
+          BACKUP_STATUS="${{ steps.backup-workflow.outputs.status }}"
+          BACKUP_TIER="${{ steps.backup-workflow.outputs.tier }}"
+          if [ "$BACKUP_STATUS" = "created" ]; then
+            BACKUP_MSG="- ✅ **Backup Workflow** (Tier ${BACKUP_TIER}) injected successfully"
+          elif [ "$BACKUP_STATUS" = "exists" ]; then
+            BACKUP_MSG="- ⚠️ **Backup Workflow** already exists (skipped)"
+          elif [ "$BACKUP_STATUS" = "no-tier" ]; then
+            BACKUP_MSG="- ⚠️ **Backup Workflow** could not determine application tier (skipped)"
+          elif [ "$BACKUP_STATUS" = "template-not-found" ]; then
+            BACKUP_MSG="- ⚠️ **Backup Workflow** template not found for Tier ${BACKUP_TIER}"
+          else
+            BACKUP_MSG="- ❌ **Backup Workflow** injection failed"
+          fi
+
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "### 🔧 Post-Migration Setup Complete
 
           - ✅ Admin collaborators added: \`${ADMINS}\`
@@ -1450,6 +1474,7 @@ jobs:
           ${DEPENDABOT_MSG}
           ${DEVCONTAINER_MSG}
           ${CODEOWNERS_MSG}
+          ${BACKUP_MSG}
 
           📋 Running verification checks..."
         env:
