@@ -50,7 +50,7 @@ jobs:
               "target_visibility": "Target Visibility",
               "application_tier": "Application Tier",
               "admins": "Admins",
-              "team_mappings": "Team Access Mappings (Optional)",
+              "team_mappings": "Team Access Mappings",
               "justification": "Justification",
               "migration_options": "Migration Options"
             }
@@ -687,7 +687,7 @@ jobs:
           echo "Length: ${#TEAM_VAL}"
           if [ -z "$TEAM_VAL" ]; then
             echo "❌ Value is EMPTY or NULL"
-            echo "   The 'Team Access Mappings (Optional)' field was likely left blank in the issue form"
+            echo "   The 'Team Access Mappings' field was likely left blank in the issue form"
           else
             echo "✅ Value is present (length: ${#TEAM_VAL})"
             echo "   First 100 chars: ${TEAM_VAL:0:100}"
