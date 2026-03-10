@@ -1,15 +1,16 @@
-# MBB GHEC Migration — Implementation Plan
+# MBB GHES → GHEC Migration — Implementation Plan
 
 ## 1. Overview
 
-This document describes the implementation plan for the **GitHub Enterprise Cloud (GHEC) repository migration** solution. The system is driven by a GitHub Issues form and an automated GitHub Actions workflow that uses the **GitHub Enterprise Importer (GEI) CLI** to perform the migration end-to-end between GitHub.com organizations/accounts.
+This document describes the implementation plan for the **GitHub Enterprise Server (GHES) → GitHub Enterprise Cloud (GHEC) repository migration** solution. The system is driven by a GitHub Issues form and an automated GitHub Actions workflow that uses the **GitHub Enterprise Importer (GEI) CLI** to migrate repositories from a GHES 3.15.3 instance to GitHub Enterprise Cloud.
 
-> **⚠️ IMPORTANT UPDATE (Current Implementation):**
+> **⚠️ Architecture Notes:**
 >
-> The implementation has been updated from the original GHES → GHEC plan:
->
-> - **GitHub.com → GitHub.com migration** — source and target are both on GitHub.com (no GHES URL required)
-> - **Target repo must already exist** — the workflow validates that the target repository exists before proceeding (does not create a new repo)
+> - **Source**: GitHub Enterprise Server (GHES) **3.15.3**
+> - **Target**: GitHub Enterprise Cloud (GHEC) on GitHub.com
+> - **Blob Storage (Mandatory)**: GHES migrations require Azure Blob Storage (or AWS S3) as an intermediary. The GEI CLI uploads migration archives to blob storage, and GHEC reads from it. See [GitHub Docs — Set up blob storage](https://docs.github.com/en/enterprise-server@3.15/migrations/using-github-enterprise-importer/migrating-between-github-products/migrating-repositories-from-github-enterprise-server-to-github-enterprise-cloud#step-4-set-up-blob-storage).
+> - **GHES Management Console**: Migrations must be enabled in the GHES Management Console with blob storage configured and tested before use (see §13).
+> - **Target repo must already exist** — the workflow validates that the target repository exists on GHEC before proceeding (does not create a new repo)
 > - **Full branch protection migration** — branch protection rules are migrated from source with fallback probing, not just default branch protection
 > - **Rulesets migration** — repository and org-level rulesets are migrated (repo-level first, org-level fallback)
 > - **Actions permissions migration** — permissions policy, selected actions, and workflow permissions are migrated
@@ -18,12 +19,24 @@ This document describes the implementation plan for the **GitHub Enterprise Clou
 > - **Secret names listing** — secret names are listed for manual re-creation (values cannot be read via API)
 > - **GHAS migration expanded** — includes code scanning default setup, secret scanning non-provider patterns, validity checks
 
+### Architecture Diagram
+
+```
+┌──────────────┐         ┌──────────────────────┐         ┌─────────────┐
+│  GHES 3.15.3 │────────►│  Azure Blob Storage  │────────►│    GHEC     │
+│  (source)    │  upload  │  (intermediary)       │  read   │  (target)   │
+└──────────────┘         └──────────────────────┘         └─────────────┘
+       │                                                         ▲
+       │              GEI CLI orchestrates both legs             │
+       └─────────────────────────────────────────────────────────┘
+```
+
 ### Components
 
 | Component | Path | Purpose |
 |-----------|------|---------|
-| Issue Template | `.github/ISSUE_TEMPLATE/ghec-migration-request.yml` | Self-service form for users to request a repository migration |
-| Workflow | `.github/workflows/issue-ghec-migration.yml` | 7-job pipeline that validates, migrates, configures, verifies, and closes the request |
+| Issue Template | `.github/ISSUE_TEMPLATE/ghes-migration-request.yml` | Self-service form for users to request a GHES → GHEC repository migration |
+| Workflow | `.github/workflows/issue-ghes-migration.yml` | 7-job pipeline that validates, migrates, configures, verifies, and closes the request |
 
 ---
 
@@ -33,25 +46,29 @@ Before the solution can be used, the following must be in place:
 
 | # | Prerequisite | Details |
 |---|-------------|---------|
-| 1 | **GH_SOURCE_PAT** secret | A Personal Access Token with **read** access to the source GitHub.com repository (repo, admin:org scopes) |
-| 2 | **GH_TARGET_PAT** secret | A Personal Access Token with **write/admin** access to the target GitHub.com organization (repo, admin:org, workflow scopes) |
-| 3 | **Target org exists on GitHub.com** | The target GitHub.com organization must already be created |
-| 4 | **Target repo must already exist** | The target repository must be pre-created on GitHub.com before requesting migration |
-| 5 | **`migration-approval` environment** | A GitHub environment with required reviewers configured for the approval gate |
+| 1 | **GHES instance (v3.15.3)** | Source GitHub Enterprise Server must be accessible from the workflow runner; GitHub Actions must be enabled on the GHES instance |
+| 2 | **Blob storage configured** | Azure Blob Storage (or AWS S3) must be provisioned and configured in the GHES Management Console under **Migrations** (see §13) |
+| 3 | **GH_SOURCE_PAT** secret | A Personal Access Token on the **GHES instance** with **read** access to the source repository (`repo`, `admin:org` scopes) |
+| 4 | **GH_TARGET_PAT** secret | A Personal Access Token on **GitHub.com (GHEC)** with **write/admin** access to the target organization (`repo`, `admin:org`, `workflow` scopes) |
+| 5 | **AZURE_STORAGE_CONNECTION_STRING** secret | Connection string for the Azure Blob Storage account used as the migration intermediary |
+| 6 | **Target org exists on GHEC** | The target GitHub.com (GHEC) organization must already be created |
+| 7 | **Target repo must already exist** | The target repository must be pre-created on GHEC before requesting migration |
+| 8 | **`migration-approval` environment** | A GitHub environment with required reviewers configured for the approval gate |
 
 ---
 
-## 3. Issue Template — `ghec-migration-request.yml`
+## 3. Issue Template — `ghes-migration-request.yml`
 
 ### 3.1 Form Structure
 
-The issue template collects all information needed to execute a migration:
+The issue template collects all information needed to execute a GHES → GHEC migration:
 
 | Section | Field | Type | Required | Validation |
 |---------|-------|------|----------|------------|
-| **Source (GitHub.com)** | Source Organization | `input` | Yes | — |
+| **Source (GHES)** | Source GHES URL | `input` | Yes | Must be a valid HTTPS URL to the GHES instance (e.g., `https://ghes.example.com`) |
+| | Source Organization | `input` | Yes | — |
 | | Source Repository Name | `input` | Yes | — |
-| **Target (GitHub.com)** | Target Organization | `input` | Yes | Must exist on GitHub.com |
+| **Target (GHEC)** | Target Organization | `input` | Yes | Must exist on GitHub.com |
 | | Target Repository Name | `input` | Yes | Regex: `^[a-z0-9]+(-[a-z0-9]+)+$` |
 | | Target Visibility | `dropdown` | Yes | `private` (default), `internal`, `public` |
 | **Migration Options** | Checkboxes | `checkboxes` | No | 5 options (commit history, PRs, issues, releases, archive source) |
@@ -81,7 +98,7 @@ Example: `mbbmy-dbdo-app-mae-mobile`
 
 ---
 
-## 4. Workflow — `issue-ghec-migration.yml`
+## 4. Workflow — `issue-ghes-migration.yml`
 
 ### 4.1 Trigger
 
@@ -91,7 +108,7 @@ on:
     types: [opened]
 ```
 
-The workflow triggers when an issue is opened and filters by title prefix `[GHEC Migration]` (set automatically by the issue template).
+The workflow triggers when an issue is opened and filters by title prefix `[GHES Migration]` (set automatically by the issue template).
 
 ### 4.2 Job Pipeline
 
@@ -117,7 +134,7 @@ The workflow consists of **7 sequential jobs** with dependency gates:
 
 ### 4.3 Job 1: Validate (`validate`)
 
-**Purpose:** Parse the issue body, extract all fields, and validate them against the source and target on GitHub.com.
+**Purpose:** Parse the issue body, extract all fields, and validate them against the source GHES instance and target GHEC organization.
 
 | # | Step | Description | Implementation Detail |
 |---|------|-------------|----------------------|
@@ -125,17 +142,16 @@ The workflow consists of **7 sequential jobs** with dependency gates:
 | 2 | Parse Issue Form | Extract fields from issue body using regex | `actions/github-script@v7` with custom JS parsing functions (`extractField`, `extractTextarea`, `extractCheckboxes`) |
 | 3 | Display parsed values | Log all parsed values for debugging | Shell `echo` statements |
 | 4 | Validate required fields | Check all mandatory fields are non-empty | Shell script with error accumulation |
-| 5 | Validate source repo exists | `GET https://api.github.com/repos/{org}/{repo}` with `GH_SOURCE_PAT` | Also checks if repo is archived (blocks migration) |
-| 6 | Validate target org exists | `GET https://api.github.com/orgs/{org}` (falls back to `/users/{org}`) | Uses `GH_TARGET_PAT` |
-| 7 | Check target repo exists | `GET https://api.github.com/repos/{org}/{repo}` | HTTP 200 = repo exists → proceed; HTTP 404 = repo does not exist → fail (target must be pre-created) |
-| 8 | Post validation results | Post detailed comment to issue | `actions/github-script@v7` — adds labels (`validation-passed` or `validation-failed`) |
-| 9 | Comment validation passed | Summary table posted to issue | `peter-evans/create-or-update-comment@v4` |
-| 10 | Generate validation summary | Write GitHub Actions job summary | `core.summary.addRaw().write()` |
-| 11 | Label as in-progress | Add `in-progress` label to issue | `gh issue edit --add-label` |
+| 5 | Validate GHES connectivity | Check URL format and connectivity to the source GHES instance | `curl` to `${GHES_URL}/api/v3/meta` with `GH_SOURCE_PAT` |
+| 6 | Validate source and target repos | Combined step: (a) check source repo exists on GHES (`GET ${GHES_URL}/api/v3/repos/{org}/{repo}`), check if archived; (b) validate target org on GHEC (`GET https://api.github.com/orgs/{org}`); (c) check target repo exists on GHEC (`GET https://api.github.com/repos/{org}/{repo}` — must return 200) | Error accumulation pattern — all checks run, all errors reported together |
+| 7 | Post validation results | Post detailed comment to issue | `actions/github-script@v7` — adds labels (`validation-passed` or `validation-failed`) |
+| 8 | Comment validation passed | Summary table posted to issue | `peter-evans/create-or-update-comment@v4` |
+| 9 | Generate validation summary | Write GitHub Actions job summary | `core.summary.addRaw().write()` |
+| 10 | Label as in-progress | Add `in-progress` label to issue | `gh issue edit --add-label` |
 
 **Outputs propagated to downstream jobs:**
 
-- `source_organization`, `source_repo`, `target_organization`, `target_repo`
+- `source_ghes_url`, `source_organization`, `source_repo`, `target_organization`, `target_repo`
 - `target_visibility`, `migration_options`, `admins`, `team_mappings`, `justification`
 - `issue_number`
 
@@ -161,12 +177,12 @@ The workflow consists of **7 sequential jobs** with dependency gates:
 
 ### 4.5 Job 3: Pre-Migration Setup (`pre-migration`)
 
-**Purpose:** Record the source repository's current state for post-migration verification.
+**Purpose:** Record the source repository's current state on GHES for post-migration verification.
 
 | # | Step | Description | API Endpoint |
 |---|------|-------------|---------------------|
 | 1 | Parse migration options | Extract `archive_source` flag from checkboxes | String match on `"Archive source repository"` |
-| 2 | Record source state | Capture branch count, tag count, HEAD SHA, default branch | `GET https://api.github.com/repos/{org}/{repo}`, `/branches`, `/tags`, `/branches/{default}` |
+| 2 | Record source state | Capture branch count, tag count, HEAD SHA, default branch | `GET ${GHES_URL}/api/v3/repos/{org}/{repo}`, `/branches`, `/tags`, `/branches/{default}` |
 | 3 | Comment pre-migration state | Post metrics table to issue | `peter-evans/create-or-update-comment@v4` |
 
 **Outputs:**
@@ -177,12 +193,12 @@ The workflow consists of **7 sequential jobs** with dependency gates:
 
 ### 4.6 Job 4: Execute GEI Migration (`migrate`)
 
-**Purpose:** Run the GitHub Enterprise Importer CLI to migrate the repository.
+**Purpose:** Run the GitHub Enterprise Importer CLI to migrate the repository from GHES to GHEC via blob storage.
 
 | # | Step | Description |
 |---|------|-------------|
 | 1 | Install GEI CLI | `gh extension install github/gh-gei` |
-| 2 | Run GEI migration | Execute `gh gei migrate-repo` with all parameters |
+| 2 | Run GEI migration | Execute `gh gei migrate-repo` with GHES source, blob storage, and target parameters |
 | 3 | Comment migration result | Post success/failure with GEI output |
 
 **GEI Command:**
@@ -194,6 +210,8 @@ gh gei migrate-repo \
   --github-target-org "$TGT_ORG" \
   --target-repo "$TGT_REPO" \
   --target-repo-visibility "$VISIBILITY" \
+  --ghes-api-url "${GHES_URL}/api/v3" \
+  --azure-storage-connection-string "$AZURE_STORAGE_CONNECTION_STRING" \
   --verbose
 ```
 
@@ -201,39 +219,40 @@ gh gei migrate-repo \
 
 | Variable | Source |
 |----------|--------|
-| `GH_SOURCE_PAT` | `secrets.GH_SOURCE_PAT` |
-| `GH_PAT` | `secrets.GH_TARGET_PAT` |
+| `GH_SOURCE_PAT` | `secrets.GH_SOURCE_PAT` (GHES PAT) |
+| `GH_PAT` | `secrets.GH_TARGET_PAT` (GHEC PAT) |
+| `AZURE_STORAGE_CONNECTION_STRING` | `secrets.AZURE_STORAGE_CONNECTION_STRING` |
 
 ---
 
 ### 4.7 Job 5: Post-Migration Setup (`post-migration`)
 
-**Purpose:** Configure the target repository with proper access, protection rules, security settings, environments, variables, and report secrets requiring manual re-creation.
+**Purpose:** Configure the target GHEC repository with proper access, protection rules, security settings, environments, variables, and report secrets requiring manual re-creation.
 
 | # | Step | Description | API Used |
 |---|------|-------------|----------|
-| 1 | Wait 15s | Let GitHub.com finalize the import | `sleep 15` |
-| 2 | Add admin collaborators | Iterate comma-separated admin list, add each as admin | `PUT /repos/{org}/{repo}/collaborators/{user}` |
-| 3 | Apply team access mappings | Parse `source → target : permission` format, apply each | `PUT /orgs/{org}/teams/{team}/repos/{org}/{repo}` |
-| 4 | Migrate branch protection rules | Full migration from source: list protected branches (with fallback probe for free-plan orgs), extract migratable settings (status checks, PR reviews, enforce admins, linear history, force pushes, deletions, block creations, conversation resolution, fork syncing, required signatures), skip actor-specific settings (push restrictions, dismissal restrictions, bypass allowances, lock branch, required deployments), apply to target. Non-migratable settings tracked in `BRANCH_PROTECTION_MANUAL` env var for issue comment | `GET/PUT /repos/{org}/{repo}/branches/{branch}/protection` |
-| 5 | Migrate rulesets | Repo-level first (`GET /repos/{org}/{repo}/rulesets`), org-level fallback (`GET /orgs/{org}/rulesets` filtered by repo). Cleans org-specific fields before creating on target | `POST /repos/{org}/{repo}/rulesets` |
-| 6 | Migrate Actions permissions | Permissions policy, selected actions (if applicable), default workflow permissions | `GET/PUT /repos/{org}/{repo}/actions/permissions`, `/actions/permissions/selected-actions`, `/actions/permissions/workflow` |
-| 7 | Migrate environments | Environments and their variables (secrets cannot be read) | `GET/PUT /repos/{org}/{repo}/environments/{name}`, `/environments/{name}/variables` |
-| 8 | Migrate repo-level Actions variables | Paginated variable migration from source to target | `GET/POST /repos/{org}/{repo}/actions/variables` |
-| 9 | List repo-level secret names | List Actions secrets, Dependabot secrets, and environment secrets (names only — values are unreadable via API) | `GET /repos/{org}/{repo}/actions/secrets`, `/dependabot/secrets`, `/environments/{name}/secrets` |
-| 10 | Migrate GHAS permissions | Multi-step security migration (see §4.7.1) | Multiple GitHub.com API calls |
+| 1 | Wait 15s | Let GHEC finalize the import | `sleep 15` |
+| 2 | Add admin collaborators | Iterate comma-separated admin list, add each as admin on GHEC | `PUT https://api.github.com/repos/{org}/{repo}/collaborators/{user}` |
+| 3 | Apply team access mappings | Parse `source → target : permission` format, apply each on GHEC | `PUT https://api.github.com/orgs/{org}/teams/{team}/repos/{org}/{repo}` |
+| 4 | Migrate branch protection rules | Read from GHES source (`${GHES_URL}/api/v3/repos/...`), apply to GHEC target. Extract migratable settings (status checks, PR reviews, enforce admins, linear history, force pushes, deletions, block creations, conversation resolution, fork syncing, required signatures), skip actor-specific settings (push restrictions, dismissal restrictions, bypass allowances, lock branch, required deployments). Non-migratable settings tracked in `BRANCH_PROTECTION_MANUAL` env var for issue comment | Source: `GET ${GHES_URL}/api/v3/repos/{org}/{repo}/branches/{branch}/protection`; Target: `PUT https://api.github.com/repos/{org}/{repo}/branches/{branch}/protection` |
+| 5 | Migrate rulesets | From GHES source: repo-level first, org-level fallback. Cleans org-specific fields before creating on GHEC target | Source: `GET ${GHES_URL}/api/v3/repos/{org}/{repo}/rulesets`; Target: `POST https://api.github.com/repos/{org}/{repo}/rulesets` |
+| 6 | Migrate Actions permissions | Read from GHES source, apply to GHEC target | Source: `GET ${GHES_URL}/api/v3/repos/{org}/{repo}/actions/permissions`; Target: `PUT https://api.github.com/repos/{org}/{repo}/actions/permissions` |
+| 7 | Migrate environments | Read environments and variables from GHES source, create on GHEC (secrets cannot be read) | Source: `GET ${GHES_URL}/api/v3/repos/{org}/{repo}/environments`; Target: `PUT https://api.github.com/repos/{org}/{repo}/environments/{name}` |
+| 8 | Migrate repo-level Actions variables | Paginated variable migration from GHES source to GHEC target | Source: `GET ${GHES_URL}/api/v3/repos/{org}/{repo}/actions/variables`; Target: `POST https://api.github.com/repos/{org}/{repo}/actions/variables` |
+| 9 | List repo-level secret names | List Actions secrets, Dependabot secrets, and environment secrets from GHES (names only — values are unreadable via API) | `GET ${GHES_URL}/api/v3/repos/{org}/{repo}/actions/secrets`, `/dependabot/secrets`, `/environments/{name}/secrets` |
+| 10 | Migrate GHAS permissions | Multi-step security migration (see §4.7.1) | Source: GHES API; Target: GHEC API |
 | 11 | Comment results | Post comprehensive summary with manual action items | `peter-evans/create-or-update-comment@v4` |
 
 #### 4.7.1 Advanced Security (GHAS) Migration Sub-steps
 
-| Sub-step | Action | Source API | Target API |
-|----------|--------|------------|------------|
-| 1 | Read source GHAS settings | `GET /repos/{org}/{repo}` → `security_and_analysis` | — |
-| 2 | Enable Advanced Security on target (if enabled on source) | — | `PATCH /repos/{org}/{repo}` with `advanced_security.status: "enabled"` |
-| 3 | Apply Secret Scanning settings | — | `PATCH /repos/{org}/{repo}` with `secret_scanning`, `push_protection`, `validity_checks`, `non_provider_patterns` |
-| 4 | Enable Dependabot | — | `PUT /repos/{org}/{repo}/vulnerability-alerts` + `PATCH` with `dependabot_security_updates` |
-| 5 | Migrate Code Scanning default setup | `GET /repos/{org}/{repo}/code-scanning/default-setup` | `PATCH /repos/{org}/{repo}/code-scanning/default-setup` |
-| 6 | Check Security Manager teams | `GET /orgs/{org}/security-managers` | Informational only (org-level, manual re-config required) |
+| Sub-step | Action | Source API (GHES) | Target API (GHEC) |
+|----------|--------|-------------------|-------------------|
+| 1 | Read source GHAS settings | `GET ${GHES_URL}/api/v3/repos/{org}/{repo}` → `security_and_analysis` | — |
+| 2 | Enable Advanced Security on target (if enabled on source) | — | `PATCH https://api.github.com/repos/{org}/{repo}` with `advanced_security.status: "enabled"` |
+| 3 | Apply Secret Scanning settings | — | `PATCH https://api.github.com/repos/{org}/{repo}` with `secret_scanning`, `push_protection`, `validity_checks`, `non_provider_patterns` |
+| 4 | Enable Dependabot | — | `PUT https://api.github.com/repos/{org}/{repo}/vulnerability-alerts` + `PATCH` with `dependabot_security_updates` |
+| 5 | Migrate Code Scanning default setup | `GET ${GHES_URL}/api/v3/repos/{org}/{repo}/code-scanning/default-setup` | `PATCH https://api.github.com/repos/{org}/{repo}/code-scanning/default-setup` |
+| 6 | Check Security Manager teams | `GET ${GHES_URL}/api/v3/orgs/{org}/security-managers` | Informational only (org-level, manual re-config required) |
 
 **Graceful degradation:** If any GHAS step fails, it is logged to `GHAS_MANUAL_FILE` and reported in the issue comment as requiring manual configuration. The job continues (does not fail hard). Similarly, non-migratable branch protection settings (actor-specific) are tracked in `BRANCH_PROTECTION_MANUAL` and reported.
 
@@ -255,12 +274,12 @@ gh gei migrate-repo \
 
 ### 4.9 Job 7: Cutover & Cleanup (`cutover`)
 
-**Purpose:** Archive the source repo (if requested) after successful verification.
+**Purpose:** Archive the source repo on GHES (if requested) after successful verification.
 
 | # | Step | Condition | Description |
 |---|------|-----------|-------------|
 | 1 | Checkout | Always | Clone repo for potential manifest updates |
-| 2 | Archive source on GitHub.com | `archive_source == 'true'` | `PATCH https://api.github.com/repos/{org}/{repo}` with `{"archived": true, "description": "[MIGRATED]..."}` |
+| 2 | Archive source on GHES | `archive_source == 'true'` | `PATCH ${GHES_URL}/api/v3/repos/{org}/{repo}` with `{"archived": true, "description": "[MIGRATED TO GHEC]..."}` |
 
 **Gate:** Only runs if `verify.verification_passed == 'true'`
 
@@ -287,8 +306,9 @@ gh gei migrate-repo \
 | Secret Name | Scope | Required Permissions |
 |-------------|-------|---------------------|
 | `GITHUB_TOKEN` | Auto-provided | `issues: write`, `contents: read` |
-| `GH_SOURCE_PAT` | Source GitHub.com | `repo` (read), `admin:org` (read) on the source organization |
+| `GH_SOURCE_PAT` | Source GHES instance | `repo` (read), `admin:org` (read) on the GHES source organization |
 | `GH_TARGET_PAT` | Target GitHub.com (GHEC) | `repo`, `admin:org`, `workflow`, `delete_repo` on the target GHEC org |
+| `AZURE_STORAGE_CONNECTION_STRING` | Azure Blob Storage | Connection string for the blob storage account used as migration intermediary |
 
 ---
 
@@ -306,7 +326,7 @@ The workflow automatically manages the following labels:
 
 | Label | Color | When Applied | When Removed |
 |-------|-------|-------------|--------------|
-| `ghec-migration-request` | — | On issue creation (via template) | Never |
+| `ghes-to-ghec-migration` | — | On issue creation (via template) | Never |
 | `validation-passed` | — | After successful validation | Never |
 | `validation-failed` | — | After failed validation | Never |
 | `in-progress` | `#FBCA04` | After validation passes | On issue close |
@@ -319,15 +339,19 @@ The workflow automatically manages the following labels:
 | Scenario | Behavior |
 |----------|----------|
 | Missing required fields | Issue comment with specific errors; workflow exits |
-| Source repo not found / archived | Issue comment explaining the problem; workflow exits |
-| Target repo does not exist | Issue comment asking user to create the target repo first; workflow exits |
+| Invalid GHES URL format | Issue comment with expected format; workflow exits |
+| GHES instance unreachable | Issue comment with HTTP status; workflow exits |
+| Source repo not found on GHES / archived | Issue comment explaining the problem; workflow exits |
+| Target repo does not exist on GHEC | Issue comment asking user to create the target repo first; workflow exits |
+| Blob storage misconfigured | GEI fails with storage error; issue comment with GEI output; workflow exits |
+| `AZURE_STORAGE_CONNECTION_STRING` missing or invalid | GEI fails; issue comment with error details; workflow exits |
 | GEI migration failure | Issue comment with GEI output; workflow exits |
 | Branch protection partial migration | Issue continues; actor-specific settings documented in `BRANCH_PROTECTION_MANUAL` env var and reported in comment |
 | Rulesets API denied (403) | Issue continues; warning posted that rulesets may need manual re-creation |
 | GHAS migration partial failure | Issue continues; manual steps documented in `GHAS_MANUAL` env var and reported in comment |
 | Secrets not readable | Secret names listed for manual re-creation; workflow continues |
 | Verification failure (branch/tag/SHA mismatch) | Cutover is skipped; issue remains open for investigation |
-| Archive source failure | Warning logged; issue still closes successfully |
+| Archive source failure on GHES | Warning logged; issue still closes successfully |
 
 ---
 
