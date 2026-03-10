@@ -721,15 +721,15 @@ jobs:
           detected-stack: ${{ steps.dependabot.outputs.detected-stack }}
           has-codeowners: ${{ needs.pre-migration.outputs.source_has_codeowners }}
 
-      # - name: Inject backup workflow
-      #   id: backup-workflow
-      #   uses: paloitmbb/mbb-tf-actions/actions/ghes-inject-backup-workflow@main
-      #   with:
-      #     target-organization: ${{ needs.validate.outputs.target_organization }}
-      #     target-repo: ${{ needs.validate.outputs.target_repo }}
-      #     target-pat: ${{ secrets.GH_TARGET_PAT }}
-      #     default-branch: ${{ needs.pre-migration.outputs.source_default_branch }}
-      #     application-tier: ${{ needs.validate.outputs.application_tier }}
+      - name: Inject backup workflow
+        id: backup-workflow
+        uses: paloitmbb/mbb-tf-actions/actions/ghes-inject-backup-workflow@main
+        with:
+          target-organization: ${{ needs.validate.outputs.target_organization }}
+          target-repo: ${{ needs.validate.outputs.target_repo }}
+          target-pat: ${{ secrets.GH_TARGET_PAT }}
+          default-branch: ${{ needs.pre-migration.outputs.source_default_branch }}
+          application-tier: ${{ needs.validate.outputs.application_tier }}
 
 
           
