@@ -53,15 +53,6 @@ jobs:
           textarea-fields: |
             ["team_mappings", "justification"]
 
-      - name: Debug parser outputs
-        run: |
-          echo "🔍 Parser Output Values:"
-          echo "team_mappings: '${{ steps.parse.outputs.issueparser_team_mappings }}'"
-          echo "Length: ${#TEAM_VAL}"
-          echo "---"
-        env:
-          TEAM_VAL: ${{ steps.parse.outputs.issueparser_team_mappings }}
-
       - name: Validate GHES connectivity
         uses: paloitmbb/mbb-tf-actions/actions/ghes-validate-connectivity@main
         with:
@@ -389,14 +380,43 @@ jobs:
             await core.summary.addRaw(summary).write();
 
   # ─────────────────────────────────────────────
-  # Job 3: Approval Gate - requires manual approval after validation
+  # Job 3: Determine Environment based on Target Organization
+  # ─────────────────────────────────────────────
+  determine-environment:
+    name: "Determine Environment"
+    needs: [validate]
+    runs-on: [self-hosted, maybank-ghes-runners]
+    outputs:
+      environment: ${{ steps.check-env.outputs.environment }}
+    steps:
+      - name: Determine environment from target organization
+        id: check-env
+        run: |
+          TARGET_ORG="${{ needs.validate.outputs.target_organization }}"
+          
+          echo "🔍 Determining environment based on target organization: ${TARGET_ORG}"
+          
+          if [[ "${TARGET_ORG}" == "maybank-ghes" ]]; then
+            echo "environment=sit" >> $GITHUB_OUTPUT
+            echo "✅ Environment: SIT (maybank-ghes)"
+          elif [[ "${TARGET_ORG}" == "maybank-grp" ]]; then
+            echo "environment=production" >> $GITHUB_OUTPUT
+            echo "✅ Environment: Production (maybank-grp)"
+          else
+            echo "⚠️ Unknown target organization: ${TARGET_ORG}"
+            echo "Defaulting to SIT environment"
+            echo "environment=sit" >> $GITHUB_OUTPUT
+          fi
+
+  # ─────────────────────────────────────────────
+  # Job 4: Approval Gate - requires manual approval after validation
   # ─────────────────────────────────────────────
   approval:
     name: "Migration Approval Gate"
-    needs: [validate, pre-migration]
+    needs: [validate, pre-migration, determine-environment]
     runs-on: [self-hosted, maybank-ghes-runners]
     environment:
-      name: migration-approval
+      name: ${{ needs.determine-environment.outputs.environment }}
     permissions:
       issues: write
     steps:
@@ -411,8 +431,9 @@ jobs:
           | **Source Repo** | \`${SOURCE_ORG}/${SOURCE_REPO}\` |
           | **Target (GHEC)** | \`${TARGET_ORG}/${TARGET_REPO}\` |
           | **Application Tier** | \`${APPLICATION_TIER}\` |
+          | **Environment** | \`${ENVIRONMENT}\` |
 
-          ⏳ Waiting for a member of the **migration-approval** environment reviewers to approve...
+          ⏳ Waiting for a member of the **${ENVIRONMENT}** environment reviewers to approve...
 
           ---
           *Automated by GitHub Actions workflow*"
@@ -424,6 +445,7 @@ jobs:
           TARGET_ORG: ${{ needs.validate.outputs.target_organization }}
           TARGET_REPO: ${{ needs.validate.outputs.target_repo }}
           APPLICATION_TIER: ${{ needs.validate.outputs.application_tier }}
+          ENVIRONMENT: ${{ needs.determine-environment.outputs.environment }}
 
       - name: Approval granted
         run: echo "✅ Migration approved — proceeding to next steps."
@@ -441,7 +463,7 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
 
   # ─────────────────────────────────────────────
-  # Job 4: Execute migration via GEI (GHES → GHEC)
+  # Job 5: Execute migration via GEI (GHES → GHEC)
   # ─────────────────────────────────────────────
   migrate:
     name: "Execute GEI Migration (GHES → GHEC)"
@@ -501,7 +523,7 @@ jobs:
 
 
   # ─────────────────────────────────────────────
-  # Job 5: Post-migration setup
+  # Job 6: Post-migration setup
   # ─────────────────────────────────────────────
   post-migration:
     name: "Post-Migration Setup"
@@ -699,15 +721,15 @@ jobs:
           detected-stack: ${{ steps.dependabot.outputs.detected-stack }}
           has-codeowners: ${{ needs.pre-migration.outputs.source_has_codeowners }}
 
-      # - name: Inject backup workflow
-      #   id: backup-workflow
-      #   uses: paloitmbb/mbb-tf-actions/actions/ghes-inject-backup-workflow@main
-      #   with:
-      #     target-organization: ${{ needs.validate.outputs.target_organization }}
-      #     target-repo: ${{ needs.validate.outputs.target_repo }}
-      #     target-pat: ${{ secrets.GH_TARGET_PAT }}
-      #     default-branch: ${{ needs.pre-migration.outputs.source_default_branch }}
-      #     application-tier: ${{ needs.validate.outputs.application_tier }}
+      - name: Inject backup workflow
+        id: backup-workflow
+        uses: paloitmbb/mbb-tf-actions/actions/ghes-inject-backup-workflow@main
+        with:
+          target-organization: ${{ needs.validate.outputs.target_organization }}
+          target-repo: ${{ needs.validate.outputs.target_repo }}
+          target-pat: ${{ secrets.GH_TARGET_PAT }}
+          default-branch: ${{ needs.pre-migration.outputs.source_default_branch }}
+          application-tier: ${{ needs.validate.outputs.application_tier }}
 
 
           
@@ -799,7 +821,7 @@ jobs:
           TARGET_REPO: ${{ needs.validate.outputs.target_repo }}
 
   # ─────────────────────────────────────────────
-  # Job 6: Upload attested workflow logs to Azure
+  # Job 7: Upload attested workflow logs to Azure
   # ─────────────────────────────────────────────
   upload-logs:
     name: "Upload Attested Logs to Azure"
@@ -860,12 +882,11 @@ jobs:
             echo "   ✅ Log uploaded successfully"
 
   # ─────────────────────────────────────────────
-  # Job 7: Close issue
+  # Job 8: Close issue
   # ─────────────────────────────────────────────
   close-issue:
     name: "Close Issue"
     needs: [validate, pre-migration, post-migration, upload-logs]
-    if: always()
     runs-on: [self-hosted, maybank-ghes-runners]
     permissions:
       issues: write
