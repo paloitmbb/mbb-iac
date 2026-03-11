@@ -29,7 +29,8 @@ jobs:
             // ── Routing table ──
            
             const routes = [
-              { prefix: '[GHES Migration]', eventType: 'ghes-migration' }
+              { prefix: '[GHES Migration]', eventType: 'ghes-migration' },
+              { prefix: '[REPO ARCHIVE]',   eventType: 'repo-archive'    }
             ];
 
             let matched = false;
@@ -45,7 +46,8 @@ jobs:
                   client_payload: {
                     issue_number: issueNumber,
                     issue_title: title,
-                    issue_body: issueBody
+                    issue_body: issueBody,
+                    issue_user_login: context.payload.issue.user.login
                   }
                 });
 

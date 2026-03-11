@@ -1,8 +1,8 @@
 name: "Archive Repo: Validate & Create PR"
 
 on:
-  issues:
-    types: [opened]
+  repository_dispatch:
+    types: [repo-archive]
 
 permissions:
   issues: write
@@ -10,7 +10,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: archive-${{ github.event.issue.number }}
+  group: archive-${{ github.event.client_payload.issue_number }}
   cancel-in-progress: false
 
 jobs:
@@ -20,7 +20,6 @@ jobs:
   validate-request:
     name: Validate Archive Request
     runs-on: ubuntu-latest
-    if: startsWith(github.event.issue.title, '[REPO ARCHIVE]')
     timeout-minutes: 20
     outputs:
       validation-passed: ${{ steps.validate.outputs.validation-passed }}
@@ -41,7 +40,7 @@ jobs:
         id: parse
         shell: bash
         env:
-          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_BODY: ${{ github.event.client_payload.issue_body }}
         run: |
           # Extract a field value from a GitHub issue form body.
           # Fields follow the pattern: ### <Label>\n\n<value>\n\n### <Next Label>
@@ -297,10 +296,12 @@ jobs:
               }
 
               // Post comment
+              const issueNumber = context.payload.client_payload.issue_number;
+
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: context.issue.number,
+                issue_number: issueNumber,
                 body,
               });
 
@@ -309,7 +310,7 @@ jobs:
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: context.issue.number,
+                issue_number: issueNumber,
                 labels: [label],
               });
 
@@ -318,7 +319,7 @@ jobs:
                 await github.rest.issues.update({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  issue_number: context.issue.number,
+                  issue_number: issueNumber,
                   state: 'closed',
                   state_reason: 'completed',
                 });
@@ -346,42 +347,7 @@ jobs:
           ref: main
 
       # -----------------------------------------------------------------------
-      # Step 1: Install yq and update YAML
-      # -----------------------------------------------------------------------
-      
-      - name: Install yq
-        shell: bash
-        run: |
-          YQ_VERSION="v4.44.6"
-          YQ_TAR="yq_linux_amd64.tar.gz"
-          YQ_INSTALL_DIR="/usr/local/bin"
-
-          echo "📥 Downloading yq ${YQ_VERSION}..."
-          cd /tmp
-          
-          # Download the tarball (more reliable than the raw binary)
-          if ! wget -q "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_TAR}"; then
-            echo "::error::Failed to download yq tarball"
-            exit 1
-          fi
-
-          # Extract the binary
-          if ! tar -xzf "${YQ_TAR}"; then
-            echo "::error::Failed to extract yq tarball"
-            exit 1
-          fi
-
-          # Install
-          echo "📦 Installing yq..."
-          sudo mv "yq_linux_amd64" "${YQ_INSTALL_DIR}/yq"
-          sudo chmod +x "${YQ_INSTALL_DIR}/yq"
-
-          # Verify installation
-          echo "✅ Verifying installation..."
-          yq --version
-
-      # -----------------------------------------------------------------------
-      # Step 2: Create branch and PR
+      # Step 1: Create branch and update YAML
       # -----------------------------------------------------------------------
       - name: Create branch and PR
         id: create-pr
@@ -394,7 +360,7 @@ jobs:
           
           REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
           ORG_NAME="${{ github.repository_owner }}"
-          ISSUE_NUMBER="${{ github.event.issue.number }}"
+          ISSUE_NUMBER="${{ github.event.client_payload.issue_number }}"
           BRANCH_NAME="archive/${REPO_NAME}-${ISSUE_NUMBER}"
 
           echo "📌 Archive Request Details:"
@@ -427,18 +393,18 @@ jobs:
           fi
           echo "✅ Found: $YAML_FILE"
 
-          # Use yq to set archived: true for the repository
-          echo "Applying yq filter with REPO_NAME='$REPO_NAME'"
-          yq eval '.repositories |= map(if .name == "'$REPO_NAME'" then .archived = true else . end)' -i "$YAML_FILE"
+          # Use sed to add archived: true before the security section for the repository
+          echo "Applying sed to add archived: true for REPO_NAME='$REPO_NAME'"
+          sed -i '/- name: '${REPO_NAME}'/,/security:/{/^    security:/ s/^/    archived: true\n/}' "$YAML_FILE"
 
           # Verify the change
           echo "Verifying archived flag was set..."
-          ARCHIVED_CHECK=$(yq eval '.repositories[] | select(.name == "'$REPO_NAME'") | .archived' "$YAML_FILE")
-          if [[ "$ARCHIVED_CHECK" != "true" ]]; then
+          if grep -A 20 "- name: ${REPO_NAME}" "$YAML_FILE" | grep -q "archived: true"; then
+            echo "✅ YAML file updated successfully"
+          else
             echo "::error::Failed to set archived: true for ${REPO_NAME}"
             exit 1
           fi
-          echo "✅ YAML file updated successfully"
 
           # Check if there are changes
           if ! git diff --quiet "$YAML_FILE"; then
@@ -457,7 +423,7 @@ jobs:
           Set archived: true for ${ORG_NAME}/${REPO_NAME} in data/repositories.yaml
 
           - Repository: ${ORG_NAME}/${REPO_NAME}
-          - Requested by: @${{ github.event.issue.user.login }}
+          - Requested by: @${{ github.event.client_payload.issue_user_login }}
           - Issue: #${ISSUE_NUMBER}
 
           Related to #${ISSUE_NUMBER}
@@ -486,7 +452,7 @@ jobs:
           | Field | Value |
           |-------|-------|
           | **Repository** | \`${ORG_NAME}/${REPO_NAME}\` |
-          | **Requested by** | @${{ github.event.issue.user.login }} |
+          | **Requested by** | @${{ github.event.client_payload.issue_user_login }} |
           | **Justification** | ${JUSTIFICATION:-Not provided} |
 
           ### Changes
@@ -552,6 +518,7 @@ jobs:
           PR_URL: ${{ steps.create-pr.outputs.pr-url }}
           PR_NUMBER: ${{ steps.create-pr.outputs.pr-number }}
           BRANCH_NAME: ${{ steps.create-pr.outputs.branch-name }}
+          ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
           REPO_NAME: ${{ needs.validate-request.outputs.repo-name }}
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
@@ -562,7 +529,7 @@ jobs:
               const branch     = process.env.BRANCH_NAME;
               const repoName   = process.env.REPO_NAME;
               const org        = context.repo.owner;
-              const issueNumber = context.issue.number;
+              const issueNumber = parseInt(process.env.ISSUE_NUMBER, 10);
 
               if (!prUrl || !prNumber || !branch || !repoName) {
                 console.error('Missing PR information:', { prUrl, prNumber, branch, repoName });
