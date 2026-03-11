@@ -406,6 +406,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          # Delete remote branch if it exists (ignore errors)
+          git push origin --delete "${BRANCH_NAME}" 2>/dev/null || true
+          
           # Create and switch to feature branch
           git checkout -b "${BRANCH_NAME}"
           echo "✅ Created branch: ${BRANCH_NAME}"
@@ -446,13 +449,20 @@ jobs:
 
           # Stage and commit the YAML change
           git add "$YAML_FILE"
-          git commit -m "feat: 🗃️ archive repository '${REPO_NAME}'
+          
+          # Build commit message
+          COMMIT_MSG="feat: 🗃️ archive repository '${REPO_NAME}'
 
           Set archived: true for ${ORG_NAME}/${REPO_NAME} in data/repositories.yaml
 
           - Repository: ${ORG_NAME}/${REPO_NAME}
           - Requested by: @${{ github.event.issue.user.login }}
-          - Issue: #${ISSUE_NUMBER}" || {
+          - Business Justification: ${JUSTIFICATION}
+          - Issue: #${ISSUE_NUMBER}
+
+          Related to #${ISSUE_NUMBER}"
+
+          git commit -m "$COMMIT_MSG" || {
             echo "⚠️ Nothing to commit (repository may already be archived)"
           }
 
@@ -463,61 +473,7 @@ jobs:
           }
           echo "✅ Branch pushed to origin"
 
-          # Build PR body
-          PR_BODY="## 🗃️ Archive Repository: \`${REPO_NAME}\`
-
-          ### Summary
-          | Field | Value |
-          |-------|-------|
-          | **Repository** | \`${ORG_NAME}/${REPO_NAME}\` |
-          | **Requested by** | @${{ github.event.issue.user.login }} |
-          | **Justification** | ${JUSTIFICATION} |
-
-          ### Changes
-          - Sets \`archived: true\` for \`${REPO_NAME}\` in \`data/repositories.yaml\`
-
-          ### CI Checks
-          - **Terraform CI** will run \`terraform plan\` automatically on this PR
-          - Review the plan output in the PR comment before approving
-
-          ### ⚠️ What happens after merge
-          1. The **Terraform Apply** workflow triggers automatically (push to \`main\` on \`data/*.yaml\`)
-          2. Terraform runs \`init\` → \`plan\` → \`apply\` against the \`dev\` environment
-          3. The repository \`${ORG_NAME}/${REPO_NAME}\` becomes **read-only** on GitHub
-
-          ### Review Checklist
-          - [ ] Review the Terraform plan output (posted as PR comment by CI)
-          - [ ] Verify the correct repository is being archived
-          - [ ] Confirm business justification is valid
-          - [ ] Ensure no active development depends on this repository
-
-          ---
-          > 🤖 *Automated by [Archive Repo: Validate & Create PR](/${{ github.repository }}/actions/runs/${{ github.run_id }}) workflow*
-
-          Closes #${ISSUE_NUMBER}"
-
-          # Create PR
-          echo "🔄 Creating pull request..."
-          PR_URL=$(gh pr create \
-            --base main \
-            --head "${BRANCH_NAME}" \
-            --title "feat: 🗃️ archive repository \`${REPO_NAME}\`" \
-            --body "${PR_BODY}" \
-            --label "archive" \
-            --label "infrastructure") || {
-            echo "::error::Failed to create PR"
-            exit 1
-          }
-
-          PR_NUMBER=$(gh pr view "${BRANCH_NAME}" --json number --jq '.number')
-
-          echo "pr-url=${PR_URL}" >> $GITHUB_OUTPUT
-          echo "pr-number=${PR_NUMBER}" >> $GITHUB_OUTPUT
-          echo "branch-name=${BRANCH_NAME}" >> $GITHUB_OUTPUT
-
-          echo "✅ PR created successfully"
-          echo "  URL: ${PR_URL}"
-          echo "  Number: ${PR_NUMBER}"
+          echo "branch=${BRANCH_NAME}" >> $GITHUB_OUTPUT
 
       # -----------------------------------------------------------------------
       # Step 3: Comment on issue with PR link
