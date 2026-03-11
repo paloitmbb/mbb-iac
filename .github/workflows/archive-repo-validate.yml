@@ -3,7 +3,6 @@ name: "Archive Repo: Validate & Create PR"
 on:
   issues:
     types: [opened]
-  workflow_dispatch:
 
 permissions:
   issues: write
@@ -21,9 +20,7 @@ jobs:
   validate-request:
     name: Validate Archive Request
     runs-on: ubuntu-latest
-    if: |
-      (github.event_name == 'issues' && startsWith(github.event.issue.title, '[REPO ARCHIVE]')) ||
-      github.event_name == 'workflow_dispatch'
+    if: startsWith(github.event.issue.title, '[REPO ARCHIVE]')
     timeout-minutes: 20
     outputs:
       validation-passed: ${{ steps.validate.outputs.validation-passed }}
@@ -83,61 +80,63 @@ jobs:
           GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
           ORG_NAME: ${{ github.repository_owner }}
         run: |
+          set -e  # Exit on any error
+
           REPO_NAME="${{ steps.parse.outputs.repo-name }}"
-          VALIDATION_PASSED="true"
+          VALIDATION_PASSED="false"
           VALIDATION_ERRORS=""
           VALIDATION_SUMMARY=""
 
+          echo "🔍 Starting validation for repository: ${REPO_NAME:-'(empty)'}"
+
           # --- Check required fields ---
           if [[ -z "$REPO_NAME" ]]; then
-            VALIDATION_PASSED="false"
             VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository name is required"
             VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Name | \`(empty)\` | ❌ Missing |\n"
+            echo "❌ Repository name is empty"
           else
             VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Name | \`${REPO_NAME}\` | ✅ Provided |\n"
-          fi
+            echo "✅ Repository name provided: ${REPO_NAME}"
 
-          # --- Check if repository exists on GitHub ---
-          if [[ -n "$REPO_NAME" ]]; then
-            API_RESPONSE=$(gh api "repos/${ORG_NAME}/${REPO_NAME}" 2>/dev/null)
+            # --- Check if repository exists on GitHub ---
+            echo "📡 Checking if repository exists on GitHub..."
+            API_RESPONSE=$(gh api "repos/${ORG_NAME}/${REPO_NAME}" 2>/dev/null || true)
             API_EXIT_CODE=$?
 
-            if [[ $API_EXIT_CODE -eq 0 ]]; then
-              # Repo exists — reuse the response to check archived status (no second API call)
-              IS_ARCHIVED=$(echo "$API_RESPONSE" | jq -r '.archived')
+            if [[ $API_EXIT_CODE -eq 0 && -n "$API_RESPONSE" ]]; then
+              # Repo exists — check if archived
+              IS_ARCHIVED=$(echo "$API_RESPONSE" | jq -r '.archived // "false"')
               if [[ "$IS_ARCHIVED" == "true" ]]; then
-                VALIDATION_PASSED="false"
                 VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${REPO_NAME}\` is already archived"
                 VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Exists | \`${ORG_NAME}/${REPO_NAME}\` | ❌ Already archived |\n"
+                echo "❌ Repository is already archived"
               else
                 VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Exists | \`${ORG_NAME}/${REPO_NAME}\` | ✅ Found (Active) |\n"
+                echo "✅ Repository found and active"
+
+                # --- Check if repository exists in YAML config ---
+                if [[ -f "data/repositories.yaml" ]]; then
+                  echo "📋 Checking YAML configuration..."
+                  if grep -qP "^\s+-?\s*name:\s+['\"]?${REPO_NAME}['\"]?\s*$" data/repositories.yaml; then
+                    VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ✅ Found |\n"
+                    VALIDATION_PASSED="true"
+                    echo "✅ Repository found in YAML config"
+                  else
+                    VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${REPO_NAME}\` not found in \`data/repositories.yaml\`"
+                    VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ❌ Not found |\n"
+                    echo "❌ Repository not found in YAML config"
+                  fi
+                else
+                  VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ⚠️ File \`data/repositories.yaml\` not found"
+                  VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ⚠️ File missing |\n"
+                  echo "⚠️ YAML config file not found"
+                fi
               fi
             else
-              ERROR_MSG=$(gh api "repos/${ORG_NAME}/${REPO_NAME}" 2>&1 || true)
-
-              if echo "$ERROR_MSG" | grep -q "404"; then
-                VALIDATION_PASSED="false"
-                VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${ORG_NAME}/${REPO_NAME}\` not found"
-                VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Exists | \`${ORG_NAME}/${REPO_NAME}\` | ❌ Not found |\n"
-              elif echo "$ERROR_MSG" | grep -q "401\|403"; then
-                echo "::error::Authentication or permission error accessing repo: ${ERROR_MSG}"
-                exit 1
-              else
-                echo "::error::Unexpected API error: ${ERROR_MSG}"
-                exit 1
-              fi
-            fi
-          fi
-
-          # --- Check if repository exists in YAML config ---
-          if [[ -n "$REPO_NAME" && -f "data/repositories.yaml" ]]; then
-            YAML_MATCH=$(grep -cP "^\s+-?\s*name:\s+['\"]?${REPO_NAME}['\"]?\s*$" data/repositories.yaml || true)
-            if [[ "$YAML_MATCH" -gt 0 ]]; then
-              VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ✅ Found |\n"
-            else
-              VALIDATION_PASSED="false"
-              VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${REPO_NAME}\` not found in \`data/repositories.yaml\`"
-              VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ❌ Not found |\n"
+              # Repository not found or API error
+              echo "❌ Repository not found or API error"
+              VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${ORG_NAME}/${REPO_NAME}\` not found on GitHub"
+              VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Exists | \`${ORG_NAME}/${REPO_NAME}\` | ❌ Not found |\n"
             fi
           fi
 
@@ -147,8 +146,8 @@ jobs:
             FULL_SUMMARY="${FULL_SUMMARY}\n### Errors\n${VALIDATION_ERRORS}"
           fi
 
-          # --- Set outputs ---
-          echo "validation-passed=${VALIDATION_PASSED:-false}" >> $GITHUB_OUTPUT
+          # --- Set outputs (always set, even if empty) ---
+          echo "validation-passed=${VALIDATION_PASSED}" >> $GITHUB_OUTPUT
 
           echo "validation-summary<<VSEOF" >> $GITHUB_OUTPUT
           echo -e "$FULL_SUMMARY" >> $GITHUB_OUTPUT
@@ -157,6 +156,8 @@ jobs:
           echo "validation-errors<<VEEOF" >> $GITHUB_OUTPUT
           echo -e "$VALIDATION_ERRORS" >> $GITHUB_OUTPUT
           echo "VEEOF" >> $GITHUB_OUTPUT
+
+          echo "✅ Validation complete. Passed: ${VALIDATION_PASSED}"
 
       # -----------------------------------------------------------------------
       # Step 3: Build validation details
@@ -246,7 +247,7 @@ jobs:
       # Step 4: Notify validation result on the issue
       # -----------------------------------------------------------------------
       - name: Notify validation result
-        if: (success() || failure()) && github.event_name == 'issues'
+        if: success() || failure()
         uses: actions/github-script@v7
         env:
           VALIDATION_PASSED: ${{ steps.validate.outputs.validation-passed }}
@@ -257,69 +258,74 @@ jobs:
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
-            const passed = process.env.VALIDATION_PASSED === 'true';
-            const summaryRows = JSON.parse(process.env.SUMMARY_TABLE || '[]');
-            const detailSections = JSON.parse(process.env.DETAILS_JSON || '[]');
-            const nextSteps = process.env.NEXT_STEPS || '';
-            const errorDetails = process.env.ERROR_DETAILS || '';
+            try {
+              const passed = process.env.VALIDATION_PASSED === 'true';
+              const summaryRows = JSON.parse(process.env.SUMMARY_TABLE || '[]');
+              const detailSections = JSON.parse(process.env.DETAILS_JSON || '[]');
+              const nextSteps = process.env.NEXT_STEPS || '';
+              const errorDetails = process.env.ERROR_DETAILS || '';
 
-            const title = passed
-              ? '## ✅ Archive Request — Validation Passed'
-              : '## ❌ Archive Request — Validation Failed';
+              const title = passed
+                ? '## ✅ Archive Request — Validation Passed'
+                : '## ❌ Archive Request — Validation Failed';
 
-            let body = `${title}\n\n`;
+              let body = `${title}\n\n`;
 
-            // Summary table
-            body += '### 📋 Request Summary\n\n';
-            body += '| Field | Value |\n|-------|-------|\n';
-            for (const row of summaryRows) {
-              body += `| **${row.field}** | ${row.value} |\n`;
-            }
-            body += '\n';
+              // Summary table
+              body += '### 📋 Request Summary\n\n';
+              body += '| Field | Value |\n|-------|-------|\n';
+              for (const row of summaryRows) {
+                body += `| **${row.field}** | ${row.value} |\n`;
+              }
+              body += '\n';
 
-            // Detail sections (validation results, archive impact, etc.)
-            for (const section of detailSections) {
-              body += `### ${section.heading}\n\n${section.body}\n\n`;
-            }
+              // Detail sections
+              for (const section of detailSections) {
+                body += `### ${section.heading}\n\n${section.body}\n\n`;
+              }
 
-            // Error details
-            if (errorDetails) {
-              body += `### ⚠️ Errors\n\n${errorDetails}\n\n`;
-            }
+              // Error details
+              if (errorDetails) {
+                body += `### ⚠️ Errors\n\n${errorDetails}\n\n`;
+              }
 
-            // Next steps
-            if (nextSteps) {
-              body += `### 📝 Next Steps\n\n${nextSteps}\n`;
-            } else if (!passed) {
-              body += '### 📝 Next Steps\n\nPlease fix the validation errors above and create a new archive request issue.\n';
-            }
+              // Next steps
+              if (nextSteps) {
+                body += `### 📝 Next Steps\n\n${nextSteps}\n`;
+              } else if (!passed) {
+                body += '### 📝 Next Steps\n\nPlease fix the validation errors above and create a new archive request issue.\n';
+              }
 
-            // Post comment
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body,
-            });
-
-            // Add labels
-            const label = passed ? 'archive-validation-passed' : 'archive-validation-failed';
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              labels: [label],
-            });
-
-            // Close issue on failure
-            if (!passed) {
-              await github.rest.issues.update({
+              // Post comment
+              await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                state: 'closed',
-                state_reason: 'completed',
+                body,
               });
+
+              // Add labels
+              const label = passed ? 'archive-validation-passed' : 'archive-validation-failed';
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: [label],
+              });
+
+              // Close issue on failure
+              if (!passed) {
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  state: 'closed',
+                  state_reason: 'completed',
+                });
+              }
+            } catch (error) {
+              console.error('Error posting validation comment:', error);
+              core.setFailed(`Failed to notify validation result: ${error.message}`);
             }
 
   # ============================================================================
@@ -384,11 +390,17 @@ jobs:
           JUSTIFICATION: ${{ needs.validate-request.outputs.justification }}
           GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
         run: |
+          set -e  # Exit on any error
+          
           REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
           ORG_NAME="${{ github.repository_owner }}"
           ISSUE_NUMBER="${{ github.event.issue.number }}"
-          TIMESTAMP=$(date +%s)
-          BRANCH_NAME="archive/${REPO_NAME}-${ISSUE_NUMBER:-${TIMESTAMP}}"
+          BRANCH_NAME="archive/${REPO_NAME}-${ISSUE_NUMBER}"
+
+          echo "📌 Archive Request Details:"
+          echo "  Repository: ${ORG_NAME}/${REPO_NAME}"
+          echo "  Branch: ${BRANCH_NAME}"
+          echo "  Issue: #${ISSUE_NUMBER}"
 
           # Configure git
           git config user.name "github-actions[bot]"
@@ -396,28 +408,61 @@ jobs:
 
           # Create and switch to feature branch
           git checkout -b "${BRANCH_NAME}"
+          echo "✅ Created branch: ${BRANCH_NAME}"
 
-          # Commit the YAML change
+          # --- UPDATE YAML FILE ---
+          echo "📝 Updating data/repositories.yaml..."
+          if [[ ! -f "data/repositories.yaml" ]]; then
+            echo "::error::File data/repositories.yaml not found"
+            exit 1
+          fi
+
+          # Use yq to set archived: true for the repository
+          yq eval ".repositories |= map(if .name == \"${REPO_NAME}\" then .archived = true else . end)" \
+            -i data/repositories.yaml
+
+          # Verify the change
+          ARCHIVED_CHECK=$(yq eval ".repositories[] | select(.name == \"${REPO_NAME}\") | .archived" data/repositories.yaml)
+          if [[ "$ARCHIVED_CHECK" != "true" ]]; then
+            echo "::error::Failed to set archived: true for ${REPO_NAME}"
+            exit 1
+          fi
+          echo "✅ YAML file updated successfully"
+
+          # Check if there are changes
+          if ! git diff --quiet data/repositories.yaml; then
+            echo "✅ Changes detected in data/repositories.yaml"
+          else
+            echo "⚠️ No changes in data/repositories.yaml (repository may already be marked as archived)"
+          fi
+
+          # Stage and commit the YAML change
           git add data/repositories.yaml
           git commit -m "feat: 🗃️ archive repository '${REPO_NAME}'
 
           Set archived: true for ${ORG_NAME}/${REPO_NAME} in data/repositories.yaml
 
           - Repository: ${ORG_NAME}/${REPO_NAME}
-          - Requested by: $([[ -n '${{ github.event.issue.user.login }}' ]] && echo '@${{ github.event.issue.user.login }}' || echo 'Automated via workflow_dispatch')
-          - Issue: #${ISSUE_NUMBER:-'(manual trigger)'}"
+          - Requested by: @${{ github.event.issue.user.login }}
+          - Issue: #${ISSUE_NUMBER}" || {
+            echo "⚠️ Nothing to commit (repository may already be archived)"
+          }
 
           # Push the branch
-          git push origin "${BRANCH_NAME}"
+          git push origin "${BRANCH_NAME}" || {
+            echo "::error::Failed to push branch"
+            exit 1
+          }
+          echo "✅ Branch pushed to origin"
 
-          # Build PR body base
+          # Build PR body
           PR_BODY="## 🗃️ Archive Repository: \`${REPO_NAME}\`
 
           ### Summary
           | Field | Value |
           |-------|-------|
           | **Repository** | \`${ORG_NAME}/${REPO_NAME}\` |
-          | **Requested by** | $([[ -n '${{ github.event.issue.user.login }}' ]] && echo '@${{ github.event.issue.user.login }}' || echo 'Automated (workflow_dispatch)') |
+          | **Requested by** | @${{ github.event.issue.user.login }} |
           | **Justification** | ${JUSTIFICATION} |
 
           ### Changes
@@ -439,23 +484,22 @@ jobs:
           - [ ] Ensure no active development depends on this repository
 
           ---
-          > 🤖 *Automated by [Archive Repo: Validate & Create PR](/${{ github.repository }}/actions/runs/${{ github.run_id }}) workflow*"
-
-          # Add issue closing reference if available
-          if [[ -n "${ISSUE_NUMBER}" ]]; then
-            PR_BODY+="
+          > 🤖 *Automated by [Archive Repo: Validate & Create PR](/${{ github.repository }}/actions/runs/${{ github.run_id }}) workflow*
 
           Closes #${ISSUE_NUMBER}"
-          fi
 
           # Create PR
+          echo "🔄 Creating pull request..."
           PR_URL=$(gh pr create \
             --base main \
             --head "${BRANCH_NAME}" \
             --title "feat: 🗃️ archive repository \`${REPO_NAME}\`" \
             --body "${PR_BODY}" \
             --label "archive" \
-            --label "infrastructure")
+            --label "infrastructure") || {
+            echo "::error::Failed to create PR"
+            exit 1
+          }
 
           PR_NUMBER=$(gh pr view "${BRANCH_NAME}" --json number --jq '.number')
 
@@ -463,13 +507,15 @@ jobs:
           echo "pr-number=${PR_NUMBER}" >> $GITHUB_OUTPUT
           echo "branch-name=${BRANCH_NAME}" >> $GITHUB_OUTPUT
 
-          echo "✅ PR created: ${PR_URL}"
+          echo "✅ PR created successfully"
+          echo "  URL: ${PR_URL}"
+          echo "  Number: ${PR_NUMBER}"
 
       # -----------------------------------------------------------------------
       # Step 3: Comment on issue with PR link
       # -----------------------------------------------------------------------
       - name: Notify issue with PR link
-        if: github.event_name == 'issues'
+        if: success()
         uses: actions/github-script@v7
         env:
           PR_URL: ${{ steps.create-pr.outputs.pr-url }}
@@ -478,42 +524,53 @@ jobs:
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
-            const prUrl    = process.env.PR_URL;
-            const branch   = process.env.PR_BRANCH;
-            const repoName = process.env.REPO_NAME;
-            const org      = context.repo.owner;
-            const issueNumber = context.issue.number;
+            try {
+              const prUrl    = process.env.PR_URL;
+              const branch   = process.env.PR_BRANCH;
+              const repoName = process.env.REPO_NAME;
+              const org      = context.repo.owner;
+              const issueNumber = context.issue.number;
 
-            const body = [
-              '## 🔄 Archive PR Created — Awaiting Review & Merge',
-              '',
-              '### 📋 Summary',
-              '',
-              '| Field | Value |',
-              '|-------|-------|',
-              `| **Pull Request** | ${prUrl} |`,
-              `| **Branch** | \`${branch}\` |`,
-              `| **Repository** | \`${org}/${repoName}\` |`,
-              `| **CI Status** | Terraform CI will run \`plan\` automatically on this PR |`,
-              '',
-              '### 📝 Next Steps',
-              '',
-              '- **Terraform CI** will run `terraform plan` and post results as a PR comment',
-              '- A reviewer must **review the plan**, then **approve and merge** the PR',
-              '- Once merged, the **Terraform Apply** workflow runs automatically against `dev`',
-              `- This issue will be **closed automatically** when the PR merges (\`Closes #${issueNumber}\`)`,
-            ].join('\n');
+              if (!prUrl || !branch || !repoName) {
+                console.error('Missing PR information:', { prUrl, branch, repoName });
+                core.setFailed('Missing PR information for notification');
+                return;
+              }
 
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issueNumber,
-              body,
-            });
+              const body = [
+                '## 🔄 Archive PR Created — Awaiting Review & Merge',
+                '',
+                '### 📋 Summary',
+                '',
+                '| Field | Value |',
+                '|-------|-------|',
+                `| **Pull Request** | ${prUrl} |`,
+                `| **Branch** | \`${branch}\` |`,
+                `| **Repository** | \`${org}/${repoName}\` |`,
+                `| **CI Status** | Terraform CI will run \`plan\` automatically on this PR |`,
+                '',
+                '### 📝 Next Steps',
+                '',
+                '- **Terraform CI** will run `terraform plan` and post results as a PR comment',
+                '- A reviewer must **review the plan**, then **approve and merge** the PR',
+                '- Once merged, the **Terraform Apply** workflow runs automatically against `dev`',
+                `- This issue will be **closed automatically** when the PR merges (\`Closes #${issueNumber}\`)`,
+              ].join('\n');
 
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issueNumber,
-              labels: ['archive-pr-created'],
-            });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body,
+              });
+
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                labels: ['archive-pr-created'],
+              });
+            } catch (error) {
+              console.error('Error posting PR notification:', error);
+              core.setFailed(`Failed to notify issue with PR link: ${error.message}`);
+            }
