@@ -9,7 +9,8 @@ on:
     types: [opened]
 
 permissions:
-  contents: read
+  contents: write   # required for createDispatchEvent (repository_dispatch)
+  issues: read
 
 jobs:
   dispatch:
@@ -20,7 +21,7 @@ jobs:
       - name: Determine issue type and dispatch
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
             const title = context.payload.issue.title;
             const issueNumber = context.payload.issue.number;
