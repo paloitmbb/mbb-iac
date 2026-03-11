@@ -346,42 +346,7 @@ jobs:
           ref: main
 
       # -----------------------------------------------------------------------
-      # Step 1: Install yq and update YAML
-      # -----------------------------------------------------------------------
-      
-      - name: Install yq
-        shell: bash
-        run: |
-          YQ_VERSION="v4.44.6"
-          YQ_TAR="yq_linux_amd64.tar.gz"
-          YQ_INSTALL_DIR="/usr/local/bin"
-
-          echo "📥 Downloading yq ${YQ_VERSION}..."
-          cd /tmp
-          
-          # Download the tarball (more reliable than the raw binary)
-          if ! wget -q "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_TAR}"; then
-            echo "::error::Failed to download yq tarball"
-            exit 1
-          fi
-
-          # Extract the binary
-          if ! tar -xzf "${YQ_TAR}"; then
-            echo "::error::Failed to extract yq tarball"
-            exit 1
-          fi
-
-          # Install
-          echo "📦 Installing yq..."
-          sudo mv "yq_linux_amd64" "${YQ_INSTALL_DIR}/yq"
-          sudo chmod +x "${YQ_INSTALL_DIR}/yq"
-
-          # Verify installation
-          echo "✅ Verifying installation..."
-          yq --version
-
-      # -----------------------------------------------------------------------
-      # Step 2: Create branch and PR
+      # Step 1: Create branch and update YAML
       # -----------------------------------------------------------------------
       - name: Create branch and PR
         id: create-pr
@@ -427,18 +392,18 @@ jobs:
           fi
           echo "✅ Found: $YAML_FILE"
 
-          # Use yq to set archived: true for the repository
-          echo "Applying yq filter with REPO_NAME='$REPO_NAME'"
-          yq eval '.repositories |= map(if .name == "'$REPO_NAME'" then .archived = true else . end)' -i "$YAML_FILE"
+          # Use sed to add archived: true before the security section for the repository
+          echo "Applying sed to add archived: true for REPO_NAME='$REPO_NAME'"
+          sed -i '/- name: '${REPO_NAME}'/,/security:/{/^    security:/ s/^/    archived: true\n/}' "$YAML_FILE"
 
           # Verify the change
           echo "Verifying archived flag was set..."
-          ARCHIVED_CHECK=$(yq eval '.repositories[] | select(.name == "'$REPO_NAME'") | .archived' "$YAML_FILE")
-          if [[ "$ARCHIVED_CHECK" != "true" ]]; then
+          if grep -A 20 "- name: ${REPO_NAME}" "$YAML_FILE" | grep -q "archived: true"; then
+            echo "✅ YAML file updated successfully"
+          else
             echo "::error::Failed to set archived: true for ${REPO_NAME}"
             exit 1
           fi
-          echo "✅ YAML file updated successfully"
 
           # Check if there are changes
           if ! git diff --quiet "$YAML_FILE"; then
