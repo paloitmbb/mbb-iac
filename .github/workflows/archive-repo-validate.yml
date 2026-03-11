@@ -392,7 +392,7 @@ jobs:
             exit 1
           fi
           echo "✅ Found: $YAML_FILE"
-          
+
           # Use PowerShell to safely insert archived: true after the name line
           pwsh -Command "
             \$yamlFile = '${YAML_FILE}'
@@ -558,6 +558,16 @@ jobs:
           Closes #${ISSUE_NUMBER}
           EOF
           )
+
+          # Ensure required labels exist before creating PR
+          gh label create "archive" \
+            --color "0075ca" \
+            --description "Repository archive request" \
+            --force 2>/dev/null || true
+          gh label create "infrastructure" \
+            --color "e4e669" \
+            --description "Infrastructure changes" \
+            --force 2>/dev/null || true
 
           # Create PR using gh CLI
           PR_URL=$(gh pr create \
