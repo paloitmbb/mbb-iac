@@ -1,8 +1,8 @@
 name: "Archive Repo: Validate & Create PR"
 
 on:
-  issues:
-    types: [opened]
+  repository_dispatch:
+    types: [repo-archive]
 
 permissions:
   issues: write
@@ -10,7 +10,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: archive-${{ github.event.issue.number }}
+  group: archive-${{ github.event.client_payload.issue_number }}
   cancel-in-progress: false
 
 jobs:
@@ -20,7 +20,6 @@ jobs:
   validate-request:
     name: Validate Archive Request
     runs-on: ubuntu-latest
-    if: startsWith(github.event.issue.title, '[REPO ARCHIVE]')
     timeout-minutes: 20
     outputs:
       validation-passed: ${{ steps.validate.outputs.validation-passed }}
@@ -41,7 +40,7 @@ jobs:
         id: parse
         shell: bash
         env:
-          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_BODY: ${{ github.event.client_payload.issue_body }}
         run: |
           # Extract a field value from a GitHub issue form body.
           # Fields follow the pattern: ### <Label>\n\n<value>\n\n### <Next Label>
@@ -297,10 +296,12 @@ jobs:
               }
 
               // Post comment
+              const issueNumber = context.payload.client_payload.issue_number;
+
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: context.issue.number,
+                issue_number: issueNumber,
                 body,
               });
 
@@ -309,7 +310,7 @@ jobs:
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: context.issue.number,
+                issue_number: issueNumber,
                 labels: [label],
               });
 
@@ -318,7 +319,7 @@ jobs:
                 await github.rest.issues.update({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  issue_number: context.issue.number,
+                  issue_number: issueNumber,
                   state: 'closed',
                   state_reason: 'completed',
                 });
@@ -359,7 +360,7 @@ jobs:
           
           REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
           ORG_NAME="${{ github.repository_owner }}"
-          ISSUE_NUMBER="${{ github.event.issue.number }}"
+          ISSUE_NUMBER="${{ github.event.client_payload.issue_number }}"
           BRANCH_NAME="archive/${REPO_NAME}-${ISSUE_NUMBER}"
 
           echo "📌 Archive Request Details:"
@@ -422,7 +423,7 @@ jobs:
           Set archived: true for ${ORG_NAME}/${REPO_NAME} in data/repositories.yaml
 
           - Repository: ${ORG_NAME}/${REPO_NAME}
-          - Requested by: @${{ github.event.issue.user.login }}
+          - Requested by: @${{ github.event.client_payload.issue_user_login }}
           - Issue: #${ISSUE_NUMBER}
 
           Related to #${ISSUE_NUMBER}
@@ -451,7 +452,7 @@ jobs:
           | Field | Value |
           |-------|-------|
           | **Repository** | \`${ORG_NAME}/${REPO_NAME}\` |
-          | **Requested by** | @${{ github.event.issue.user.login }} |
+          | **Requested by** | @${{ github.event.client_payload.issue_user_login }} |
           | **Justification** | ${JUSTIFICATION:-Not provided} |
 
           ### Changes
@@ -517,6 +518,7 @@ jobs:
           PR_URL: ${{ steps.create-pr.outputs.pr-url }}
           PR_NUMBER: ${{ steps.create-pr.outputs.pr-number }}
           BRANCH_NAME: ${{ steps.create-pr.outputs.branch-name }}
+          ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
           REPO_NAME: ${{ needs.validate-request.outputs.repo-name }}
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
@@ -527,7 +529,7 @@ jobs:
               const branch     = process.env.BRANCH_NAME;
               const repoName   = process.env.REPO_NAME;
               const org        = context.repo.owner;
-              const issueNumber = context.issue.number;
+              const issueNumber = parseInt(process.env.ISSUE_NUMBER, 10);
 
               if (!prUrl || !prNumber || !branch || !repoName) {
                 console.error('Missing PR information:', { prUrl, prNumber, branch, repoName });
