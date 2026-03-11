@@ -167,6 +167,10 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            // Parse only justification using toJSON for safe escaping
+            const validateOutputs = JSON.parse('${{ toJSON(needs.validate.outputs) }}');
+            const justification = validateOutputs.justification;
+            
             const sourceServerUrl = '${{ vars.GH_SOURCE_SERVER_URL }}';
             const sourceOrg = '${{ needs.validate.outputs.source_organization }}';
             const sourceRepo = '${{ needs.validate.outputs.source_repo }}';
@@ -174,7 +178,6 @@ jobs:
             const targetRepo = '${{ needs.validate.outputs.target_repo }}';
             const applicationTier = '${{ needs.validate.outputs.application_tier }}';
             const teamMappings = '${{ needs.validate.outputs.team_mappings }}';
-            const justification = '${{ needs.validate.outputs.justification }}';
 
             // Repo stats from source-stats step
             const repoSize = '${{ steps.source-stats.outputs.repo_size }}';
@@ -399,9 +402,9 @@ jobs:
           if [[ "${TARGET_ORG}" == "maybank-ghes" ]]; then
             echo "environment=sit" >> $GITHUB_OUTPUT
             echo "✅ Environment: SIT (maybank-ghes)"
-          elif [[ "${TARGET_ORG}" == "maybank-grp" ]]; then
+          elif [[ "${TARGET_ORG}" == "maybank-group" ]]; then
             echo "environment=production" >> $GITHUB_OUTPUT
-            echo "✅ Environment: Production (maybank-grp)"
+            echo "✅ Environment: Production (maybank-group)"
           else
             echo "⚠️ Unknown target organization: ${TARGET_ORG}"
             echo "Defaulting to SIT environment"
@@ -944,10 +947,16 @@ jobs:
             }
 
             summary += '## 📦 Post-Migration Actions\n\n';
-            summary += `- ✅ Team access mappings applied\n\n`;
+            
+            const teamMappings = '${{ needs.validate.outputs.team_mappings }}';
+            if (teamMappings && teamMappings.trim()) {
+              summary += `- ✅ Team access mappings applied\n`;
+            } else {
+              summary += `- ⚠️ Team access mappings skipped (not provided in issue form)\n`;
+            }
+            summary += '\n';
 
-
-              summary += '## 🛠️ Secrets\n\n';
+            summary += '## 🛠️ Secrets\n\n';
               summary += 'This GHES migration workflow does **not** automatically enumerate repository-level secrets from the source instance.\n\n';
               summary += 'Please manually review and re-create any required secrets on the target GHEC repository (for example using gh secret set <NAME> --repo ';
               summary += `${targetOrg}/${targetRepo}`;

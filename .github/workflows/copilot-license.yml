@@ -30,7 +30,7 @@ jobs:
             const issueBody = context.payload.issue.body;
 
             function extractField(body, fieldLabel) {
-              const regex = new RegExp(`### ${fieldLabel}\\s*\\n\\s*([^\\n#]+)`, 'i');
+              const regex = new RegExp(`### ${fieldLabel}\\s*[\\r\\n]+\\s*([^\\r\\n#]+?)\\s*(?=[\\r\\n]|$)`, 'i');
               const match = body.match(regex);
               return match ? match[1].trim() : '';
             }
@@ -52,13 +52,19 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Validate request
         id: validate
+        if: steps.duplicate-check.outputs.is-duplicate != 'true'
         uses: actions/github-script@v7
+        env:
+         ACTION: ${{ steps.parse.outputs.action }}
+         USERNAME: ${{ steps.parse.outputs.github-username }}
+         JUSTIFICATION: ${{ steps.parse.outputs.justification }}
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
             const org = context.repo.owner;
-            const action = '${{ steps.parse.outputs.action }}';
-            const username = '${{ steps.parse.outputs.github-username }}';
+            const action = process.env.ACTION;
+            const username = process.env.USERNAME;
+            const justification = process.env.JUSTIFICATION;
             const errors = [];
             const validations = [];
 
@@ -69,11 +75,43 @@ jobs:
               validations.push({ check: 'Action is valid', result: '✅ Passed' });
             }
 
+            // --- NEW: Validate justification is provided ---
+            if (!justification || justification === '_No response_') {
+              errors.push('Business justification is required');
+              validations.push({ check: 'Justification provided', result: '❌ Missing' });
+            } else if (justification.length < 10) {
+              errors.push(
+                'Business justification is too short. ' +
+                'Please provide at least 10 characters explaining the business need.'
+              );
+              validations.push({ check: 'Justification provided', result: '❌ Too short' });
+            } else if (justification.length > 500) {
+              errors.push(
+                'Business justification is too long. ' +
+                'Please keep it under 500 characters.'
+              );
+              validations.push({ check: 'Justification provided', result: '❌ Too long' });
+            } else {
+              validations.push({ check: 'Justification provided', result: '✅ Passed' });
+            }
+
             // --- Validate username is provided ---
             if (!username || username === '_No response_') {
               errors.push('GitHub username is required');
             } else {
               validations.push({ check: 'Username provided', result: '✅ Passed' });
+
+              // --- NEW: Validate username format before any API call ---
+              const USERNAME_REGEX = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
+              if (!USERNAME_REGEX.test(username)) {
+                errors.push(
+                  `Invalid GitHub username format: "${username}". ` +
+                  'Usernames may only contain alphanumeric characters or hyphens, ' +
+                  'and cannot start or end with a hyphen.'
+                );
+                validations.push({ check: 'Username format is valid', result: '❌ Invalid format' });
+              } else {
+                validations.push({ check: 'Username format is valid', result: '✅ Passed' });
 
               // --- Check user exists on GitHub ---
               try {
@@ -93,6 +131,7 @@ jobs:
                 validations.push({ check: `User "${username}" is org member`, result: '❌ Not a member' });
               }
             }
+            
 
             // --- Output results ---
             const passed = errors.length === 0;
@@ -106,18 +145,25 @@ jobs:
       # Step 3: Post validation result on issue
       # -----------------------------------------------------------------------
       - name: Post validation summary to issue
-        if: always()
+        if: success() || failure()
         uses: actions/github-script@v7
+        env:
+          VALIDATION_PASSED: ${{ steps.validate.outputs.validation-passed }}
+          ERRORS_JSON: ${{ steps.validate.outputs.errors }}
+          VALIDATIONS_JSON: ${{ steps.validate.outputs.validations }}
+          ACTION: ${{ steps.parse.outputs.action }}
+          USERNAME: ${{ steps.parse.outputs.github-username }}
+          JUSTIFICATION: ${{ steps.parse.outputs.justification }}
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
-            const passed = '${{ steps.validate.outputs.validation-passed }}' === 'true';
-            const errors = JSON.parse('${{ steps.validate.outputs.errors }}' || '[]');
-            const validations = JSON.parse('${{ steps.validate.outputs.validations }}' || '[]');
+            const passed = process.env.VALIDATION_PASSED === 'true';
+            const errors = JSON.parse(process.env.ERRORS_JSON || '[]');
+            const validations = JSON.parse(process.env.VALIDATIONS_JSON || '[]');
 
-            const action = '${{ steps.parse.outputs.action }}';
-            const username = '${{ steps.parse.outputs.github-username }}';
-            const justification = '${{ steps.parse.outputs.justification }}';
+            const action = process.env.ACTION;
+            const username = process.env.USERNAME;
+            const justification = process.env.JUSTIFICATION;
 
             let comment = passed
               ? '## ✅ Validation Passed\n\n'
@@ -192,21 +238,76 @@ jobs:
     needs: validate-request
     if: needs.validate-request.outputs.validation-passed == 'true'
     environment: copilot-license-approval
+    timeout-minutes: 1440
 
     steps:
       - name: Execute Copilot license change
         id: execute
+        env:
+          ACTION: ${{ needs.validate-request.outputs.action }}
+          USERNAME: ${{ needs.validate-request.outputs.github-username }}
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
             const org = context.repo.owner;
-            const action = '${{ needs.validate-request.outputs.action }}';
-            const username = '${{ needs.validate-request.outputs.github-username }}';
+            const action = process.env.ACTION;
+            const username = process.env.USERNAME;
             let result = {};
 
+            // --- NEW: Check current Copilot seat status before acting ---
+            const { data: seat } = await github.request(
+            'GET /orgs/{org}/members/{username}/copilot', 
+            {org, username}
+            ).catch(() => ({ data: null }));
+  
+            // --- NEW: Prevent duplicate assign ---
+            if (action === 'assign' && seat?.copilot_enabled) {
+            throw new Error(`User ${username} already has a Copilot seat`);
+            }
+
+            if (action === 'revoke' && !seat?.copilot_enabled) {
+              throw new Error(`User ${username} does not have a Copilot seat to revoke`);
+            }
+            // --- Helper: translate API errors into clear messages ---
+            function handleApiError(e, action, username) {
+              if (e.status === 403) {
+                throw new Error(
+                  `Permission denied: The token does not have sufficient permissions ` +
+                  `to ${action} Copilot seats. ` +
+                  `Ensure ORG_GITHUB_TOKEN has the "manage_billing:copilot" scope.`
+                );
+              }
+              if (e.status === 404) {
+                throw new Error(
+                  `Not found: GitHub Copilot billing is not enabled for this organisation, ` +
+                  `or user \`${username}\` was not found.`
+                );
+              }
+              if (e.status === 422) {
+                throw new Error(
+                  `Unprocessable request: The seat ${action} for \`${username}\` ` +
+                  `was rejected by GitHub. The user may already be in the requested state.`
+                );
+              }
+              if (e.status === 429) {
+                throw new Error(
+                  `Rate limit exceeded: Too many requests to the GitHub API. ` +
+                  `Please wait a few minutes and re-submit the request.`
+                );
+              }
+              if (e.status >= 500) {
+                throw new Error(
+                  `GitHub API server error (${e.status}): GitHub may be experiencing issues. ` +
+                  `Check https://githubstatus.com and retry the request.`
+                );
+              }
+              // unknown error — re-throw original
+              throw new Error(`Unexpected error during ${action}: ${e.message}`);
+            }
+
             if (action === 'assign') {
-              // Assign Copilot seat to user
+            try {
               await github.request('POST /orgs/{org}/copilot/billing/selected_users', {
                 org,
                 selected_usernames: [username],
@@ -215,8 +316,11 @@ jobs:
                 action: 'Copilot license assigned',
                 details: `GitHub Copilot license has been **assigned** to \`${username}\``,
               };
+            } catch (e) {
+              handleApiError(e, 'assign', username);  // ← actually call the helper
+            }
             } else if (action === 'revoke') {
-              // Revoke Copilot seat from user
+            try {
               await github.request('DELETE /orgs/{org}/copilot/billing/selected_users', {
                 org,
                 selected_usernames: [username],
@@ -225,8 +329,11 @@ jobs:
                 action: 'Copilot license revoked',
                 details: `GitHub Copilot license has been **revoked** from \`${username}\``,
               };
+            } catch (e) {
+              handleApiError(e, 'revoke', username);  // ← actually call the helper
+            }
             } else {
-              throw new Error(`Unknown action: ${action}`);
+              throw new Error(`Unknown action: ${action}`);  // ← also add this guard back
             }
 
             core.setOutput('action', result.action);
@@ -237,14 +344,18 @@ jobs:
       # Step 2: Post execution result on issue
       # -----------------------------------------------------------------------
       - name: Post execution summary to issue
-        if: always()
+        if: success() || failure()
         uses: actions/github-script@v7
+        env:
+          EXECUTE_OUTCOME: ${{ steps.execute.outcome }}
+          EXECUTE_ACTION: ${{ steps.execute.outputs.action }}
+          EXECUTE_DETAILS: ${{ steps.execute.outputs.details }}
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
-            const success = '${{ steps.execute.outcome }}' === 'success';
-            const action = '${{ steps.execute.outputs.action }}' || 'Unknown action';
-            const details = '${{ steps.execute.outputs.details }}' || 'No details available';
+            const success = process.env.EXECUTE_OUTCOME === 'success';
+            const action = process.env.EXECUTE_ACTION || 'Unknown action';
+            const details = process.env.EXECUTE_DETAILS || 'No details available';
 
             let comment = success
               ? '## ✅ Request Executed Successfully\n\n'
