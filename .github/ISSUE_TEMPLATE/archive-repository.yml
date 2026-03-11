@@ -1,6 +1,6 @@
 name: Archive Repository
 description: Request to archive an existing GitHub repository
-title: "[REPO ARCHIVE] archive repository"
+title: "[REPO ARCHIVE]"
 labels: ["archive"]
 
 body:
@@ -54,32 +54,41 @@ body:
         - "Yes"
     validations:
       required: true
+  
+  - type: input
+    id: replacement-repo-name
+    attributes:
+      label: Replacement Repository Name
+      description: >
+        If you selected "Yes" above, provide the exact name of the 
+        replacement repository in this organisation.
+        Leave blank if there is no replacement.
+      placeholder: my-new-project
+    validations:
+      required: false
 
-  - type: textarea
+  - type: checkboxes
     id: pre-archive-tasks
     attributes:
       label: Pre-Archive Checklist
-      description: Confirm the following items have been addressed before archiving
-      value: |
-        - [ ] All open PRs have been merged or closed
-        - [ ] All open issues have been resolved, transferred, or closed
-        - [ ] README has been updated with archive notice / deprecation note
-        - [ ] Stakeholders and contributors have been notified
-        - [ ] Any active CI/CD pipelines have been disabled
-        - [ ] Repository secrets have been reviewed (no longer needed)
-        - [ ] Dependent services/projects have been updated to remove references
-        - [ ] Final release/tag has been created (if applicable)
-    validations:
-      required: true
-
-  - type: input
-    id: requester
-    attributes:
-      label: Requester
-      description: Who is requesting this archive? (GitHub username or team)
-      placeholder: "@username or @org/team-name"
-    validations:
-      required: true
+      description: All items must be checked before submitting
+      options:
+        - label: All open PRs have been merged or closed
+          required: true
+        - label: All open issues have been resolved, transferred, or closed
+          required: true
+        - label: README has been updated with archive notice
+          required: true
+        - label: Stakeholders and contributors have been notified
+          required: true
+        - label: Any active CI/CD pipelines have been disabled
+          required: true
+        - label: Repository secrets have been reviewed
+          required: true
+        - label: Dependent services/projects have been updated
+          required: true
+        - label: Final release/tag has been created (if applicable)
+          required: false  # optional — not always needed
 
   - type: markdown
     attributes:
@@ -93,8 +102,5 @@ body:
         5. 🗃️ The repository will become **read-only** on GitHub
 
         ### Terraform Changes Required
-        ```yaml
-        # data/repositories.yaml
-        - name: repository-name
-          archived: true
-        ```
+        - The `archived` field for the repository in `data/repositories.yaml` will be set to `true`
+        - A pull request will be raised for review before merging

@@ -9,6 +9,10 @@ permissions:
   contents: write
   pull-requests: write
 
+concurrency:
+  group: archive-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
 jobs:
   # ============================================================================
   # Job 1: Validate Archive Request
@@ -17,6 +21,7 @@ jobs:
     name: Validate Archive Request
     runs-on: ubuntu-latest
     if: startsWith(github.event.issue.title, '[REPO ARCHIVE]')
+    timeout-minutes: 20
     outputs:
       validation-passed: ${{ steps.validate.outputs.validation-passed }}
       repo-name: ${{ steps.parse.outputs.repo-name }}
@@ -69,10 +74,12 @@ jobs:
 
           # --- Check if repository exists on GitHub ---
           if [[ -n "$REPO_NAME" ]]; then
-            HTTP_STATUS=$(gh api "repos/${ORG_NAME}/${REPO_NAME}" --silent 2>&1 && echo "200" || echo "404")
-            if [[ "$HTTP_STATUS" == "200" ]]; then
-              # Check if already archived
-              IS_ARCHIVED=$(gh api "repos/${ORG_NAME}/${REPO_NAME}" --jq '.archived')
+            API_RESPONSE=$(gh api "repos/${ORG_NAME}/${REPO_NAME}" 2>/dev/null)
+            API_EXIT_CODE=$?
+
+            if [[ $API_EXIT_CODE -eq 0 ]]; then
+              # Repo exists — reuse the response to check archived status (no second API call)
+              IS_ARCHIVED=$(echo "$API_RESPONSE" | jq -r '.archived')
               if [[ "$IS_ARCHIVED" == "true" ]]; then
                 VALIDATION_PASSED="false"
                 VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${REPO_NAME}\` is already archived"
@@ -81,15 +88,25 @@ jobs:
                 VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Exists | \`${ORG_NAME}/${REPO_NAME}\` | ✅ Found (Active) |\n"
               fi
             else
-              VALIDATION_PASSED="false"
-              VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${ORG_NAME}/${REPO_NAME}\` not found"
-              VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Exists | \`${ORG_NAME}/${REPO_NAME}\` | ❌ Not found |\n"
+              ERROR_MSG=$(gh api "repos/${ORG_NAME}/${REPO_NAME}" 2>&1 || true)
+
+              if echo "$ERROR_MSG" | grep -q "404"; then
+                VALIDATION_PASSED="false"
+                VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${ORG_NAME}/${REPO_NAME}\` not found"
+                VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Exists | \`${ORG_NAME}/${REPO_NAME}\` | ❌ Not found |\n"
+              elif echo "$ERROR_MSG" | grep -q "401\|403"; then
+                echo "::error::Authentication or permission error accessing repo: ${ERROR_MSG}"
+                exit 1
+              else
+                echo "::error::Unexpected API error: ${ERROR_MSG}"
+                exit 1
+              fi
             fi
           fi
 
           # --- Check if repository exists in YAML config ---
           if [[ -n "$REPO_NAME" && -f "data/repositories.yaml" ]]; then
-            YAML_MATCH=$(grep -c "name: ${REPO_NAME}" data/repositories.yaml || true)
+            YAML_MATCH=$(grep -cP "^\s+name:\s+['\"]?${REPO_NAME}['\"]?\s*$" data/repositories.yaml || true)
             if [[ "$YAML_MATCH" -gt 0 ]]; then
               VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ✅ Found |\n"
             else
@@ -106,7 +123,7 @@ jobs:
           fi
 
           # --- Set outputs ---
-          echo "validation-passed=${VALIDATION_PASSED}" >> $GITHUB_OUTPUT
+          echo "validation-passed=${VALIDATION_PASSED:-false}" >> $GITHUB_OUTPUT
 
           echo "validation-summary<<VSEOF" >> $GITHUB_OUTPUT
           echo -e "$FULL_SUMMARY" >> $GITHUB_OUTPUT
@@ -123,13 +140,17 @@ jobs:
         if: always()
         id: build-details
         shell: bash
+        env:
+          JUSTIFICATION: ${{ steps.parse.outputs.justification }}
+          VALIDATION_TABLE: ${{ steps.validate.outputs.validation-summary }}
+          VALIDATION_ERRORS: ${{ steps.validate.outputs.validation-errors }}
         run: |
           REPO_NAME="${{ steps.parse.outputs.repo-name }}"
           ORG_NAME="${{ github.repository_owner }}"
-          JUSTIFICATION="${{ steps.parse.outputs.justification }}"
+          JUSTIFICATION="${JUSTIFICATION}"
           VALIDATION_PASSED="${{ steps.validate.outputs.validation-passed }}"
-          VALIDATION_TABLE="${{ steps.validate.outputs.validation-summary }}"
-          VALIDATION_ERRORS="${{ steps.validate.outputs.validation-errors }}"
+          VALIDATION_TABLE="${VALIDATION_TABLE}"
+          VALIDATION_ERRORS="${VALIDATION_ERRORS}"
 
           # --- Build summary-table JSON ---
           SUMMARY_TABLE=$(jq -nc \
@@ -213,7 +234,7 @@ jobs:
           error-details: ${{ steps.build-details.outputs.error-details }}
           labels-add: ${{ steps.validate.outputs.validation-passed == 'true' && 'archive-validation-passed' || 'archive-validation-failed' }}
           close-issue: ${{ steps.validate.outputs.validation-passed != 'true' }}
-          close-reason: 'not_planned'
+          close-reason: 'completed'
 
   # ============================================================================
   # Job 2: Create PR with YAML change
@@ -222,6 +243,7 @@ jobs:
     name: Create Archive PR
     runs-on: ubuntu-latest
     needs: validate-request
+    timeout-minutes: 20
     if: needs.validate-request.outputs.validation-passed == 'true'
 
     steps:
@@ -237,7 +259,36 @@ jobs:
       - name: Install yq
         shell: bash
         run: |
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.6/yq_linux_amd64
+          YQ_VERSION="v4.44.6"
+          YQ_BINARY="yq_linux_amd64"
+
+          # Download the binary
+          sudo wget -qO /usr/local/bin/yq \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}"
+
+          # Download the checksums file
+          wget -qO /tmp/yq_checksums \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/checksums"
+
+          # Extract SHA256 for the binary
+          EXPECTED_SHA=$(grep "SHA-256" /tmp/yq_checksums \
+            | grep "${YQ_BINARY}" | grep -v "\.tar\.gz" | awk '{print $2}' | head -1)
+
+          # Guard — fail loudly if checksum extraction returned empty
+          if [[ -z "$EXPECTED_SHA" ]]; then
+            echo "::error::Failed to extract SHA256 checksum for ${YQ_BINARY} from checksums file"
+            echo "--- checksums file contents ---"
+            cat /tmp/yq_checksums
+            exit 1
+          fi
+
+          # Verify the binary matches the checksum
+          echo "${EXPECTED_SHA}  /usr/local/bin/yq" | sha256sum -c
+          if [[ $? -ne 0 ]]; then
+            echo "::error::SHA256 checksum verification failed for ${YQ_BINARY}"
+            exit 1
+          fi
+
           sudo chmod +x /usr/local/bin/yq
           yq --version
 
@@ -280,6 +331,7 @@ jobs:
         id: create-pr
         shell: bash
         env:
+          JUSTIFICATION: ${{ needs.validate-request.outputs.justification }}
           GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
         run: |
           REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
@@ -296,7 +348,7 @@ jobs:
 
           # Commit the YAML change
           git add data/repositories.yaml
-          git commit -m "feat: 🗃️ archive repository \`${REPO_NAME}\`
+          git commit -m "feat: 🗃️ archive repository '${REPO_NAME}'
 
           Set archived: true for ${ORG_NAME}/${REPO_NAME} in data/repositories.yaml
 
@@ -320,7 +372,7 @@ jobs:
           | **Repository** | \`${ORG_NAME}/${REPO_NAME}\` |
           | **Requested by** | @${{ github.event.issue.user.login }} |
           | **Issue** | #${ISSUE_NUMBER} |
-          | **Justification** | ${{ needs.validate-request.outputs.justification }} |
+          | **Justification** | ${JUSTIFICATION} |
 
           ### Changes
           - Sets \`archived: true\` for \`${REPO_NAME}\` in \`data/repositories.yaml\`
@@ -348,7 +400,7 @@ jobs:
             --label "archive" \
             --label "infrastructure")
 
-          PR_NUMBER=$(echo "$PR_URL" | grep -oP '\d+$')
+          PR_NUMBER=$(gh pr view "${BRANCH_NAME}" --json number --jq '.number')
 
           echo "pr-url=${PR_URL}" >> $GITHUB_OUTPUT
           echo "pr-number=${PR_NUMBER}" >> $GITHUB_OUTPUT
