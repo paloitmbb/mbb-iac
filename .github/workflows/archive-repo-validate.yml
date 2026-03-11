@@ -392,17 +392,96 @@ jobs:
             exit 1
           fi
           echo "✅ Found: $YAML_FILE"
+          
+          # Use PowerShell to safely insert archived: true after the name line
+          pwsh -Command "
+            \$yamlFile = '${YAML_FILE}'
+            \$repoName = '${REPO_NAME}'
 
-          # Use sed to add archived: true before the security section for the repository
-          echo "Applying sed to add archived: true for REPO_NAME='$REPO_NAME'"
-          sed -i '/- name: '${REPO_NAME}'/,/security:/{/^    security:/ s/^/    archived: true\n/}' "$YAML_FILE"
+            Write-Host '📝 Updating ' + \$yamlFile + ' for repository: ' + \$repoName
 
-          # Verify the change
-          echo "Verifying archived flag was set..."
-          if grep -A 20 "- name: ${REPO_NAME}" "$YAML_FILE" | grep -q "archived: true"; then
-            echo "✅ YAML file updated successfully"
-          else
-            echo "::error::Failed to set archived: true for ${REPO_NAME}"
+            # Read all lines
+            \$lines = Get-Content \$yamlFile
+
+            # Find repo name line index
+            \$repoLineIndex = -1
+            for (\$i = 0; \$i -lt \$lines.Count; \$i++) {
+              if (\$lines[\$i] -match ('^\s+-?\s*name:\s+' + [regex]::Escape(\$repoName) + '\s*$')) {
+                \$repoLineIndex = \$i
+                break
+              }
+            }
+
+            if (\$repoLineIndex -eq -1) {
+              Write-Error 'Repository ' + \$repoName + ' not found in ' + \$yamlFile
+              exit 1
+            }
+
+            Write-Host '✅ Found repository at line: ' + (\$repoLineIndex + 1)
+
+            # Check if already archived
+            \$alreadyArchived = \$false
+            for (\$i = \$repoLineIndex + 1; \$i -lt [Math]::Min(\$repoLineIndex + 10, \$lines.Count); \$i++) {
+              if (\$lines[\$i] -match '^\s+-\s*name:') { break }
+              if (\$lines[\$i] -match 'archived:\s*true') {
+                \$alreadyArchived = \$true
+                break
+              }
+            }
+
+            if (\$alreadyArchived) {
+              Write-Host '⚠️ Already archived — no changes needed'
+              exit 0
+            }
+
+            # Build new lines with archived: true inserted after name line
+            \$newLines = [System.Collections.Generic.List[string]]::new()
+            for (\$i = 0; \$i -lt \$lines.Count; \$i++) {
+              \$newLines.Add(\$lines[\$i])
+              if (\$i -eq \$repoLineIndex) {
+                \$newLines.Add('    archived: true')
+                Write-Host '✅ Inserted archived: true after line ' + (\$i + 1)
+              }
+            }
+
+            # Write to temp file first
+            \$tempFile = [System.IO.Path]::GetTempFileName()
+            \$newLines | Set-Content \$tempFile -Encoding UTF8
+
+            # Verify temp file not empty
+            if ((Get-Item \$tempFile).Length -eq 0) {
+              Write-Error 'Output file is empty — aborting'
+              Remove-Item \$tempFile -Force
+              exit 1
+            }
+
+            # Verify change exists
+            \$tempContent = Get-Content \$tempFile -Raw
+            if (\$tempContent -notmatch ('name:\s+' + [regex]::Escape(\$repoName) + '[\s\S]{0,100}archived:\s*true')) {
+              Write-Error 'Verification failed — archived: true not found'
+              Remove-Item \$tempFile -Force
+              exit 1
+            }
+
+            # Replace original
+            Move-Item \$tempFile \$yamlFile -Force
+            Write-Host '✅ YAML updated successfully'
+
+            # Show result
+            Write-Host '--- Updated section ---'
+            \$finalLines = Get-Content \$yamlFile
+            for (\$i = 0; \$i -lt \$finalLines.Count; \$i++) {
+              if (\$finalLines[\$i] -match ('name:\s+' + [regex]::Escape(\$repoName))) {
+                \$end = [Math]::Min(\$i + 6, \$finalLines.Count - 1)
+                \$finalLines[\$i..\$end] | ForEach-Object { Write-Host \$_ }
+                break
+              }
+            }
+          "
+
+          # Check exit code from PowerShell
+          if [[ $? -ne 0 ]]; then
+            echo "::error::PowerShell YAML update failed"
             exit 1
           fi
 
@@ -410,9 +489,9 @@ jobs:
           if ! git diff --quiet "$YAML_FILE"; then
             echo "✅ Changes detected in $YAML_FILE"
           else
-            echo "⚠️ No changes in $YAML_FILE (repository may already be marked as archived)"
+            echo "⚠️ No changes detected in $YAML_FILE"
           fi
-
+          
           # Stage and commit the YAML change
           git add "$YAML_FILE"
           
