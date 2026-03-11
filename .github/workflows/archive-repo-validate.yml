@@ -346,26 +346,31 @@ jobs:
           YQ_BINARY="yq_linux_amd64"
           YQ_INSTALL_DIR="/usr/local/bin"
 
-          # --- Step 1: Download binary ---
+          # Download the binary
           echo "📥 Downloading yq ${YQ_VERSION}..."
-          wget -v -O /tmp/${YQ_BINARY} \
+          wget -qO /tmp/${YQ_BINARY} \
             "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}"
-          echo "✅ Binary download exit code: $?"
+          if [[ $? -ne 0 ]]; then
+            echo "::error::Failed to download yq binary"
+            exit 1
+          fi
 
-          # --- Step 2: Download checksums ---
+          # Download the checksums file
           echo "📋 Downloading checksums..."
-          wget -v -O /tmp/yq_checksums \
+          wget -qO /tmp/yq_checksums \
             "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/checksums"
-          echo "✅ Checksums download exit code: $?"
+          if [[ $? -ne 0 ]]; then
+            echo "::error::Failed to download checksums file"
+            exit 1
+          fi
 
-          # --- Step 3: Show checksums file content ---
-          echo "📄 Checksums file content (first 30 lines):"
-          head -30 /tmp/yq_checksums
-
-          # --- Step 4: Extract SHA ---
+          # Extract SHA256 — try both column orders to handle any format
           echo "🔍 Extracting SHA256 for ${YQ_BINARY}..."
-          EXPECTED_SHA=$(grep "${YQ_BINARY}" /tmp/yq_checksums \
-            | grep -v "\.tar\.gz" | awk '{print $1}' | head -1)
+          MATCHING_LINE=$(grep "${YQ_BINARY}" /tmp/yq_checksums | grep -v "\.tar\.gz" | head -1)
+          echo "📄 Matching line: '${MATCHING_LINE}'"
+
+          # Extract the field that looks like a SHA256 (64 hex characters)
+          EXPECTED_SHA=$(echo "${MATCHING_LINE}" | grep -oP '[a-f0-9]{64}')
           echo "🔑 Extracted SHA: '${EXPECTED_SHA}'"
           echo "🔑 SHA length: ${#EXPECTED_SHA}"
 
@@ -375,21 +380,20 @@ jobs:
             exit 1
           fi
 
-          # --- Step 5: Verify checksum ---
+          # Verify checksum
           echo "✅ Verifying checksum..."
           echo "${EXPECTED_SHA}  /tmp/${YQ_BINARY}" | sha256sum -c
-          echo "✅ Checksum verify exit code: $?"
+          if [[ $? -ne 0 ]]; then
+            echo "::error::SHA256 checksum verification failed"
+            exit 1
+          fi
 
-          # --- Step 6: Install ---
-          echo "📦 Installing yq to ${YQ_INSTALL_DIR}..."
+          # Install
+          echo "📦 Installing yq..."
           sudo mv /tmp/${YQ_BINARY} ${YQ_INSTALL_DIR}/yq
-          echo "✅ Move exit code: $?"
           sudo chmod +x ${YQ_INSTALL_DIR}/yq
-          echo "✅ Chmod exit code: $?"
 
-          # --- Step 7: Verify ---
-          echo "🔍 Verifying installation..."
-          which yq
+          # Verify
           yq --version
 
       - name: Update YAML configuration
