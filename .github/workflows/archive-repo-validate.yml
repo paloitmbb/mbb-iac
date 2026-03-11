@@ -39,14 +39,36 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Parse issue form
         id: parse
-        uses: paloitmbb/mbb-tf-actions/actions/parse-issue-form@main
-        with:
-          issue-body: ${{ github.event.issue.body }}
-          field-mapping: |
-            {
-              "repo-name": "Repository Name",
-              "justification": "Business Justification"
-            }
+        shell: bash
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          # Extract a field value from a GitHub issue form body.
+          # Fields follow the pattern: ### <Label>\n\n<value>\n\n### <Next Label>
+          extract_field() {
+            local label="$1"
+            printf '%s\n' "$ISSUE_BODY" | awk -v label="### ${label}" '
+              $0 == label { found=1; next }
+              found && /^### /  { exit }
+              found && NF > 0   { print }
+            ' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+          }
+
+          REPO_NAME=$(extract_field "Repository Name")
+          JUSTIFICATION=$(extract_field "Business Justification")
+
+          # Treat "_No response_" as empty
+          [[ "$REPO_NAME"     == "_No response_" ]] && REPO_NAME=""
+          [[ "$JUSTIFICATION" == "_No response_" ]] && JUSTIFICATION=""
+
+          echo "repo-name=${REPO_NAME}" >> "$GITHUB_OUTPUT"
+
+          echo "justification<<PARSEEOF" >> "$GITHUB_OUTPUT"
+          echo "${JUSTIFICATION}" >> "$GITHUB_OUTPUT"
+          echo "PARSEEOF" >> "$GITHUB_OUTPUT"
+
+          echo "Parsed repo-name:     ${REPO_NAME}"
+          echo "Parsed justification: ${JUSTIFICATION}"
 
       # -----------------------------------------------------------------------
       # Step 2: Validate repository and YAML config
@@ -221,20 +243,81 @@ jobs:
       # Step 4: Notify validation result on the issue
       # -----------------------------------------------------------------------
       - name: Notify validation result
-        if: always()
-        uses: paloitmbb/mbb-tf-actions/actions/notify-issue-status@main
+        if: success() || failure()
+        uses: actions/github-script@v7
+        env:
+          VALIDATION_PASSED: ${{ steps.validate.outputs.validation-passed }}
+          SUMMARY_TABLE: ${{ steps.build-details.outputs.summary-table }}
+          DETAILS_JSON: ${{ steps.build-details.outputs.details-json }}
+          NEXT_STEPS: ${{ steps.build-details.outputs.next-steps }}
+          ERROR_DETAILS: ${{ steps.build-details.outputs.error-details }}
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
-          issue-number: ${{ github.event.issue.number }}
-          status: ${{ steps.validate.outputs.validation-passed == 'true' && 'validation-passed' || 'validation-failed' }}
-          title: ${{ steps.validate.outputs.validation-passed == 'true' && 'Archive Request — Validation Passed' || 'Archive Request — Validation Failed' }}
-          summary-table: ${{ steps.build-details.outputs.summary-table }}
-          details-sections: ${{ steps.build-details.outputs.details-json }}
-          next-steps: ${{ steps.build-details.outputs.next-steps }}
-          error-details: ${{ steps.build-details.outputs.error-details }}
-          labels-add: ${{ steps.validate.outputs.validation-passed == 'true' && 'archive-validation-passed' || 'archive-validation-failed' }}
-          close-issue: ${{ steps.validate.outputs.validation-passed != 'true' }}
-          close-reason: 'completed'
+          script: |
+            const passed = process.env.VALIDATION_PASSED === 'true';
+            const summaryRows = JSON.parse(process.env.SUMMARY_TABLE || '[]');
+            const detailSections = JSON.parse(process.env.DETAILS_JSON || '[]');
+            const nextSteps = process.env.NEXT_STEPS || '';
+            const errorDetails = process.env.ERROR_DETAILS || '';
+
+            const title = passed
+              ? '## ✅ Archive Request — Validation Passed'
+              : '## ❌ Archive Request — Validation Failed';
+
+            let body = `${title}\n\n`;
+
+            // Summary table
+            body += '### 📋 Request Summary\n\n';
+            body += '| Field | Value |\n|-------|-------|\n';
+            for (const row of summaryRows) {
+              body += `| **${row.field}** | ${row.value} |\n`;
+            }
+            body += '\n';
+
+            // Detail sections (validation results, archive impact, etc.)
+            for (const section of detailSections) {
+              body += `### ${section.heading}\n\n${section.body}\n\n`;
+            }
+
+            // Error details
+            if (errorDetails) {
+              body += `### ⚠️ Errors\n\n${errorDetails}\n\n`;
+            }
+
+            // Next steps
+            if (nextSteps) {
+              body += `### 📝 Next Steps\n\n${nextSteps}\n`;
+            } else if (!passed) {
+              body += '### 📝 Next Steps\n\nPlease fix the validation errors above and create a new archive request issue.\n';
+            }
+
+            // Post comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+            // Add labels
+            const label = passed ? 'archive-validation-passed' : 'archive-validation-failed';
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: [label],
+            });
+
+            // Close issue on failure
+            if (!passed) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                state: 'closed',
+                state_reason: 'completed',
+              });
+            }
 
   # ============================================================================
   # Job 2: Create PR with YAML change
@@ -412,22 +495,50 @@ jobs:
       # Step 3: Comment on issue with PR link
       # -----------------------------------------------------------------------
       - name: Notify issue with PR link
-        uses: paloitmbb/mbb-tf-actions/actions/notify-issue-status@main
+        uses: actions/github-script@v7
+        env:
+          PR_URL: ${{ steps.create-pr.outputs.pr-url }}
+          PR_BRANCH: ${{ steps.create-pr.outputs.branch-name }}
+          REPO_NAME: ${{ needs.validate-request.outputs.repo-name }}
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
-          issue-number: ${{ github.event.issue.number }}
-          status: 'in-progress'
-          title: 'Archive PR Created — Awaiting Review & Merge'
-          summary-table: |
-            [
-              {"field": "Pull Request", "value": "${{ steps.create-pr.outputs.pr-url }}"},
-              {"field": "Branch", "value": "`${{ steps.create-pr.outputs.branch-name }}`"},
-              {"field": "Repository", "value": "`${{ github.repository_owner }}/${{ needs.validate-request.outputs.repo-name }}`"},
-              {"field": "CI Status", "value": "Terraform CI will run `plan` automatically on this PR"}
-            ]
-          next-steps: |
-            - **Terraform CI** will run `terraform plan` and post results as a PR comment
-            - A reviewer must **review the plan**, then **approve and merge** the PR
-            - Once merged, the **Terraform Apply** workflow runs automatically against `dev`
-            - This issue will be **closed automatically** when the PR merges (`Closes #${{ github.event.issue.number }}`)
-          labels-add: 'archive-pr-created'
+          script: |
+            const prUrl    = process.env.PR_URL;
+            const branch   = process.env.PR_BRANCH;
+            const repoName = process.env.REPO_NAME;
+            const org      = context.repo.owner;
+            const issueNumber = context.issue.number;
+
+            const body = [
+              '## 🔄 Archive PR Created — Awaiting Review & Merge',
+              '',
+              '### 📋 Summary',
+              '',
+              '| Field | Value |',
+              '|-------|-------|',
+              `| **Pull Request** | ${prUrl} |`,
+              `| **Branch** | \`${branch}\` |`,
+              `| **Repository** | \`${org}/${repoName}\` |`,
+              `| **CI Status** | Terraform CI will run \`plan\` automatically on this PR |`,
+              '',
+              '### 📝 Next Steps',
+              '',
+              '- **Terraform CI** will run `terraform plan` and post results as a PR comment',
+              '- A reviewer must **review the plan**, then **approve and merge** the PR',
+              '- Once merged, the **Terraform Apply** workflow runs automatically against `dev`',
+              `- This issue will be **closed automatically** when the PR merges (\`Closes #${issueNumber}\`)`,
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body,
+            });
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              labels: ['archive-pr-created'],
+            });
