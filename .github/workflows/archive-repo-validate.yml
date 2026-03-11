@@ -21,7 +21,9 @@ jobs:
   validate-request:
     name: Validate Archive Request
     runs-on: ubuntu-latest
-    if: startsWith(github.event.issue.title, '[REPO ARCHIVE]')
+    if: |
+      (github.event_name == 'issues' && startsWith(github.event.issue.title, '[REPO ARCHIVE]')) ||
+      github.event_name == 'workflow_dispatch'
     timeout-minutes: 20
     outputs:
       validation-passed: ${{ steps.validate.outputs.validation-passed }}
@@ -244,7 +246,7 @@ jobs:
       # Step 4: Notify validation result on the issue
       # -----------------------------------------------------------------------
       - name: Notify validation result
-        if: success() || failure()
+        if: (success() || failure()) && github.event_name == 'issues'
         uses: actions/github-script@v7
         env:
           VALIDATION_PASSED: ${{ steps.validate.outputs.validation-passed }}
@@ -385,7 +387,8 @@ jobs:
           REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
           ORG_NAME="${{ github.repository_owner }}"
           ISSUE_NUMBER="${{ github.event.issue.number }}"
-          BRANCH_NAME="archive/${REPO_NAME}-${ISSUE_NUMBER}"
+          TIMESTAMP=$(date +%s)
+          BRANCH_NAME="archive/${REPO_NAME}-${ISSUE_NUMBER:-${TIMESTAMP}}"
 
           # Configure git
           git config user.name "github-actions[bot]"
@@ -401,25 +404,20 @@ jobs:
           Set archived: true for ${ORG_NAME}/${REPO_NAME} in data/repositories.yaml
 
           - Repository: ${ORG_NAME}/${REPO_NAME}
-          - Requested by: @${{ github.event.issue.user.login }}
-          - Issue: #${ISSUE_NUMBER}"
+          - Requested by: $([[ -n '${{ github.event.issue.user.login }}' ]] && echo '@${{ github.event.issue.user.login }}' || echo 'Automated via workflow_dispatch')
+          - Issue: #${ISSUE_NUMBER:-'(manual trigger)'}"
 
           # Push the branch
           git push origin "${BRANCH_NAME}"
 
-          # Create PR
-          PR_URL=$(gh pr create \
-            --base main \
-            --head "${BRANCH_NAME}" \
-            --title "feat: 🗃️ archive repository \`${REPO_NAME}\`" \
-            --body "## 🗃️ Archive Repository: \`${REPO_NAME}\`
+          # Build PR body base
+          PR_BODY="## 🗃️ Archive Repository: \`${REPO_NAME}\`
 
           ### Summary
           | Field | Value |
           |-------|-------|
           | **Repository** | \`${ORG_NAME}/${REPO_NAME}\` |
-          | **Requested by** | @${{ github.event.issue.user.login }} |
-          | **Issue** | #${ISSUE_NUMBER} |
+          | **Requested by** | $([[ -n '${{ github.event.issue.user.login }}' ]] && echo '@${{ github.event.issue.user.login }}' || echo 'Automated (workflow_dispatch)') |
           | **Justification** | ${JUSTIFICATION} |
 
           ### Changes
@@ -433,7 +431,6 @@ jobs:
           1. The **Terraform Apply** workflow triggers automatically (push to \`main\` on \`data/*.yaml\`)
           2. Terraform runs \`init\` → \`plan\` → \`apply\` against the \`dev\` environment
           3. The repository \`${ORG_NAME}/${REPO_NAME}\` becomes **read-only** on GitHub
-          4. Issue #${ISSUE_NUMBER} is closed automatically
 
           ### Review Checklist
           - [ ] Review the Terraform plan output (posted as PR comment by CI)
@@ -442,9 +439,21 @@ jobs:
           - [ ] Ensure no active development depends on this repository
 
           ---
-          > 🤖 *Automated by [Archive Repo: Validate & Create PR](/${{ github.repository }}/actions/runs/${{ github.run_id }}) workflow*
+          > 🤖 *Automated by [Archive Repo: Validate & Create PR](/${{ github.repository }}/actions/runs/${{ github.run_id }}) workflow*"
 
-          Closes #${ISSUE_NUMBER}" \
+          # Add issue closing reference if available
+          if [[ -n "${ISSUE_NUMBER}" ]]; then
+            PR_BODY+="
+
+          Closes #${ISSUE_NUMBER}"
+          fi
+
+          # Create PR
+          PR_URL=$(gh pr create \
+            --base main \
+            --head "${BRANCH_NAME}" \
+            --title "feat: 🗃️ archive repository \`${REPO_NAME}\`" \
+            --body "${PR_BODY}" \
             --label "archive" \
             --label "infrastructure")
 
@@ -460,6 +469,7 @@ jobs:
       # Step 3: Comment on issue with PR link
       # -----------------------------------------------------------------------
       - name: Notify issue with PR link
+        if: github.event_name == 'issues'
         uses: actions/github-script@v7
         env:
           PR_URL: ${{ steps.create-pr.outputs.pr-url }}
