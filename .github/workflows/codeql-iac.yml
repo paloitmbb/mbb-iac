@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  analysis:
+  CodeQL:
     runs-on: ubuntu-latest
 
     permissions:
