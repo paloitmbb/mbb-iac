@@ -30,7 +30,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@a5ac7e51b41094c7467c0571747491c1469efae7 # v4.1.6
+        uses: actions/checkout@v4
         with:
           token: ${{ secrets.ORG_GITHUB_TOKEN }}
           ref: main
@@ -332,7 +332,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@a5ac7e51b41094c7467c0571747491c1469efae7 # v4.1.6
+        uses: actions/checkout@v4
         with:
           token: ${{ secrets.ORG_GITHUB_TOKEN }}
           ref: main
