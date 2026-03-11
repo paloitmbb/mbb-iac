@@ -48,6 +48,7 @@ module "github_repositories" {
   has_wiki                = each.value.features.has_wiki
   default_branch          = each.value.default_branch
   topics                  = each.value.topics
+  archived                = try(each.value.archived, false)
   branch_protection_rules = each.value.branch_protection
 
   # GHAS settings managed within the repository resource
