@@ -339,6 +339,7 @@ jobs:
       # -----------------------------------------------------------------------
       # Step 1: Install yq and update YAML
       # -----------------------------------------------------------------------
+      
       - name: Install yq
         shell: bash
         run: |
@@ -346,83 +347,54 @@ jobs:
           YQ_BINARY="yq_linux_amd64"
           YQ_INSTALL_DIR="/usr/local/bin"
 
-          # --- Step 1: Download binary ---
+          # Download the binary
           echo "📥 Downloading yq ${YQ_VERSION}..."
-          wget -v -O /tmp/${YQ_BINARY} \
+          wget -qO /tmp/${YQ_BINARY} \
             "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}"
-          echo "✅ Binary download exit code: $?"
+          if [[ $? -ne 0 ]]; then
+            echo "::error::Failed to download yq binary"
+            exit 1
+          fi
 
-          # --- Step 2: Download checksums ---
-          echo "📋 Downloading checksums..."
-          wget -v -O /tmp/yq_checksums \
-            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/checksums"
-          echo "✅ Checksums download exit code: $?"
+          # Download the dedicated SHA256 file for this specific binary
+          # yq provides individual .tar.gz_SHA-256 files per binary
+          echo "📋 Downloading SHA256 file..."
+          wget -qO /tmp/yq_sha256 \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}.tar.gz_SHA-256"
+          if [[ $? -ne 0 ]]; then
+            echo "::error::Failed to download SHA256 file"
+            exit 1
+          fi
 
-          # --- Step 3: Show checksums file content ---
-          echo "📄 Checksums file content (first 30 lines):"
-          head -30 /tmp/yq_checksums
+          # Show what we got
+          echo "📄 SHA256 file content:"
+          cat /tmp/yq_sha256
 
-          # --- Step 4: Extract SHA ---
-          echo "🔍 Extracting SHA256 for ${YQ_BINARY}..."
-          EXPECTED_SHA=$(grep "${YQ_BINARY}" /tmp/yq_checksums \
-            | grep -v "\.tar\.gz" | awk '{print $1}' | head -1)
+          # Extract just the hash (first 64 hex chars)
+          EXPECTED_SHA=$(grep -oP '[a-f0-9]{64}' /tmp/yq_sha256 | head -1)
           echo "🔑 Extracted SHA: '${EXPECTED_SHA}'"
           echo "🔑 SHA length: ${#EXPECTED_SHA}"
 
           if [[ -z "$EXPECTED_SHA" ]]; then
-            echo "::error::Failed to extract SHA256 — dumping full checksums file:"
-            cat /tmp/yq_checksums
+            echo "::error::Failed to extract SHA256 hash"
             exit 1
           fi
 
-          # --- Step 5: Verify checksum ---
+          # Verify checksum
           echo "✅ Verifying checksum..."
           echo "${EXPECTED_SHA}  /tmp/${YQ_BINARY}" | sha256sum -c
-          echo "✅ Checksum verify exit code: $?"
+          if [[ $? -ne 0 ]]; then
+            echo "::error::SHA256 checksum verification failed"
+            exit 1
+          fi
 
-          # --- Step 6: Install ---
-          echo "📦 Installing yq to ${YQ_INSTALL_DIR}..."
+          # Install
+          echo "📦 Installing yq..."
           sudo mv /tmp/${YQ_BINARY} ${YQ_INSTALL_DIR}/yq
-          echo "✅ Move exit code: $?"
           sudo chmod +x ${YQ_INSTALL_DIR}/yq
-          echo "✅ Chmod exit code: $?"
 
-          # --- Step 7: Verify ---
-          echo "🔍 Verifying installation..."
-          which yq
+          # Verify
           yq --version
-
-      - name: Update YAML configuration
-        id: update-yaml
-        shell: bash
-        run: |
-          REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
-
-          echo "📝 Setting archived: true for repository '${REPO_NAME}' in data/repositories.yaml"
-
-          # Find the repository index
-          REPO_INDEX=$(yq eval '.repositories | to_entries | .[] | select(.value.name == "'"${REPO_NAME}"'") | .key' data/repositories.yaml)
-
-          if [[ -z "$REPO_INDEX" ]]; then
-            echo "::error::Repository '${REPO_NAME}' not found in data/repositories.yaml"
-            exit 1
-          fi
-
-          echo "Found repository at index: ${REPO_INDEX}"
-
-          # Set archived: true
-          yq eval -i ".repositories[${REPO_INDEX}].archived = true" data/repositories.yaml
-
-          # Verify the change
-          ARCHIVED_VALUE=$(yq eval ".repositories[${REPO_INDEX}].archived" data/repositories.yaml)
-          echo "Verified: archived = ${ARCHIVED_VALUE}"
-
-          if [[ "$ARCHIVED_VALUE" != "true" ]]; then
-            echo "::error::Failed to set archived: true"
-            exit 1
-          fi
-
-          echo "repo-index=${REPO_INDEX}" >> $GITHUB_OUTPUT
 
       # -----------------------------------------------------------------------
       # Step 2: Create branch and PR
