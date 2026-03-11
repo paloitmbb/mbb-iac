@@ -412,18 +412,25 @@ jobs:
 
           # --- UPDATE YAML FILE ---
           echo "📝 Updating data/repositories.yaml..."
-          if [[ ! -f "data/repositories.yaml" ]]; then
-            echo "::error::File data/repositories.yaml not found"
+          echo "Current working directory: $(pwd)"
+          echo "Contents of data directory:"
+          ls -la data/ || echo "data directory not found"
+          
+          YAML_FILE="data/repositories.yaml"
+          if [[ ! -f "$YAML_FILE" ]]; then
+            echo "::error::File $YAML_FILE not found"
+            echo "::error::Please ensure repositories.yaml exists at: $PWD/$YAML_FILE"
             exit 1
           fi
+          echo "✅ Found: $YAML_FILE"
 
           # Use yq to set archived: true for the repository
-          yq eval '.repositories |= map(if .name == $repo_name then .archived = true else . end)' \
-            --arg repo_name "$REPO_NAME" -i data/repositories.yaml
+          echo "Applying yq filter with REPO_NAME='$REPO_NAME'"
+          yq eval '.repositories |= map(if .name == "'$REPO_NAME'" then .archived = true else . end)' -i "$YAML_FILE"
 
           # Verify the change
-          ARCHIVED_CHECK=$(yq eval '.repositories[] | select(.name == $repo_name) | .archived' \
-            --arg repo_name "$REPO_NAME" data/repositories.yaml)
+          echo "Verifying archived flag was set..."
+          ARCHIVED_CHECK=$(yq eval '.repositories[] | select(.name == "'$REPO_NAME'") | .archived' "$YAML_FILE")
           if [[ "$ARCHIVED_CHECK" != "true" ]]; then
             echo "::error::Failed to set archived: true for ${REPO_NAME}"
             exit 1
@@ -431,14 +438,14 @@ jobs:
           echo "✅ YAML file updated successfully"
 
           # Check if there are changes
-          if ! git diff --quiet data/repositories.yaml; then
-            echo "✅ Changes detected in data/repositories.yaml"
+          if ! git diff --quiet "$YAML_FILE"; then
+            echo "✅ Changes detected in $YAML_FILE"
           else
-            echo "⚠️ No changes in data/repositories.yaml (repository may already be marked as archived)"
+            echo "⚠️ No changes in $YAML_FILE (repository may already be marked as archived)"
           fi
 
           # Stage and commit the YAML change
-          git add data/repositories.yaml
+          git add "$YAML_FILE"
           git commit -m "feat: 🗃️ archive repository '${REPO_NAME}'
 
           Set archived: true for ${ORG_NAME}/${REPO_NAME} in data/repositories.yaml
