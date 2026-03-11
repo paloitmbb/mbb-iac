@@ -418,11 +418,12 @@ jobs:
           fi
 
           # Use yq to set archived: true for the repository
-          yq eval '.repositories |= map(if .name == "'$REPO_NAME'" then .archived = true else . end)' \
-            -i data/repositories.yaml
+          yq eval '.repositories |= map(if .name == $repo_name then .archived = true else . end)' \
+            --arg repo_name "$REPO_NAME" -i data/repositories.yaml
 
           # Verify the change
-          ARCHIVED_CHECK=$(yq eval '.repositories[] | select(.name == "'$REPO_NAME'") | .archived' data/repositories.yaml)
+          ARCHIVED_CHECK=$(yq eval '.repositories[] | select(.name == $repo_name) | .archived' \
+            --arg repo_name "$REPO_NAME" data/repositories.yaml)
           if [[ "$ARCHIVED_CHECK" != "true" ]]; then
             echo "::error::Failed to set archived: true for ${REPO_NAME}"
             exit 1
