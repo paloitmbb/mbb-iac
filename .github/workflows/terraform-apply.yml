@@ -1,4 +1,4 @@
-name: Terraform Apply
+name: Terraform Apply - Infrastructure
 
 on:
   push:
@@ -20,7 +20,6 @@ on:
         type: choice
         options:
           - dev
-          - staging
           - production
 
 permissions:
@@ -31,6 +30,7 @@ permissions:
 
 jobs:
   terraform-apply:
+    name: 🚀 Apply - Infrastructure Changes
     runs-on: ubuntu-latest
     # Skip if this is a repo-request PR merge (handled by terraform-apply-repo.yml)
     # if: ${{ !contains(github.event.head_commit.message, 'repo-request') && !contains(github.event.head_commit.message, 'add repository') }}
@@ -55,7 +55,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.5.7
+          terraform_version: 1.14.5
           terraform_wrapper: false
 
       - name: Terraform Init
@@ -63,7 +63,6 @@ jobs:
           terraform init -backend-config=environments/${{ matrix.environment }}/backend.tfvars
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
-          TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
           # Azure authentication via OIDC (azure/login@v2 handles token)
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
@@ -75,7 +74,6 @@ jobs:
           terraform plan -var-file=environments/${{ matrix.environment }}/terraform.tfvars -out=environments/${{ matrix.environment }}/tfplan
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
-          TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
           # Azure authentication via OIDC (azure/login@v2 handles token)
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
@@ -87,7 +85,6 @@ jobs:
           terraform apply -auto-approve environments/${{ matrix.environment }}/tfplan
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
-          TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
           # Azure authentication via OIDC (azure/login@v2 handles token)
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}

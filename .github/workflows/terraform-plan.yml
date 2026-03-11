@@ -1,4 +1,4 @@
-name: Terraform Plan
+name: Terraform Plan - PR Validation
 
 # on:
 #   pull_request:
@@ -38,14 +38,13 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.5.7
+          terraform_version: 1.14.5
 
       - name: Terraform Init
         run: |
           terraform init -backend-config=environments/${{ matrix.environment }}/backend.tfvars
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
-          TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
           # Azure authentication via OIDC (azure/login@v2 handles token)
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
@@ -57,7 +56,6 @@ jobs:
           terraform validate
         env:
           GITHUB_TOKEN: ${{ secrets.TF_GITHUB_TOKEN }}
-          TF_HTTP_PASSWORD: ${{ secrets.TF_GITHUB_TOKEN }}
 
       - name: Terraform Format Check
         run: terraform fmt -check -recursive
@@ -79,7 +77,6 @@ jobs:
           terraform plan -var-file=environments/${{ matrix.environment }}/terraform.tfvars -no-color
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
-          TF_HTTP_PASSWORD: ${{ secrets.ORG_GITHUB_TOKEN }}
           # Azure authentication via OIDC (azure/login@v2 handles token)
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}

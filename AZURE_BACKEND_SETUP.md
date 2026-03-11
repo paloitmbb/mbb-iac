@@ -293,12 +293,12 @@ az storage account blob-service-properties update \
 
 ## Advantages
 
-✅ **Native Locking**: Built-in state locking with Azure Blob Lease  
-✅ **Versioning**: Native blob versioning and soft delete  
-✅ **Security**: Fine-grained access control with Azure RBAC  
-✅ **Reliability**: Enterprise-grade storage with SLA  
-✅ **Performance**: Fast state operations  
-✅ **Cost-Effective**: Low storage costs  
+✅ **Native Locking**: Built-in state locking with Azure Blob Lease
+✅ **Versioning**: Native blob versioning and soft delete
+✅ **Security**: Fine-grained access control with Azure RBAC
+✅ **Reliability**: Enterprise-grade storage with SLA
+✅ **Performance**: Fast state operations
+✅ **Cost-Effective**: Low storage costs
 ✅ **Encryption**: Automatic encryption at rest and in transit
 
 ## Security Best Practices
@@ -332,7 +332,7 @@ az storage account blob-service-properties update \
 
 ### Error: "Unable to list provider registration status"
 
-**Cause**: Missing Azure authentication  
+**Cause**: Missing Azure authentication
 **Solution**: Ensure one of the authentication methods is configured
 
 ```bash
@@ -342,7 +342,7 @@ az account show
 
 ### Error: "Storage account not found"
 
-**Cause**: Storage account doesn't exist or wrong name  
+**Cause**: Storage account doesn't exist or wrong name
 **Solution**: Verify storage account exists
 
 ```bash
@@ -351,7 +351,7 @@ az storage account show --name mbbtfstate --resource-group mbb
 
 ### Error: "Failed to get existing workspaces"
 
-**Cause**: Container doesn't exist  
+**Cause**: Container doesn't exist
 **Solution**: Create the container
 
 ```bash
@@ -360,7 +360,7 @@ az storage container create --name tfstate --account-name mbbtfstate
 
 ### Error: "Failed to lock state"
 
-**Cause**: State is already locked by another process  
+**Cause**: State is already locked by another process
 **Solution**: Wait for other operations to complete or force unlock (use with caution)
 
 ```bash
@@ -369,7 +369,7 @@ terraform force-unlock <lock-id>
 
 ### Error: "Authorization failed"
 
-**Cause**: Insufficient permissions  
+**Cause**: Insufficient permissions
 **Solution**: Grant proper permissions to the service principal
 
 ```bash
@@ -379,56 +379,6 @@ az role assignment create \
   --role "Storage Blob Data Contributor" \
   --scope /subscriptions/<subscription-id>/resourceGroups/mbb
 ```
-
-## Migration from GitHub Backend
-
-If migrating from the GitHub HTTP backend:
-
-### 1. Backup Current State
-
-```bash
-# Download current state from GitHub
-curl -L -H "Authorization: token $GITHUB_TOKEN" \
-  "https://github.com/paloitmbb/mbb-iac/releases/download/state-dev/terraform.tfstate" \
-  -o terraform.tfstate.backup
-```
-
-### 2. Update Configuration
-
-The backend configuration has already been updated in:
-- `versions.tf` - Changed backend from `http` to `azurerm`
-- `environments/dev/backend.tfvars` - Azure Storage configuration
-
-### 3. Initialize with State Migration
-
-```bash
-# Set Azure authentication
-export ARM_ACCESS_KEY="your-access-key"
-# OR use az login
-
-# Initialize with state migration
-terraform init -migrate-state -backend-config=environments/dev/backend.tfvars
-```
-
-### 4. Verify Migration
-
-```bash
-# Verify state
-terraform state list
-
-# Run a plan to ensure everything works
-./scripts/plan.sh dev
-```
-
-## Cost Considerations
-
-Azure Blob Storage costs are minimal for Terraform state:
-
-- **Storage**: ~$0.02 per GB/month (LRS)
-- **Operations**: Minimal cost for read/write operations
-- **Expected Monthly Cost**: < $1 for typical usage
-
-Example: A 10MB state file with 100 operations/month ≈ $0.10/month
 
 ## Additional Resources
 

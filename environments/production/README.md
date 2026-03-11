@@ -4,16 +4,18 @@ This directory contains Terraform configuration for the production environment.
 
 ## Prerequisites
 
+- Azure authentication configured (see [AZURE_BACKEND_SETUP.md](../../AZURE_BACKEND_SETUP.md))
 - GitHub token with appropriate permissions
-- Release tag `state-production` must exist (create with `git tag state-production && git push origin state-production`)
 - **Extra caution required**: Changes affect production resources
 
 ## Setup
 
 ```bash
-# Set authentication
+# Set Azure authentication (option 1: Storage Account Access Key)
+export ARM_ACCESS_KEY="your-storage-account-access-key"
+
+# Set GitHub token
 export GITHUB_TOKEN="your-github-token"
-export TF_HTTP_PASSWORD="$GITHUB_TOKEN"
 
 # Initialize Terraform
 terraform init -backend-config=backend.tfvars
@@ -28,16 +30,16 @@ terraform apply -var-file=terraform.tfvars
 ## Configuration
 
 - `terraform.tfvars` - Environment-specific variable values
-- `backend.tfvars` - HTTP backend configuration for state management (GitHub Releases)
+- `backend.tfvars` - Azure backend configuration for state management
 
 ## Backend
 
-This environment uses HTTP backend with GitHub Releases for state storage:
+This environment uses Azure Blob Storage for state management:
 
-- State file: GitHub Release asset at tag `state-production`
-- State locking: GitHub Git refs API at `refs/locks/production`
+- State file: Azure Blob Storage at `mbbtfstate/tfstate/github-production.terraform.tfstate`
+- State locking: Azure Blob Lease (automatic)
 
-See [HTTP_BACKEND_SETUP.md](../../HTTP_BACKEND_SETUP.md) for detailed setup instructions.
+See [AZURE_BACKEND_SETUP.md](../../AZURE_BACKEND_SETUP.md) for detailed setup instructions.
 
 ## ⚠️ Production Safeguards
 

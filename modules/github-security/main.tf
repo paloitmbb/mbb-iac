@@ -1,15 +1,7 @@
-resource "github_repository_security_and_analysis" "this" {
+# Dependabot automated security updates
+resource "github_repository_dependabot_security_updates" "this" {
+  count = var.enable_dependabot_security_updates ? 1 : 0
+
   repository = var.repository_name
-
-  advanced_security {
-    status = var.enable_advanced_security ? "enabled" : "disabled"
-  }
-
-  secret_scanning {
-    status = var.enable_secret_scanning ? "enabled" : "disabled"
-  }
-
-  secret_scanning_push_protection {
-    status = var.enable_secret_scanning_push_protection ? "enabled" : "disabled"
-  }
+  enabled    = true
 }

@@ -8,7 +8,6 @@ locals {
     for repo in local.repositories_data.repositories : merge(repo, {
       security          = try(repo.security, null)
       branch_protection = try(repo.branch_protection, null)
-      teams             = try(repo.teams, null)
     })
   ]
 
@@ -26,8 +25,14 @@ module "github_organization" {
   description                     = var.organization.description
   default_repository_permission   = var.organization.default_repository_permission
   members_can_create_repositories = var.organization.members_can_create_repositories
-  organization_secrets            = var.organization_secrets
-  organization_variables          = var.organization_variables
+
+  # GHAS organization-level defaults (applies to new repositories)
+  advanced_security_enabled_for_new_repositories               = var.ghas_config.default_enabled
+  secret_scanning_enabled_for_new_repositories                 = var.ghas_config.organization_level.enable_secret_scanning
+  secret_scanning_push_protection_enabled_for_new_repositories = var.ghas_config.organization_level.enable_push_protection
+  dependabot_alerts_enabled_for_new_repositories                    = var.ghas_config.organization_level.enable_dependabot_alerts
+  dependabot_security_updates_enabled_for_new_repositories          = var.ghas_config.organization_level.enable_dependabot_security_updates
+  dependency_graph_enabled_for_new_repositories                     = var.ghas_config.organization_level.enable_dependency_graph
 }
 
 # Repository Management
@@ -44,9 +49,8 @@ module "github_repositories" {
   default_branch          = each.value.default_branch
   topics                  = each.value.topics
   branch_protection_rules = each.value.branch_protection
-  teams                   = each.value.teams
 
-  # Security settings
+  # GHAS settings managed within the repository resource
   enable_advanced_security               = try(each.value.security.enable_advanced_security, false)
   enable_secret_scanning                 = try(each.value.security.enable_secret_scanning, false)
   enable_secret_scanning_push_protection = try(each.value.security.enable_secret_scanning_push_protection, false)
@@ -54,61 +58,13 @@ module "github_repositories" {
   depends_on = [module.github_organization]
 }
 
-# ============================================================================
-# Team Management
-# ============================================================================
+# Security Configuration (Dependabot security updates)
+module "github_security" {
+  source   = "./modules/github-security"
+  for_each = { for repo in local.all_repositories : repo.name => repo if try(repo.security, null) != null }
 
-# Load teams configuration
-locals {
-  teams_file = "${path.module}/data/teams.yaml"
-  teams_data = try(yamldecode(file(local.teams_file)), { teams = [] })
-
-  # Normalize teams data - ensure it's always a list, never null
-  # Handle cases where teams: is present but null/empty
-  all_teams = coalesce(try(local.teams_data.teams, null), [])
-}
-
-# Create DevSecOps team with admin access to all repositories
-module "devsecops_team" {
-  source = "./modules/github-teams"
-
-  team_name   = "paloitmbb-devsecops"
-  description = "DevSecOps team with organization-level permissions to view and approve all repositories and pipelines"
-  privacy     = "closed"
-
-  # Grant admin access to all managed repositories
-  repositories = [for repo in local.all_repositories : repo.name]
-  permission   = "admin"
+  repository_name                    = each.value.name
+  enable_dependabot_security_updates = try(each.value.security.enable_dependabot_security_updates, true)
 
   depends_on = [module.github_repositories]
-}
-
-# Create repository-specific teams
-module "repository_teams" {
-  source   = "./modules/github-teams"
-  for_each = { for team in local.all_teams : team.name => team }
-
-  team_name    = each.value.name
-  description  = each.value.description
-  privacy      = try(each.value.privacy, "closed")
-  repositories = [each.value.repository]
-  permission   = each.value.permission
-
-  depends_on = [module.github_repositories]
-}
-
-# Copilot Configuration
-module "github_copilot" {
-  source = "./modules/github-copilot"
-
-  organization_name       = var.organization.name
-  copilot_enabled         = var.copilot_config.enabled
-  public_code_suggestions = var.copilot_config.public_code_suggestions
-  ide_chat_enabled        = var.copilot_config.ide_chat_enabled
-  cli_enabled             = var.copilot_config.cli_enabled
-  policy_mode             = var.copilot_config.policy_mode
-  seat_assignments        = var.copilot_config.seat_assignments
-  content_exclusions      = var.copilot_config.content_exclusions
-
-  depends_on = [module.github_organization]
 }

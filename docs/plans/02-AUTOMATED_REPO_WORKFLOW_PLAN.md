@@ -1,13 +1,13 @@
 # Automated Repository Creation Workflow - Implementation Plan
 
-**Created:** 11 February 2026  
-**Last Updated:** 19 February 2026  
-**Owner:** DevSecOps Team  
+**Created:** 11 February 2026
+**Last Updated:** 19 February 2026
+**Owner:** DevSecOps Team
 **Status:** Implemented
 
 ---
 
-> **⚠️ IMPORTANT UPDATE (Current Implementation):**  
+> **⚠️ IMPORTANT UPDATE (Current Implementation):**
 > The implementation has been modified from the original plan:
 >
 > - **No teams are created** - users specify existing teams that will have access to the repository
@@ -24,7 +24,7 @@
 >
 > **Backend Migration:**
 > - ✅ Migrated dev environment to **Azure Blob Storage** backend
-> - ✅ Removed HTTP backend (GitHub Releases) fallback logic
+> - ✅ Removed legacy backend fallback logic
 > - ✅ Simplified scripts to Azure-only backend
 >
 > **OIDC Authentication:**
@@ -634,18 +634,18 @@ jobs:
         id: check-yaml
         run: |
           REPO_NAME="${{ steps.parse.outputs.repo-name }}"
-          
+
           # Install yq if not available
           if ! command -v yq &> /dev/null; then
             wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
             chmod +x /usr/local/bin/yq
           fi
-          
+
           # Check if repository exists in data/repositories.yaml
           if [ -f "data/repositories.yaml" ]; then
             # Search for the repository name in the YAML file
             REPO_FOUND=$(yq eval ".repositories[] | select(.name == \"$REPO_NAME\") | .name" data/repositories.yaml)
-            
+
             if [ -n "$REPO_FOUND" ]; then
               echo "exists=true" >> $GITHUB_OUTPUT
               echo "error=Repository entry for '$REPO_NAME' already exists in data/repositories.yaml" >> $GITHUB_OUTPUT
@@ -805,7 +805,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.5.7
+          terraform_version: 1.14.5
 
       - name: Terraform Init
         run: |
@@ -992,8 +992,6 @@ jobs:
 
 - [ ] Deploy to dev environment
 - [ ] Run full test suite in dev
-- [ ] Deploy to staging environment
-- [ ] Run smoke tests in staging
 - [ ] Deploy to production environment
 - [ ] Monitor first few production requests
 
@@ -1019,15 +1017,9 @@ jobs:
 2. **Day 3:** Fix identified issues
 3. **Day 4-5:** Regression testing and documentation
 
-### 6.4 Staging Deployment (Week 4)
+### 6.4 Production Deployment (Week 4)
 
-1. **Day 1:** Deploy to staging environment
-2. **Day 2-3:** Run full test suite in staging
-3. **Day 4-5:** User acceptance testing with DevSecOps team
-
-### 6.5 Production Deployment (Week 5)
-
-1. **Day 1:** Production deployment during maintenance window
+1. **Day 1:** Deploy to production environment
 2. **Day 2-3:** Monitor first production requests
 3. **Day 4-5:** Gather feedback and create iteration backlog
 
@@ -1141,7 +1133,7 @@ Required Scopes:
 4. Token is used for:
    - Team validation (read:org)
    - Terraform provider authentication (repo, admin:org)
-   - HTTP backend state management (repo)
+   - Azure backend state management (ARM credentials)
 
 ### Appendix B: Example Workflow Run
 

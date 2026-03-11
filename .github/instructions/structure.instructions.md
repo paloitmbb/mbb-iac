@@ -11,8 +11,7 @@ Provide project context and coding guidelines that AI should follow when generat
 - 🏢 GitHub Organization settings and policies
 - 📦 Repository creation and configuration management
 - 🔒 GitHub Advanced Security (GHAS) integration
-- 🤖 GitHub Copilot seat and policy management
-- 🔄 Multi-environment support (dev, staging, production)
+- 🔄 Multi-environment support (dev and production)
 - 📝 YAML-based repository definitions for scalability
 
 ## Project Structure
@@ -26,7 +25,7 @@ mbb-iac/
 ├── outputs.tf                 # Output value definitions
 ├── versions.tf                # Provider and version requirements
 ├── terraform.tfvars.example   # Example variable values
-├── HTTP_BACKEND_SETUP.md      # Backend configuration guide
+├── AZURE_BACKEND_SETUP.md     # Backend configuration guide
 ├── README.md                  # Main project documentation
 │
 ├── .github/                   # GitHub specific files
@@ -44,7 +43,7 @@ mbb-iac/
 │   │   └── README.md         # Module documentation
 │   │
 │   ├── github-repository/     # Repository management
-│   │   ├── main.tf           # Repository, branches, teams, secrets
+│   │   ├── main.tf           # Repository, branches, teams
 │   │   ├── variables.tf      # Module inputs
 │   │   ├── outputs.tf        # Module outputs
 │   │   ├── versions.tf       # Module version requirements
@@ -56,23 +55,11 @@ mbb-iac/
 │   │   ├── outputs.tf        # Module outputs
 │   │   ├── versions.tf       # Module version requirements
 │   │   └── README.md         # Module documentation
-│   │
-│   └── github-copilot/        # Copilot settings
-│       ├── main.tf           # Copilot configuration
-│       ├── variables.tf      # Module inputs
-│       ├── outputs.tf        # Module outputs
-│       ├── versions.tf       # Module version requirements
-│       └── README.md         # Module documentation
 │
 ├── environments/              # Environment-specific configurations
 │   ├── dev/
 │   │   ├── terraform.tfvars  # Development variable values
 │   │   ├── backend.tfvars    # Development backend config
-│   │   └── README.md         # Environment-specific docs
-│   │
-│   ├── staging/
-│   │   ├── terraform.tfvars  # Staging variable values
-│   │   ├── backend.tfvars    # Staging backend config
 │   │   └── README.md         # Environment-specific docs
 │   │
 │   └── production/
@@ -101,9 +88,9 @@ mbb-iac/
 
 ## Key Technologies
 
-- **Terraform**: >= 1.5.7
+- **Terraform**: >= 1.14.5
 - **GitHub Provider**: ~> 6.0
-- **Backend**: HTTP backend using GitHub Releases for state storage and GitHub API for locking
+- **Backend**: Azure Blob Storage (azurerm backend) for state storage and Azure Blob Lease for locking
 - **Language**: HCL (HashiCorp Configuration Language)
 - **Data Formats**: YAML for repository definitions, TFVARS for configuration
 
@@ -113,7 +100,6 @@ mbb-iac/
 
 - Manages organization-level settings (billing email, company info, description)
 - Controls default repository permissions
-- Configures organization-wide secrets and variables
 - Sets member creation permissions
 
 ### github-repository
@@ -121,7 +107,6 @@ mbb-iac/
 - Creates and configures repositories with customizable settings
 - Implements branch protection rules
 - Manages team access and permissions
-- Handles repository secrets and variables
 - Configures repository features (issues, projects, wiki)
 - Sets up topics and default branches
 
@@ -132,14 +117,6 @@ mbb-iac/
 - Manages Dependabot alerts and security updates
 - Controls vulnerability alerts
 - Sets security policies per repository
-
-### github-copilot
-
-- Manages Copilot organization settings
-- Controls seat assignments for teams and users
-- Configures content exclusions
-- Sets policy mode and feature flags (IDE chat, CLI)
-- Manages public code suggestion settings
 
 ## Configuration Patterns
 
@@ -170,19 +147,19 @@ All scripts are located in `scripts/` and should be executed from the project ro
 - **init.sh**: Initializes Terraform with environment-specific backend
 
   ```bash
-  ./scripts/init.sh [dev|staging|production]
+  ./scripts/init.sh [dev|production]
   ```
 
 - **plan.sh**: Generates execution plan for review
 
   ```bash
-  ./scripts/plan.sh [dev|staging|production]
+  ./scripts/plan.sh [dev|production]
   ```
 
 - **apply.sh**: Applies infrastructure changes
 
   ```bash
-  ./scripts/apply.sh [dev|staging|production]
+  ./scripts/apply.sh [dev|production]
   ```
 
 - **validate.sh**: Validates Terraform configuration
@@ -210,22 +187,22 @@ Required token permissions:
 - `admin:org` - Full control of organizations
 - `workflow` - Update GitHub Actions workflows
 
-For HTTP backend, `TF_HTTP_PASSWORD` is automatically set from `GITHUB_TOKEN` by init script.
+For Azure backend authentication, use `ARM_ACCESS_KEY`, OIDC, or Azure CLI. See [AZURE_BACKEND_SETUP.md](../../AZURE_BACKEND_SETUP.md) for details.
 
 ## State Management
 
-- **Backend Type**: HTTP backend
-- **State Storage**: GitHub Releases (tagged state files)
-- **State Locking**: GitHub API (git refs)
+- **Backend Type**: Azure Blob Storage (azurerm backend)
+- **State Storage**: Azure Blob Storage (per-environment state files)
+- **State Locking**: Azure Blob Lease (automatic)
 - **Configuration**: Per-environment in `backend.tfvars`
 
 Example backend configuration:
 
 ```hcl
-address        = "https://github.com/org/repo/releases/download/state-dev/terraform.tfstate"
-lock_address   = "https://api.github.com/repos/org/repo/git/refs/locks/dev"
-unlock_address = "https://api.github.com/repos/org/repo/git/refs/locks/dev"
-username       = "terraform"
+resource_group_name  = "mbb"
+storage_account_name = "mbbtfstate"
+container_name       = "tfstate"
+key                  = "github.terraform.tfstate"
 ```
 
 ## Variable Hierarchy
@@ -243,14 +220,13 @@ The project outputs:
 - `repository_source`: Whether repos come from "yaml" or "tfvars"
 - `repository_count`: Total number of managed repositories
 - `repositories`: Map of repository details (full_name, html_url, ssh_url)
-- `copilot_seats`: Copilot seat assignments (sensitive)
 
 ## Development Guidelines
 
 When working with this codebase:
 
 1. **Always use scripts** for Terraform operations (init, plan, apply)
-2. **Test in dev** environment before staging/production
+2. **Test in dev** environment before production
 3. **Follow conventional commits** (see git.instructions.md)
 4. **Validate** configuration before committing
 5. **Document** module changes in respective README files
@@ -304,24 +280,5 @@ organization = {
   description                     = "Organization Description"
   default_repository_permission   = "read"
   members_can_create_repositories = false
-}
-```
-
-### Enabling Copilot
-
-Edit `environments/{env}/terraform.tfvars`:
-
-```hcl
-copilot_config = {
-  enabled                 = true
-  public_code_suggestions = "disabled"
-  ide_chat_enabled        = true
-  cli_enabled             = true
-  policy_mode             = "enabled"
-  seat_assignments = {
-    teams = ["engineering", "platform"]
-    users = ["user@example.com"]
-  }
-  content_exclusions = ["*.env", "secrets/*"]
 }
 ```

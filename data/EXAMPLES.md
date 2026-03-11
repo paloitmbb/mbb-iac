@@ -83,11 +83,6 @@ repositories:
       dismiss_stale_reviews: true
       require_signed_commits: false
       enforce_admins: false
-    teams:
-      - team: engineering
-        permission: push
-      - team: platform
-        permission: admin
 ```
 
 #### HCL Format (`environments/dev/terraform.tfvars`)
@@ -126,17 +121,6 @@ repositories = [
       require_signed_commits          = false
       enforce_admins                  = false
     }
-
-    teams = [
-      {
-        team       = "engineering"
-        permission = "push"
-      },
-      {
-        team       = "platform"
-        permission = "admin"
-      }
-    ]
   }
 ]
 ```
@@ -177,9 +161,6 @@ repositories:
     topics: [backend, nodejs]
     security: *common-security
     branch_protection: *common-branch-protection
-    teams:
-      - team: engineering
-        permission: push
 
   - name: service-b
     description: Service B
@@ -189,9 +170,6 @@ repositories:
     topics: [backend, python]
     security: *common-security
     branch_protection: *common-branch-protection
-    teams:
-      - team: engineering
-        permission: push
 
   - name: service-c
     description: Service C
@@ -201,9 +179,6 @@ repositories:
     topics: [backend, golang]
     security: *common-security
     branch_protection: *common-branch-protection
-    teams:
-      - team: engineering
-        permission: push
 ```
 
 ## Switching Between Approaches

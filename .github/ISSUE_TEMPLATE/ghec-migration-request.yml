@@ -1,4 +1,4 @@
-name: "MBB GitHub Enterprise Cloud Migration Request"
+name: "♻️ GitHub Enterprise Cloud Migration Request"
 description: "Request migration of a repository between GitHub.com accounts/organizations using GEI CLI"
 title: "[GHEC Migration] "
 labels: ["ghec-migration-request"]
@@ -12,6 +12,10 @@ body:
         The workflow handles initiating the migration job, validating the target configuration,
         performing a dry run to verify migration feasibility, and post-migration setup such as permissions and branch protection.
 
+        **Pre-configured Settings (Environment Variables):**
+        - **Source Organization:** Configured via `GHEC_SOURCE_ORG` environment variable
+        - **Target Organization:** Configured via `GHEC_TARGET_ORG` environment variable
+
         > **Prerequisites:**
         > - Source repo must not be archived
         > - Target organization/account must exist on GitHub.com
@@ -22,12 +26,14 @@ body:
       value: |
         ### Source (GitHub.com)
 
-  - type: input
+  - type: dropdown
     id: source_organization
     attributes:
       label: "Source Organization"
       description: "The organization name on source GitHub.com that owns the repository"
-      placeholder: "Source organization"
+      options:
+        - paloitmbb
+      default: 0
     validations:
       required: true
 
@@ -45,12 +51,14 @@ body:
       value: |
         ### Target (GitHub.com)
 
-  - type: input
+  - type: dropdown
     id: target_organization
     attributes:
       label: "Target Organization"
       description: "The target GitHub.com organization where the repository will be migrated to"
-      placeholder: "Target organization"
+      options:
+        - paloitmbb
+      default: 0
     validations:
       required: true
 
@@ -76,6 +84,19 @@ body:
         - internal
         - public
       default: 0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: application_tier
+    attributes:
+      label: "Application Tier"
+      description: "Classification tier of the application (affects SLA and support priority)"
+      options:
+        - Tier 1 - Mission Critical
+        - Tier 2 - Business Critical
+        - Tier 3 - Business Operational
+        - Tier 4 - Administrative
     validations:
       required: true
 
@@ -113,15 +134,15 @@ body:
   - type: textarea
     id: team_mappings
     attributes:
-      label: "Team Access Mappings (Optional)"
+      label: "Team Access Mappings"
       description: |
-        Map source teams to target teams for repository access. One mapping per line.
+        Optional: Map source teams to target teams for repository access. One mapping per line.
         Format: `<source-team-slug> → <target-team-slug> : <permission>`
         Permissions: pull, push, admin, maintain, triage
       placeholder: |
-        dev-team → dev-team : push
-        platform-team → platform-team : admin
-        qa-team → qa-team : triage
+        mss-devsecops-team : admin
+        platform-team : push
+        qa-team : triage
 
   - type: textarea
     id: justification

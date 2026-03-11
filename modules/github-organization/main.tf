@@ -27,18 +27,3 @@ resource "github_organization_settings" "this" {
   secret_scanning_push_protection_enabled_for_new_repositories = var.secret_scanning_push_protection_enabled_for_new_repositories
 }
 
-resource "github_actions_organization_secret" "secrets" {
-  for_each = var.organization_secrets
-
-  secret_name     = each.key
-  visibility      = each.value.visibility
-  plaintext_value = each.value.value
-}
-
-resource "github_actions_organization_variable" "variables" {
-  for_each = var.organization_variables
-
-  variable_name = each.key
-  visibility    = each.value.visibility
-  value         = each.value.value
-}

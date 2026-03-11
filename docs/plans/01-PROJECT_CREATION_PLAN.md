@@ -21,10 +21,6 @@ mbb-iac/
 │   │   ├── terraform.tfvars
 │   │   ├── backend.tfvars
 │   │   └── README.md
-│   ├── staging/
-│   │   ├── terraform.tfvars
-│   │   ├── backend.tfvars
-│   │   └── README.md
 │   └── production/
 │       ├── terraform.tfvars
 │       ├── backend.tfvars
@@ -86,8 +82,6 @@ Manages organization-level settings and configurations.
 - `description` - Organization description
 - `default_repository_permission` - Default permission level for organization members
 - `members_can_create_repositories` - Whether members can create repositories
-- `organization_secrets` - Organization-level secrets
-- `organization_variables` - Organization-level variables
 
 **Example Usage:**
 
@@ -101,8 +95,6 @@ module "github_organization" {
   description                        = var.organization.description
   default_repository_permission      = var.organization.default_repository_permission
   members_can_create_repositories    = var.organization.members_can_create_repositories
-  organization_secrets               = var.organization_secrets
-  organization_variables             = var.organization_variables
 }
 ```
 
@@ -116,7 +108,6 @@ Creates and manages repository configurations.
 - Branch protection rules
 - Repository collaborators/teams
 - Repository webhooks
-- Repository secrets/variables
 - Deploy keys
 - Repository topics and settings
 
@@ -257,22 +248,6 @@ organization = {
   members_can_create_repositories = false
 }
 
-# Organization-level Secrets (reference to secret management)
-organization_secrets = {
-  AWS_ACCESS_KEY_ID = {
-    description = "AWS Access Key for CI/CD"
-    visibility  = "all"  # all, private, selected
-  }
-}
-
-# Organization-level Variables
-organization_variables = {
-  DEFAULT_REGION = {
-    value      = "ap-southeast-1"
-    visibility = "all"
-  }
-}
-
 # Repositories Configuration
 # Note: Using YAML data file approach - leave empty to load from data/repositories.yaml
 # Or define repositories here to override the YAML file
@@ -335,15 +310,11 @@ teams = [
 ### Backend Configuration: `environments/{env}/backend.tfvars`
 
 ```hcl
-# HTTP Backend with GitHub Releases
-address        = "https://github.com/paloitmbb/mbb-iac/releases/download/state-dev/terraform.tfstate"
-lock_address   = "https://api.github.com/repos/paloitmbb/mbb-iac/issues"
-unlock_address = "https://api.github.com/repos/paloitmbb/mbb-iac/issues"
-username       = "terraform"
-password       = "${GITHUB_TOKEN}"  # Set via environment variable
-
-# Note: State is stored as GitHub Release assets
-# Lock is managed via GitHub Issues API
+# Azure Storage Backend
+resource_group_name  = "mbb"
+storage_account_name = "mbbtfstate"
+container_name       = "tfstate"
+key                  = "github.terraform.tfstate"
 ```
 
 ## Implementation Steps
@@ -354,7 +325,7 @@ password       = "${GITHUB_TOKEN}"  # Set via environment variable
 
    ```bash
    mkdir -p modules/{github-organization,github-repository,github-security,github-copilot}
-   mkdir -p environments/{dev,staging,production}
+   mkdir -p environments/{dev,production}
    mkdir -p data scripts
    ```
 
@@ -364,10 +335,10 @@ password       = "${GITHUB_TOKEN}"  # Set via environment variable
    - Set up branch protection rules
 
 3. **Configure Backend**
-   - Set up HTTP backend with GitHub Releases
-   - Create initial state release (automated by init script)
-   - Configure state locking via GitHub Issues API
-   - Test backend connectivity with GITHUB_TOKEN
+   - Set up Azure Blob Storage backend
+   - Create Azure resource group and storage account
+   - Configure state locking via Azure Blob Lease
+   - Test backend connectivity with Azure credentials
 
 4. **Authentication Setup**
    - Generate GitHub Personal Access Token or App credentials
@@ -419,7 +390,6 @@ password       = "${GITHUB_TOKEN}"  # Set via environment variable
 
 2. **Environment Configuration**
    - Create dev environment tfvars
-   - Create staging environment tfvars
    - Create production environment tfvars
    - Document environment differences
 
@@ -465,7 +435,7 @@ password       = "${GITHUB_TOKEN}"  # Set via environment variable
 
 ```hcl
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.14.5"
 
   required_providers {
     github = {
@@ -474,10 +444,10 @@ terraform {
     }
   }
 
-  backend "http" {
+  backend "azurerm" {
     # Configuration loaded from backend.tfvars
-    # Uses GitHub Releases for state storage
-    # and GitHub Issues API for state locking
+    # Uses Azure Blob Storage for state storage
+    # and Azure Blob Lease for state locking
   }
 }
 
@@ -511,8 +481,6 @@ module "github_organization" {
   description                     = var.organization.description
   default_repository_permission   = var.organization.default_repository_permission
   members_can_create_repositories = var.organization.members_can_create_repositories
-  organization_secrets            = var.organization_secrets
-  organization_variables          = var.organization_variables
 }
 
 # Repository Management
@@ -611,11 +579,11 @@ module "github_copilot" {
 
 ### State Management
 
-- State stored as GitHub Release assets (encrypted in transit via HTTPS)
-- State locking via GitHub Issues API
-- Automatic state versioning through GitHub Releases
-- Access controls via GitHub repository permissions
-- State backup through Release history
+- State stored in Azure Blob Storage (encrypted in transit via HTTPS)
+- State locking via Azure Blob Lease
+- Automatic state versioning through Azure Blob versioning
+- Access controls via Azure RBAC
+- State backup through Azure Blob soft delete
 
 ### Secrets Management
 
@@ -744,7 +712,6 @@ body:
       description: Which environment to create this in
       options:
         - dev
-        - staging
         - production
     validations:
       required: true
@@ -954,7 +921,7 @@ EOF
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.0
+          terraform_version: 1.14.5
 
       - name: Validate Terraform
         run: |
@@ -1064,7 +1031,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        environment: [dev, staging, production]
+        environment: [dev, production]
 
     steps:
       - name: Checkout
@@ -1073,7 +1040,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.0
+          terraform_version: 1.14.5
 
       - name: Terraform Init
         run: |
@@ -1081,7 +1048,6 @@ jobs:
           terraform init -backend-config=backend.tfvars
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
-          TF_HTTP_PASSWORD: ${{ secrets.GITHUB_PAT }}
 
       - name: Terraform Validate
         run: |
@@ -1117,7 +1083,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.0
+          terraform_version: 1.14.5
 
       - name: Terraform Init
         run: |
@@ -1195,7 +1161,6 @@ on:
         type: choice
         options:
           - dev
-          - staging
           - production
 
 permissions:
@@ -1223,13 +1188,13 @@ jobs:
             # Detect which environment folders changed
             CHANGED_FILES=$(git diff --name-only HEAD^ HEAD)
             ENVIRONMENTS=()
-            
-            for env in dev staging production; do
+
+            for env in dev production; do
               if echo "$CHANGED_FILES" | grep -q "environments/${env}/"; then
                 ENVIRONMENTS+=("\"$env\"")
               fi
             done
-            
+
             if [ ${#ENVIRONMENTS[@]} -eq 0 ]; then
               echo "environments=[]" >> $GITHUB_OUTPUT
             else
@@ -1256,7 +1221,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.0
+          terraform_version: 1.14.5
 
       - name: Terraform Init
         run: |
@@ -1304,8 +1269,8 @@ jobs:
               per_page: 10
             });
 
-            const mergedPR = prs.find(pr => 
-              pr.merged_at && 
+            const mergedPR = prs.find(pr =>
+              pr.merged_at &&
               pr.head.ref.startsWith('repo-request/') &&
               pr.merge_commit_sha === context.sha
             );
@@ -1330,10 +1295,10 @@ jobs:
               repo: context.repo.repo,
               issue_number: issueNumber,
               body: `✅ Repository has been created successfully!
-              
+
               **Environment**: ${{ matrix.environment }}
               **Terraform Apply**: Completed
-              
+
               The repository is now available and configured with all requested settings.`
             });
 
@@ -1387,9 +1352,11 @@ Configure these secrets in your GitHub repository settings:
 ```bash
 # GitHub Personal Access Token or App credentials
 GITHUB_PAT         # Token with repo, workflow, admin:org permissions
-                   # Also used for HTTP backend state storage
 
-# Note: No AWS credentials needed - state stored in GitHub Releases
+# Azure credentials for backend state storage
+ARM_CLIENT_ID      # Azure Service Principal Application ID
+ARM_SUBSCRIPTION_ID # Azure Subscription ID
+ARM_TENANT_ID      # Azure AD Tenant ID
 ```
 
 ### Environment Protection Rules
@@ -1397,8 +1364,7 @@ GITHUB_PAT         # Token with repo, workflow, admin:org permissions
 Configure environment protection rules in GitHub:
 
 1. **Development**: No protection, auto-deploy
-2. **Staging**: Require 1 reviewer
-3. **Production**: Require 2 reviewers, delay timer
+2. **Production**: Require 2 reviewers, delay timer
 
 ### Usage Example
 
@@ -1478,7 +1444,7 @@ All GitHub Actions workflows provide detailed logs accessible via:
 
 ### Prerequisites
 
-- Terraform >= 1.6.0
+- Terraform >= 1.14.5
 - GitHub organization with admin access
 - GitHub Personal Access Token or App credentials
 - Backend storage configured (S3, Terraform Cloud, etc.)

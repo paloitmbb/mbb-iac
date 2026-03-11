@@ -5,12 +5,12 @@
 
 repository_defaults:
   visibility: private
-  
+
   features:
     has_issues: true
     has_projects: true
     has_wiki: false
-  
+
   security:
     enable_vulnerability_alerts: true
     enable_advanced_security: false
@@ -18,7 +18,7 @@ repository_defaults:
     enable_secret_scanning_push_protection: false
     enable_dependabot_alerts: true
     enable_dependabot_security_updates: true
-  
+
   # Base topics that will be added to all repositories
   # Tech stack will be automatically added during creation
   topics:

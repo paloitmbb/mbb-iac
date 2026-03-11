@@ -1,6 +1,4 @@
 # Organization Configuration
-organization_name = "your-github-org"
-
 organization = {
   name                            = "your-github-org"
   billing_email                   = "billing@example.com"
@@ -8,22 +6,6 @@ organization = {
   description                     = "Your GitHub Organization"
   default_repository_permission   = "read"
   members_can_create_repositories = false
-}
-
-# Organization-level Secrets (reference to secret management)
-organization_secrets = {
-  AWS_ACCESS_KEY_ID = {
-    description = "AWS Access Key for CI/CD"
-    visibility  = "all" # all, private, selected
-  }
-}
-
-# Organization-level Variables
-organization_variables = {
-  DEFAULT_REGION = {
-    value      = "us-east-1"
-    visibility = "all"
-  }
 }
 
 # Repositories Configuration
@@ -67,10 +49,6 @@ repositories = [
         permission = "push"
       }
     ]
-
-    secrets = {}
-
-    variables = {}
   }
 ]
 
@@ -79,33 +57,12 @@ ghas_config = {
   default_enabled = true
 
   organization_level = {
-    enable_secret_scanning   = true
-    enable_push_protection   = true
-    enable_dependabot_alerts = true
-    enable_dependency_graph  = true
+    enable_secret_scanning             = true
+    enable_push_protection             = true
+    enable_dependabot_alerts           = true
+    enable_dependabot_security_updates = true
+    enable_dependency_graph            = true
   }
-}
-
-# Copilot Configuration
-copilot_config = {
-  enabled                 = true
-  public_code_suggestions = "disabled"
-  ide_chat_enabled        = true
-  cli_enabled             = true
-  policy_mode             = "enabled"
-
-  seat_assignments = {
-    teams = ["engineering"]
-    users = ["admin@example.com"]
-  }
-
-  content_exclusions = [
-    "*.env",
-    "*.key",
-    "*.pem",
-    "secrets/*",
-    "credentials/*"
-  ]
 }
 
 # Teams Configuration

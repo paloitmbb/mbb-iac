@@ -1,0 +1,37 @@
+name: CodeQL IaC Scanning
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  CodeQL:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Initialize and Analyze IaC
+        id: codeql_iac
+        uses: advanced-security/codeql-extractor-iac@main
+
+      - name: Verify SARIF exists
+        run: |
+          ls -R .codeql/results/ || echo "Results directory not found"
+          if [ -f ".codeql/results/iac-results.sarif" ]; then
+            echo "SARIF file found!"
+          else
+            echo "ERROR: SARIF file NOT found at expected path"
+            exit 1
+          fi
+
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: .codeql/results/iac-results.sarif
+          category: iac-security

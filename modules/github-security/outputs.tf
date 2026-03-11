@@ -3,17 +3,7 @@ output "repository_name" {
   value       = var.repository_name
 }
 
-output "advanced_security_enabled" {
-  description = "Whether Advanced Security is enabled"
-  value       = var.enable_advanced_security
-}
-
-output "secret_scanning_enabled" {
-  description = "Whether secret scanning is enabled"
-  value       = var.enable_secret_scanning
-}
-
-output "secret_scanning_push_protection_enabled" {
-  description = "Whether secret scanning push protection is enabled"
-  value       = var.enable_secret_scanning_push_protection
+output "dependabot_security_updates_enabled" {
+  description = "Whether Dependabot automated security updates are enabled"
+  value       = var.enable_dependabot_security_updates
 }

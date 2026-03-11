@@ -10,7 +10,7 @@ This document provides technical guidelines, coding standards, and best practice
 
 ### Core Technologies
 
-- **Terraform**: `>= 1.5.7` - Infrastructure as Code tool
+- **Terraform**: `>= 1.14.5` - Infrastructure as Code tool
 - **GitHub Provider**: `~> 6.0` - GitHub resource management
 - **HCL**: HashiCorp Configuration Language for Terraform definitions
 - **YAML**: Repository configuration data format
@@ -18,10 +18,10 @@ This document provides technical guidelines, coding standards, and best practice
 
 ### Backend Configuration
 
-- **Type**: HTTP backend using GitHub infrastructure
-- **State Storage**: GitHub Releases (tagged state files per environment)
-- **State Locking**: GitHub API (Git refs under `refs/locks/{environment}`)
-- **Authentication**: `GITHUB_TOKEN` environment variable (auto-set as `TF_HTTP_PASSWORD`)
+- **Type**: Azure Blob Storage (azurerm backend)
+- **State Storage**: Azure Blob Storage (per-environment state files)
+- **State Locking**: Azure Blob Lease (automatic, native locking)
+- **Authentication**: Azure OIDC (GitHub Actions) or ARM_ACCESS_KEY / Azure CLI (local development)
 
 ## Version Requirements
 
@@ -29,7 +29,7 @@ This document provides technical guidelines, coding standards, and best practice
 
 ```hcl
 terraform {
-  required_version = ">= 1.5.7"
+  required_version = ">= 1.14.5"
 }
 ```
 
@@ -52,10 +52,9 @@ All modules use the same version constraints to ensure consistency.
 
 The project follows a modular architecture with four core modules:
 
-1. **github-organization** - Organization-level settings and secrets
+1. **github-organization** - Organization-level settings
 2. **github-repository** - Repository creation and configuration
 3. **github-security** - GHAS and security features (standalone, currently unused)
-4. **github-copilot** - Copilot seat management and policies
 
 ### Module Versioning
 
@@ -180,12 +179,6 @@ repositories:
     teams: # Optional: team access
       - team: team-slug
         permission: push
-    secrets: # Optional: repository secrets
-      SECRET_KEY:
-        description: "Secret description"
-    variables: # Optional: repository variables
-      VAR_KEY:
-        value: "variable-value"
 ```
 
 ### Local Values
@@ -205,8 +198,6 @@ locals {
   # Normalize YAML repositories
   yaml_repositories = [
     for repo in local.repositories_data.repositories : merge(repo, {
-      secrets   = try(repo.secrets, null)
-      variables = try(repo.variables, null)
       security  = try(repo.security, null)
     })
   ]
@@ -232,13 +223,11 @@ Required permissions:
 export GITHUB_TOKEN="ghp_xxxxxxxxxxxxxxxxxxxx"
 ```
 
-The `init.sh` script automatically sets `TF_HTTP_PASSWORD` from `GITHUB_TOKEN`.
-
 ### Provider Configuration
 
 ```hcl
 provider "github" {
-  owner = var.organization_name
+  owner = var.organization.name
   # Token read from GITHUB_TOKEN environment variable
 }
 ```
@@ -250,20 +239,21 @@ provider "github" {
 Each environment has dedicated backend configuration in `environments/{env}/backend.tfvars`:
 
 ```hcl
-address        = "https://github.com/org/repo/releases/download/state-{env}/terraform.tfstate"
-lock_address   = "https://api.github.com/repos/org/repo/git/refs/locks/{env}"
-unlock_address = "https://api.github.com/repos/org/repo/git/refs/locks/{env}"
-username       = "terraform"
+resource_group_name  = "mbb"
+storage_account_name = "mbbtfstate"
+container_name       = "tfstate"
+key                  = "github.terraform.tfstate"
 ```
+
+See [AZURE_BACKEND_SETUP.md](../../AZURE_BACKEND_SETUP.md) for detailed setup instructions.
 
 ### Initial Setup
 
-Before first initialization:
+Before first initialization, ensure Azure resources exist:
 
 ```bash
-# Create release tags for state storage
-git tag state-dev state-staging state-production
-git push origin state-dev state-staging state-production
+# Create resource group, storage account, and blob container
+# See AZURE_BACKEND_SETUP.md for detailed instructions
 ```
 
 ### State Operations
@@ -271,9 +261,9 @@ git push origin state-dev state-staging state-production
 **Always use scripts** from project root:
 
 ```bash
-./scripts/init.sh [dev|staging|production]    # Initialize with backend
-./scripts/plan.sh [dev|staging|production]    # Preview changes
-./scripts/apply.sh [dev|staging|production]   # Apply changes
+./scripts/init.sh [dev|production]    # Initialize with backend
+./scripts/plan.sh [dev|production]    # Preview changes
+./scripts/apply.sh [dev|production]   # Apply changes
 ./scripts/validate.sh                         # Validate syntax
 ```
 
@@ -298,13 +288,13 @@ Each environment directory must contain:
 
 ```bash
 # Initialize for specific environment
-./scripts/init.sh staging
+./scripts/init.sh production
 
 # Plan for that environment
-./scripts/plan.sh staging
+./scripts/plan.sh production
 
 # Apply to that environment
-./scripts/apply.sh staging
+./scripts/apply.sh production
 ```
 
 ## Module Development
@@ -328,7 +318,7 @@ When creating a new module:
 
    ```hcl
    terraform {
-     required_version = ">= 1.5.7"
+     required_version = ">= 1.14.5"
      required_providers {
        github = {
          source  = "integrations/github"
@@ -373,9 +363,9 @@ module "github_repositories" {
 3. Mark **sensitive outputs** appropriately:
 
    ```hcl
-   output "copilot_seats" {
-     description = "Copilot seat assignments"
-     value       = module.github_copilot.seat_assignments
+   output "sensitive_data" {
+     description = "Sensitive output"
+     value       = module.some_module.sensitive_value
      sensitive   = true
    }
    ```
@@ -401,8 +391,8 @@ security = {
 
 ### State File Security
 
-- State files stored in **private GitHub Releases**
-- Access controlled via **GitHub repository permissions**
+- State files stored in **Azure Blob Storage** (private, access-controlled)
+- Access controlled via **Azure RBAC**
 - **Never expose** state files publicly
 - Use **state locking** to prevent concurrent modifications
 
@@ -439,7 +429,7 @@ terraform validate
 2. **Review plan output** carefully
 3. **Apply incrementally** for large changes
 4. **Verify resources** in GitHub UI
-5. **Promote to staging/production** after validation
+5. **Promote to production** after validation
 
 ## Error Handling
 
@@ -460,8 +450,8 @@ terraform force-unlock <LOCK_ID>
 # Ensure token is set
 echo $GITHUB_TOKEN
 
-# Refresh token for HTTP backend
-export TF_HTTP_PASSWORD="$GITHUB_TOKEN"
+# For Azure backend authentication
+export ARM_ACCESS_KEY="your-storage-account-access-key"
 ./scripts/init.sh dev
 ```
 
@@ -525,7 +515,7 @@ Recommended CI/CD pipeline:
 
 1. **On PR**: Run `terraform fmt -check`, `validate`, and `plan`
 2. **On merge to main**: Auto-apply to dev environment
-3. **Manual approval**: Promote to staging/production
+3. **Manual approval**: Promote to production
 
 ### GitHub Actions Security
 
@@ -562,7 +552,7 @@ jobs:
       # ✅ Verified action from hashicorp/
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.5.7
+          terraform_version: 1.14.5
 
       - name: Terraform Init
         run: ./scripts/init.sh dev
@@ -588,7 +578,6 @@ The root module provides these outputs:
 - `repository_source` - Source of repo config ("yaml" or "tfvars")
 - `repository_count` - Total number of managed repositories
 - `repositories` - Map of repository details (name, URL, SSH URL)
-- `copilot_seats` - Copilot seat assignments (sensitive)
 
 ### Querying Outputs
 
@@ -759,7 +748,7 @@ terraform plan
 - [Terraform Documentation](https://www.terraform.io/docs)
 - [GitHub Provider Documentation](https://registry.terraform.io/providers/integrations/github/latest/docs)
 - [Terraform Best Practices](https://www.terraform.io/docs/cloud/guides/recommended-practices/index.html)
-- [HTTP Backend Documentation](https://www.terraform.io/docs/language/settings/backends/http.html)
+- [Azure Backend Documentation](https://www.terraform.io/docs/language/settings/backends/azurerm.html)
 - [Project README](../README.md)
-- [HTTP Backend Setup Guide](../HTTP_BACKEND_SETUP.md)
+- [Azure Backend Setup Guide](../AZURE_BACKEND_SETUP.md)
 - [Data Directory Documentation](../data/README.md)

@@ -156,21 +156,3 @@ variable "secret_scanning_push_protection_enabled_for_new_repositories" {
   type        = bool
   default     = false
 }
-
-variable "organization_secrets" {
-  description = "Organization-level secrets"
-  type = map(object({
-    visibility = string
-    value      = string
-  }))
-  default = {}
-}
-
-variable "organization_variables" {
-  description = "Organization-level variables"
-  type = map(object({
-    visibility = string
-    value      = string
-  }))
-  default = {}
-}

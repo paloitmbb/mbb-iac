@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.5.7"
+  required_version = ">= 1.14.5"
 
   required_providers {
     github = {
@@ -16,7 +16,7 @@ terraform {
 }
 
 provider "github" {
-  owner = var.organization_name
+  owner = var.organization.name
   # Authentication via GITHUB_TOKEN environment variable
   # or GitHub App installation
 }

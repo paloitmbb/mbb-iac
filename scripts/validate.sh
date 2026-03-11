@@ -16,7 +16,7 @@ echo "Checking Terraform formatting..."
 terraform fmt -check -recursive
 
 # Validate each environment
-for ENV in dev staging production; do
+for ENV in dev production; do
     echo "Validating $ENV environment..."
     cd "$PROJECT_ROOT/environments/$ENV"
     terraform init -backend=false > /dev/null 2>&1
