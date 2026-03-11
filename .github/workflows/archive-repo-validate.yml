@@ -339,6 +339,7 @@ jobs:
       # -----------------------------------------------------------------------
       # Step 1: Install yq and update YAML
       # -----------------------------------------------------------------------
+      
       - name: Install yq
         shell: bash
         run: |
@@ -355,28 +356,27 @@ jobs:
             exit 1
           fi
 
-          # Download the checksums file
-          echo "📋 Downloading checksums..."
-          wget -qO /tmp/yq_checksums \
-            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/checksums"
+          # Download the dedicated SHA256 file for this specific binary
+          # yq provides individual .tar.gz_SHA-256 files per binary
+          echo "📋 Downloading SHA256 file..."
+          wget -qO /tmp/yq_sha256 \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}.tar.gz_SHA-256"
           if [[ $? -ne 0 ]]; then
-            echo "::error::Failed to download checksums file"
+            echo "::error::Failed to download SHA256 file"
             exit 1
           fi
 
-          # Extract SHA256 — try both column orders to handle any format
-          echo "🔍 Extracting SHA256 for ${YQ_BINARY}..."
-          MATCHING_LINE=$(grep "${YQ_BINARY}" /tmp/yq_checksums | grep -v "\.tar\.gz" | head -1)
-          echo "📄 Matching line: '${MATCHING_LINE}'"
+          # Show what we got
+          echo "📄 SHA256 file content:"
+          cat /tmp/yq_sha256
 
-          # Extract the field that looks like a SHA256 (64 hex characters)
-          EXPECTED_SHA=$(echo "${MATCHING_LINE}" | grep -oP '[a-f0-9]{64}')
+          # Extract just the hash (first 64 hex chars)
+          EXPECTED_SHA=$(grep -oP '[a-f0-9]{64}' /tmp/yq_sha256 | head -1)
           echo "🔑 Extracted SHA: '${EXPECTED_SHA}'"
           echo "🔑 SHA length: ${#EXPECTED_SHA}"
 
           if [[ -z "$EXPECTED_SHA" ]]; then
-            echo "::error::Failed to extract SHA256 — dumping full checksums file:"
-            cat /tmp/yq_checksums
+            echo "::error::Failed to extract SHA256 hash"
             exit 1
           fi
 
@@ -395,38 +395,6 @@ jobs:
 
           # Verify
           yq --version
-
-      - name: Update YAML configuration
-        id: update-yaml
-        shell: bash
-        run: |
-          REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
-
-          echo "📝 Setting archived: true for repository '${REPO_NAME}' in data/repositories.yaml"
-
-          # Find the repository index
-          REPO_INDEX=$(yq eval '.repositories | to_entries | .[] | select(.value.name == "'"${REPO_NAME}"'") | .key' data/repositories.yaml)
-
-          if [[ -z "$REPO_INDEX" ]]; then
-            echo "::error::Repository '${REPO_NAME}' not found in data/repositories.yaml"
-            exit 1
-          fi
-
-          echo "Found repository at index: ${REPO_INDEX}"
-
-          # Set archived: true
-          yq eval -i ".repositories[${REPO_INDEX}].archived = true" data/repositories.yaml
-
-          # Verify the change
-          ARCHIVED_VALUE=$(yq eval ".repositories[${REPO_INDEX}].archived" data/repositories.yaml)
-          echo "Verified: archived = ${ARCHIVED_VALUE}"
-
-          if [[ "$ARCHIVED_VALUE" != "true" ]]; then
-            echo "::error::Failed to set archived: true"
-            exit 1
-          fi
-
-          echo "repo-index=${REPO_INDEX}" >> $GITHUB_OUTPUT
 
       # -----------------------------------------------------------------------
       # Step 2: Create branch and PR
