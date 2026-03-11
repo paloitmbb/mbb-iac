@@ -450,17 +450,19 @@ jobs:
           # Stage and commit the YAML change
           git add "$YAML_FILE"
           
-          # Build commit message
-          COMMIT_MSG="feat: 🗃️ archive repository '${REPO_NAME}'
+          # Build commit message (using heredoc to avoid indentation issues)
+          COMMIT_MSG=$(cat <<EOF
+          feat: 🗃️ archive repository '${REPO_NAME}'
 
           Set archived: true for ${ORG_NAME}/${REPO_NAME} in data/repositories.yaml
 
           - Repository: ${ORG_NAME}/${REPO_NAME}
           - Requested by: @${{ github.event.issue.user.login }}
-          - Business Justification: ${JUSTIFICATION}
           - Issue: #${ISSUE_NUMBER}
 
-          Related to #${ISSUE_NUMBER}"
+          Related to #${ISSUE_NUMBER}
+          EOF
+          )
 
           git commit -m "$COMMIT_MSG" || {
             echo "⚠️ Nothing to commit (repository may already be archived)"
@@ -473,7 +475,72 @@ jobs:
           }
           echo "✅ Branch pushed to origin"
 
-          echo "branch=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+          # --- CREATE PULL REQUEST ---
+          echo "🔄 Creating pull request..."
+
+          # Build PR body (using heredoc for proper formatting)
+          PR_BODY=$(cat <<EOF
+          ## 🗃️ Archive Repository: \`${REPO_NAME}\`
+
+          ### Summary
+          | Field | Value |
+          |-------|-------|
+          | **Repository** | \`${ORG_NAME}/${REPO_NAME}\` |
+          | **Requested by** | @${{ github.event.issue.user.login }} |
+          | **Justification** | ${JUSTIFICATION:-Not provided} |
+
+          ### Changes
+          - Sets \`archived: true\` for \`${REPO_NAME}\` in \`data/repositories.yaml\`
+
+          ### CI Checks
+          - **Terraform CI** will run \`terraform plan\` automatically on this PR
+          - Review the plan output in the PR comment before approving
+
+          ### ⚠️ What happens after merge
+          1. The **Terraform Apply** workflow triggers automatically (push to \`main\` on \`data/*.yaml\`)
+          2. Terraform runs \`init\` → \`plan\` → \`apply\` against the \`dev\` environment
+          3. The repository \`${ORG_NAME}/${REPO_NAME}\` becomes **read-only** on GitHub
+
+          ### Review Checklist
+          - [ ] Review the Terraform plan output (posted as PR comment by CI)
+          - [ ] Verify the correct repository is being archived
+          - [ ] Confirm business justification is valid
+          - [ ] Ensure no active development depends on this repository
+
+          ---
+          > 🤖 *Automated by Archive Repo workflow*
+
+          Closes #${ISSUE_NUMBER}
+          EOF
+          )
+
+          # Create PR using gh CLI
+          PR_URL=$(gh pr create \
+            --base main \
+            --head "${BRANCH_NAME}" \
+            --title "feat: 🗃️ archive repository \`${REPO_NAME}\`" \
+            --body "${PR_BODY}" \
+            --label "archive" \
+            --label "infrastructure") || {
+            echo "::error::Failed to create PR"
+            exit 1
+          }
+
+          # Extract PR number from URL (portable - works on all systems)
+          PR_NUMBER=$(echo "$PR_URL" | sed 's|.*/pull/||' | tr -d '[:space:]')
+          
+          # Fallback: use gh CLI if extraction failed
+          if [[ -z "$PR_NUMBER" || ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            PR_NUMBER=$(gh pr view "${BRANCH_NAME}" --json number --jq '.number')
+          fi
+
+          echo "pr-url=${PR_URL}" >> $GITHUB_OUTPUT
+          echo "pr-number=${PR_NUMBER}" >> $GITHUB_OUTPUT
+          echo "branch-name=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+
+          echo "✅ PR created successfully"
+          echo "  URL: ${PR_URL}"
+          echo "  Number: ${PR_NUMBER}"
 
       # -----------------------------------------------------------------------
       # Step 3: Comment on issue with PR link
@@ -483,21 +550,23 @@ jobs:
         uses: actions/github-script@v7
         env:
           PR_URL: ${{ steps.create-pr.outputs.pr-url }}
-          PR_BRANCH: ${{ steps.create-pr.outputs.branch-name }}
+          PR_NUMBER: ${{ steps.create-pr.outputs.pr-number }}
+          BRANCH_NAME: ${{ steps.create-pr.outputs.branch-name }}
           REPO_NAME: ${{ needs.validate-request.outputs.repo-name }}
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
             try {
-              const prUrl    = process.env.PR_URL;
-              const branch   = process.env.PR_BRANCH;
-              const repoName = process.env.REPO_NAME;
-              const org      = context.repo.owner;
+              const prUrl      = process.env.PR_URL;
+              const prNumber   = process.env.PR_NUMBER;
+              const branch     = process.env.BRANCH_NAME;
+              const repoName   = process.env.REPO_NAME;
+              const org        = context.repo.owner;
               const issueNumber = context.issue.number;
 
-              if (!prUrl || !branch || !repoName) {
-                console.error('Missing PR information:', { prUrl, branch, repoName });
-                core.setFailed('Missing PR information for notification');
+              if (!prUrl || !prNumber || !branch || !repoName) {
+                console.error('Missing PR information:', { prUrl, prNumber, branch, repoName });
+                core.setFailed(`Missing PR information for notification. Got: prUrl=${prUrl}, prNumber=${prNumber}, branch=${branch}, repoName=${repoName}`);
                 return;
               }
 
@@ -508,17 +577,20 @@ jobs:
                 '',
                 '| Field | Value |',
                 '|-------|-------|',
-                `| **Pull Request** | ${prUrl} |`,
+                `| **Pull Request** | [#${prNumber}](${prUrl}) |`,
                 `| **Branch** | \`${branch}\` |`,
                 `| **Repository** | \`${org}/${repoName}\` |`,
-                `| **CI Status** | Terraform CI will run \`plan\` automatically on this PR |`,
+                `| **CI Status** | ✅ Terraform CI will run automatically on this PR |`,
                 '',
                 '### 📝 Next Steps',
                 '',
-                '- **Terraform CI** will run `terraform plan` and post results as a PR comment',
-                '- A reviewer must **review the plan**, then **approve and merge** the PR',
-                '- Once merged, the **Terraform Apply** workflow runs automatically against `dev`',
-                `- This issue will be **closed automatically** when the PR merges (\`Closes #${issueNumber}\`)`,
+                '1. **Terraform CI** will run `terraform plan` and post results as a PR comment',
+                '2. A reviewer must **review the plan**, then **approve and merge** the PR',
+                '3. Once merged, the **Terraform Apply** workflow runs automatically against `dev`',
+                `4. This issue will be **closed automatically** when the PR merges`,
+                '',
+                '---',
+                `*Archive request from issue #${issueNumber}*`,
               ].join('\n');
 
               await github.rest.issues.createComment({
@@ -534,6 +606,8 @@ jobs:
                 issue_number: issueNumber,
                 labels: ['archive-pr-created'],
               });
+
+              console.log(`✅ Posted PR notification for issue #${issueNumber}: ${prUrl}`);
             } catch (error) {
               console.error('Error posting PR notification:', error);
               core.setFailed(`Failed to notify issue with PR link: ${error.message}`);
