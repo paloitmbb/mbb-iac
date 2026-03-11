@@ -128,7 +128,7 @@ jobs:
 
           # --- Check if repository exists in YAML config ---
           if [[ -n "$REPO_NAME" && -f "data/repositories.yaml" ]]; then
-            YAML_MATCH=$(grep -cP "^\s+name:\s+['\"]?${REPO_NAME}['\"]?\s*$" data/repositories.yaml || true)
+            YAML_MATCH=$(grep -cP "^\s+-?\s*name:\s+['\"]?${REPO_NAME}['\"]?\s*$" data/repositories.yaml || true)
             if [[ "$YAML_MATCH" -gt 0 ]]; then
               VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ✅ Found |\n"
             else
