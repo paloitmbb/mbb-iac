@@ -410,6 +410,10 @@ jobs:
     needs: validate-request
     timeout-minutes: 20
     if: needs.validate-request.outputs.validation-passed == 'true'
+    outputs:
+      pr-number: ${{ steps.create-pr.outputs.pr-number }}
+      pr-url: ${{ steps.create-pr.outputs.pr-url }}
+      branch-name: ${{ steps.create-pr.outputs.branch-name }}
 
     steps:
       - name: Checkout repository
@@ -545,33 +549,23 @@ jobs:
             'enable_dependabot_security_updates'
           )
 
-          # Store original security values so we can restore them on unarchive
-          $originalSecurityValues = @{}
-          for ($i = $repoLineIndex; $i -lt $repoEndIndex; $i++) {
-            foreach ($field in $securityFields) {
-              if ($lines[$i] -match ('^\s+' + $field + ':\s+(\S+)')) {
-                $originalSecurityValues[$field] = $Matches[1]
-              }
-            }
-          }
-
           if ($operation -eq 'archive') {
-            # ARCHIVE: First set all security fields to false, then add archived: true
-            # Order matters for Terraform: disable all security before archiving
-            for ($i = 0; $i -lt $lines.Count; $i++) {
-              $newLines.Add($lines[$i])
+            # ARCHIVE: Set all security fields to false, then add archived: true
+            # Two-pass approach to avoid index misalignment from inserted lines
 
-              # Within the repo section, disable all security fields
-              if ($i -ge $repoLineIndex -and $i -lt $repoEndIndex) {
-                foreach ($field in $securityFields) {
-                  if ($lines[$i] -match ('^\s+' + $field + ':')) {
-                    $newLines[$newLines.Count - 1] = "      ${field}: false"
-                    Write-Host "✅ Set ${field} to false at line $($i + 1)"
-                  }
+            # Pass 1: Replace security field values in-place within the repo section
+            for ($i = $repoLineIndex; $i -lt $repoEndIndex; $i++) {
+              foreach ($field in $securityFields) {
+                if ($lines[$i] -match ('^\s+' + $field + ':')) {
+                  $lines[$i] = "      ${field}: false"
+                  Write-Host "✅ Set ${field} to false at line $($i + 1)"
                 }
               }
+            }
 
-              # Insert archived: true after the name line if not already present
+            # Pass 2: Build output with archived: true inserted after name line
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+              $newLines.Add($lines[$i])
               if ($i -eq $repoLineIndex -and $archivedLineIndex -eq -1) {
                 $newLines.Add('    archived: true')
                 Write-Host "✅ Inserted 'archived: true' after line $($i + 1)"
@@ -582,14 +576,25 @@ jobs:
             }
 
           } else {
-            # UNARCHIVE: Remove archived: true only, leave security fields as-is (false)
+            # UNARCHIVE: Re-enable all security fields, then remove archived: true
             if ($archivedLineIndex -eq -1) {
               Write-Host "⚠️ No 'archived' line found — nothing to remove"
               exit 0
             }
 
+            # Pass 1: Re-enable security fields in-place within the repo section
+            for ($i = $repoLineIndex; $i -lt $repoEndIndex; $i++) {
+              foreach ($field in $securityFields) {
+                if ($lines[$i] -match ('^\s+' + $field + ':')) {
+                  $lines[$i] = "      ${field}: true"
+                  Write-Host "✅ Set ${field} to true at line $($i + 1)"
+                }
+              }
+            }
+
+            # Pass 2: Build output with archived: true line removed
             for ($i = 0; $i -lt $lines.Count; $i++) {
-              # Skip the archived: true line (unarchive first)
+              # Skip the archived: true line
               if ($i -eq $archivedLineIndex) {
                 Write-Host "✅ Removing 'archived: true' at line $($i + 1): '$($lines[$i])'"
                 # Also skip immediately following blank line if present
@@ -933,4 +938,130 @@ jobs:
             } catch (error) {
               console.error('Error posting PR notification:', error);
               core.setFailed(`Failed to notify issue with PR link: ${error.message}`);
+            }
+
+  # ============================================================================
+  # Job 3: Run Terraform Plan and Post to PR
+  # ============================================================================
+  terraform-plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    needs: [validate-request, create-archive-pr]
+    timeout-minutes: 30
+    if: needs.create-archive-pr.outputs.pr-number != ''
+
+    environment:
+      name: dev
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ref: ${{ needs.create-archive-pr.outputs.branch-name }}
+
+      - name: Azure Login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ vars.TERRAFORM_VERSION || '1.14.5' }}
+
+      - name: Terraform Init
+        run: terraform init -backend-config=environments/dev/backend.tfvars
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          terraform plan \
+            -var-file=environments/dev/terraform.tfvars \
+            -no-color \
+            -out=tfplan 2>&1 | tee plan_output.txt
+          echo "exitcode=$?" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true
+        continue-on-error: true
+
+      - name: Post plan output to PR
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          PLAN_OUTPUT: ${{ steps.plan.outcome }}
+          PR_NUMBER: ${{ needs.create-archive-pr.outputs.pr-number }}
+          REPO_NAME: ${{ needs.validate-request.outputs.repo-name }}
+          OPERATION_TYPE: ${{ needs.validate-request.outputs.operation-type }}
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
+            const repoName = process.env.REPO_NAME;
+            const operationType = process.env.OPERATION_TYPE;
+            const planOutcome = process.env.PLAN_OUTPUT;
+
+            const operationEmoji = operationType === 'Archive Repository' ? '🗃️' : '📂';
+            const operationName = operationType === 'Archive Repository' ? 'Archive' : 'Unarchive';
+
+            let planText = '';
+            try {
+              planText = fs.readFileSync('plan_output.txt', 'utf8');
+            } catch (e) {
+              planText = 'Plan output not available.';
+            }
+
+            // Truncate if too long (GitHub comment limit is 65536 chars)
+            const maxLen = 60000;
+            if (planText.length > maxLen) {
+              planText = planText.substring(0, maxLen) + '\n\n... (truncated)';
+            }
+
+            const statusEmoji = planOutcome === 'success' ? '✅' : '❌';
+            const statusText = planOutcome === 'success' ? 'Plan Succeeded' : 'Plan Failed';
+
+            const body = [
+              `## ${statusEmoji} Terraform Plan — ${operationEmoji} ${operationName} \`${repoName}\``,
+              '',
+              `**Status:** ${statusText}`,
+              `**Environment:** dev`,
+              '',
+              '<details>',
+              `<summary>Show Plan Output</summary>`,
+              '',
+              '```hcl',
+              planText,
+              '```',
+              '',
+              '</details>',
+              '',
+              '---',
+              '> 🤖 *Posted by Archive Repo workflow*',
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body,
+            });
+
+            console.log(`✅ Posted Terraform plan to PR #${prNumber}`);
+
+            if (planOutcome !== 'success') {
+              core.setFailed('Terraform plan failed — see plan output above.');
+            }
             }
