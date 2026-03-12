@@ -119,7 +119,6 @@ repositories:
       enable_dependabot_security_updates: true
 
   - name: mbb-new-test2
-    archived: true
     description: "Mbb New Test2 using Python"
     visibility: private
     features:
