@@ -1,4 +1,4 @@
-name: Archive Repository
+name: ♻️ Archive Repository
 description: Request to archive an existing GitHub repository
 title: "[REPO ARCHIVE]"
 labels: ["archive"]
