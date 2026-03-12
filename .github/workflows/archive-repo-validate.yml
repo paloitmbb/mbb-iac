@@ -576,12 +576,23 @@ jobs:
             }
 
           } else {
-            # UNARCHIVE: Remove archived: true only, leave security fields as-is (false)
+            # UNARCHIVE: Re-enable all security fields, then remove archived: true
             if ($archivedLineIndex -eq -1) {
               Write-Host "⚠️ No 'archived' line found — nothing to remove"
               exit 0
             }
 
+            # Pass 1: Re-enable security fields in-place within the repo section
+            for ($i = $repoLineIndex; $i -lt $repoEndIndex; $i++) {
+              foreach ($field in $securityFields) {
+                if ($lines[$i] -match ('^\s+' + $field + ':')) {
+                  $lines[$i] = "      ${field}: true"
+                  Write-Host "✅ Set ${field} to true at line $($i + 1)"
+                }
+              }
+            }
+
+            # Pass 2: Build output with archived: true line removed
             for ($i = 0; $i -lt $lines.Count; $i++) {
               # Skip the archived: true line
               if ($i -eq $archivedLineIndex) {
