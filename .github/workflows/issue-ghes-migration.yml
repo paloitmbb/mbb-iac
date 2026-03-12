@@ -81,6 +81,20 @@ jobs:
           gh issue edit ${{ github.event.client_payload.issue_number }} --add-label "in-progress"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Comment on unexpected failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --body "### ❌ Migration Workflow Failed
+
+          An unexpected error occurred during validation. Please check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.
+
+          ---
+          *Automated by GitHub Actions workflow*"
 
   # ─────────────────────────────────────────────
   # Job 2: Pre-migration — record state & lock

@@ -31,7 +31,8 @@ jobs:
            
             const routes = [
               { prefix: '[GHES Migration]', eventType: 'ghes-migration' },
-              { prefix: '[REPO ARCHIVE]',   eventType: 'repo-archive'    }
+              { prefix: '[REPO ARCHIVE]',   eventType: 'repo-archive'    },
+              { prefix: '[COPILOT LICENSE]', eventType: 'copilot-license' }
             ];
 
             let matched = false;

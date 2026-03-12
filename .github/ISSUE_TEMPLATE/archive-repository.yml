@@ -1,4 +1,4 @@
-name: Archive Repository
+name: ♻️ Archive Repository
 description: Request to archive an existing GitHub repository
 title: "[REPO ARCHIVE]"
 labels: ["archive"]
@@ -21,13 +21,13 @@ body:
       required: true
 
   - type: dropdown
-    id: repo-visibility
+    id: operation-type
     attributes:
-      label: Current Repository Visibility
+      label: Operation Type
+      description: Select whether you want to archive or unarchive this repository
       options:
-        - private
-        - public
-        - internal
+        - Archive Repository
+        - Unarchive Repository
     validations:
       required: true
 
@@ -53,7 +53,7 @@ body:
         - "No"
         - "Yes"
     validations:
-      required: true
+      required: false
   
   - type: input
     id: replacement-repo-name
@@ -68,39 +68,16 @@ body:
       required: false
 
   - type: checkboxes
-    id: pre-archive-tasks
+    id: repo-action-checklist
     attributes:
-      label: Pre-Archive Checklist
-      description: All items must be checked before submitting
+      label: Repository Action Checklist
+      description: Please confirm all relevant items are completed before submitting (applies to both archiving and unarchiving)
       options:
-        - label: All open PRs have been merged or closed
-          required: true
-        - label: All open issues have been resolved, transferred, or closed
-          required: true
-        - label: README has been updated with archive notice
-          required: true
         - label: Stakeholders and contributors have been notified
           required: true
-        - label: Any active CI/CD pipelines have been disabled
-          required: true
-        - label: Repository secrets have been reviewed
-          required: true
-        - label: Dependent services/projects have been updated
-          required: true
+        - label: Any active CI/CD pipelines have been reviewed and updated/disabled as needed
+          required: false
         - label: Final release/tag has been created (if applicable)
           required: false  # optional — not always needed
 
-  - type: markdown
-    attributes:
-      value: |
-        ---
-        ### What happens next?
-        1. ✅ This request will be reviewed by the infrastructure team
-        2. 🔍 Pre-archive checklist items will be verified
-        3. 🧱 The repository will be archived via Terraform (`archived = true`)
-        4. 📝 The `data/repositories.yaml` will be updated
-        5. 🗃️ The repository will become **read-only** on GitHub
 
-        ### Terraform Changes Required
-        - The `archived` field for the repository in `data/repositories.yaml` will be set to `true`
-        - A pull request will be raised for review before merging

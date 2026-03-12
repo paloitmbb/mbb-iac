@@ -8,13 +8,7 @@ body:
       value: |
         ## MBB GHES → GHEC Repository Migration
         Use this form to request migration of a repository from **GitHub Enterprise Server (GHES)** to **GitHub Enterprise Cloud (GHEC)**.
-
-        # > **Prerequisites:**
-        # > - Source GHES instance must be accessible and have Migrations enabled in Management Console
-        # > - Target organization must exist on GitHub.com (GHEC)
-        # > - `GH_SOURCE_PAT` must have read access to the GHES source repository
-        # > - `GH_TARGET_PAT` must have write access to the GHEC target organization
-
+        
   - type: markdown
     attributes:
       value: |
@@ -26,11 +20,11 @@ body:
       label: "Source Organization"
       description: "The organization name on the GHES instance that owns the repository"
       options:
-        - MSS-DB 
+        - MSS-DB
         - MSS-ENGINEERING
         - MSS-DEVOPS
         - MSS-CFS-DB
-        - ETIQA 
+        - ETIQA
         - ETIQA-CHANNELS
 
     validations:
@@ -69,11 +63,6 @@ body:
       placeholder: "Target repository name <org><region>-<dept>-<type>[tiering-optional]-<name>"
     validations:
       required: true
-      pattern:
-        value: '^[a-z0-9]+(-[a-z0-9]+)+$'
-        message: >-
-          Repository name must follow the naming convention (e.g., mbbmy-dbdo-app-mae-mobile).
-          Use lowercase alphanumeric segments separated by hyphens.
 
   - type: dropdown
     id: application_tier
@@ -94,12 +83,12 @@ body:
       label: "Team Access Mappings"
       description: |
         Optional: Map source teams to target teams for repository access. One mapping per line.
-        Format: `<source-team-slug> → <target-team-slug> : <permission>`
+        Format: `<target-team-slug>:<permission>`
         Permissions: pull, push, admin, maintain, triage
       placeholder: |
-        mss-devsecops-team : admin
-        platform-team : push
-        qa-team : triage
+        mss-devsecops-team:admin
+        platform-team:push
+        qa-team:triage
 
   - type: textarea
     id: justification
