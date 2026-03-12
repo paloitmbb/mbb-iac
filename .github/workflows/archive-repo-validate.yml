@@ -535,6 +535,18 @@ jobs:
           # Initialize the list to hold modified lines
           $newLines = [System.Collections.Generic.List[string]]::new()
 
+           # Modify fields only within the current repo section
+           if ($i -ge $repoLineIndex -and $i -lt $repoEndIndex) {
+           # Also disable vulnerability_alerts when archiving (required before disabling dependabot)
+           if ($lines[$i] -match '^\s+enable_vulnerability_alerts:') {
+           $newLines[$newLines.Count - 1] = '      enable_vulnerability_alerts: false'
+                Write-Host "✅ Set enable_vulnerability_alerts to false at line $($i + 1)"
+             }
+               # Also set dependabot_security_updates to false for archived repos
+                if ($lines[$i] -match '^\s+enable_dependabot_security_updates:') {
+                  $newLines[$newLines.Count - 1] = '      enable_dependabot_security_updates: false'
+                  Write-Host "✅ Set enable_dependabot_security_updates to false at line $($i + 1)"
+                }
 
             if ($operation -eq 'archive') {
             # ARCHIVE: Add archived: true after name line if not already present
@@ -544,18 +556,7 @@ jobs:
                 $newLines.Add('    archived: true')
                 Write-Host "✅ Inserted 'archived: true' after line $($i + 1)"
               }
-              # Modify fields only within the current repo section
-              if ($i -ge $repoLineIndex -and $i -lt $repoEndIndex) {
-                # Also disable vulnerability_alerts when archiving (required before disabling dependabot)
-                if ($lines[$i] -match '^\s+enable_vulnerability_alerts:') {
-                  $newLines[$newLines.Count - 1] = '      enable_vulnerability_alerts: false'
-                  Write-Host "✅ Set enable_vulnerability_alerts to false at line $($i + 1)"
-                }
-                # Also set dependabot_security_updates to false for archived repos
-                if ($lines[$i] -match '^\s+enable_dependabot_security_updates:') {
-                  $newLines[$newLines.Count - 1] = '      enable_dependabot_security_updates: false'
-                  Write-Host "✅ Set enable_dependabot_security_updates to false at line $($i + 1)"
-                }
+
               }
             }
             if ($archivedLineIndex -ne -1) {
