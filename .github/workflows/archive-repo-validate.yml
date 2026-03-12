@@ -533,6 +533,11 @@ jobs:
                 $newLines.Add('    archived: true')
                 Write-Host "✅ Inserted 'archived: true' after line $($i + 1)"
               }
+              # Also disable vulnerability_alerts when archiving (required before disabling dependabot)
+              if ($i -gt $repoLineIndex -and $lines[$i] -match '^\s+enable_vulnerability_alerts:') {
+                $newLines[$newLines.Count - 1] = '      enable_vulnerability_alerts: false'
+                Write-Host "✅ Set enable_vulnerability_alerts to false"
+              }
               # Also set dependabot_security_updates to false for archived repos
               if ($i -gt $repoLineIndex -and $lines[$i] -match '^\s+enable_dependabot_security_updates:') {
                 # Replace the last added line with false
@@ -563,6 +568,11 @@ jobs:
                 continue
               }
               $newLines.Add($lines[$i])
+              # Re-enable vulnerability_alerts when unarchiving (required before enabling dependabot)
+              if ($i -gt $repoLineIndex -and $lines[$i] -match '^\s+enable_vulnerability_alerts:') {
+                $newLines[$newLines.Count - 1] = '      enable_vulnerability_alerts: true'
+                Write-Host "✅ Set enable_vulnerability_alerts back to true"
+              }
               # Set dependabot_security_updates back to true when unarchiving
               if ($i -gt $repoLineIndex -and $lines[$i] -match '^\s+enable_dependabot_security_updates:') {
                 $newLines[$newLines.Count - 1] = '      enable_dependabot_security_updates: true'
