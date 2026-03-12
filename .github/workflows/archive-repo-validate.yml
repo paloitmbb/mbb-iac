@@ -533,6 +533,12 @@ jobs:
                 $newLines.Add('    archived: true')
                 Write-Host "✅ Inserted 'archived: true' after line $($i + 1)"
               }
+              # Also set dependabot_security_updates to false for archived repos
+              if ($i -gt $repoLineIndex -and $lines[$i] -match '^\s+enable_dependabot_security_updates:') {
+                # Replace the last added line with false
+                $newLines[$newLines.Count - 1] = '      enable_dependabot_security_updates: false'
+                Write-Host "✅ Set enable_dependabot_security_updates to false"
+              }
             }
             if ($archivedLineIndex -ne -1) {
               Write-Host "✅ Repository already has 'archived' field — no insertion needed"
@@ -557,6 +563,11 @@ jobs:
                 continue
               }
               $newLines.Add($lines[$i])
+              # Set dependabot_security_updates back to true when unarchiving
+              if ($i -gt $repoLineIndex -and $lines[$i] -match '^\s+enable_dependabot_security_updates:') {
+                $newLines[$newLines.Count - 1] = '      enable_dependabot_security_updates: true'
+                Write-Host "✅ Set enable_dependabot_security_updates back to true"
+              }
             }
           }
 
