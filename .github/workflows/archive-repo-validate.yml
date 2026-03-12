@@ -531,9 +531,12 @@ jobs:
             }
           }
           Write-Host "   Repo section spans lines $($repoLineIndex + 1) to $($repoEndIndex)"
+           
+          # Initialize the list to hold modified lines
+          $newLines = [System.Collections.Generic.List[string]]::new()
 
 
-                    if ($operation -eq 'archive') {
+            if ($operation -eq 'archive') {
             # ARCHIVE: Add archived: true after name line if not already present
             for ($i = 0; $i -lt $lines.Count; $i++) {
               $newLines.Add($lines[$i])
