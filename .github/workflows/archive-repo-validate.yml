@@ -25,6 +25,7 @@ jobs:
       validation-passed: ${{ steps.validate.outputs.validation-passed }}
       repo-name: ${{ steps.parse.outputs.repo-name }}
       justification: ${{ steps.parse.outputs.justification }}
+      operation-type: ${{ steps.parse.outputs.operation }}
 
     steps:
       - name: Checkout repository
@@ -55,19 +56,23 @@ jobs:
 
           REPO_NAME=$(extract_field "Repository Name")
           JUSTIFICATION=$(extract_field "Business Justification")
+          OPERATION=$(extract_field "Operation Type")
 
           # Treat "_No response_" as empty
           [[ "$REPO_NAME"     == "_No response_" ]] && REPO_NAME=""
           [[ "$JUSTIFICATION" == "_No response_" ]] && JUSTIFICATION=""
+          [[ "$OPERATION"     == "_No response_" ]] && OPERATION=""
 
           echo "repo-name=${REPO_NAME}" >> "$GITHUB_OUTPUT"
 
           echo "justification<<PARSEEOF" >> "$GITHUB_OUTPUT"
           echo "${JUSTIFICATION}" >> "$GITHUB_OUTPUT"
           echo "PARSEEOF" >> "$GITHUB_OUTPUT"
+          echo "operation=${OPERATION}" >> "$GITHUB_OUTPUT"
 
           echo "Parsed repo-name:     ${REPO_NAME}"
           echo "Parsed justification: ${JUSTIFICATION}"
+          echo "Parsed operation:     ${OPERATION}"
 
       # -----------------------------------------------------------------------
       # Step 2: Validate repository and YAML config
@@ -82,11 +87,14 @@ jobs:
           set -e  # Exit on any error
 
           REPO_NAME="${{ steps.parse.outputs.repo-name }}"
+          JUSTIFICATION="${{ steps.parse.outputs.justification }}"
+          OPERATION="${{ steps.parse.outputs.operation }}"
           VALIDATION_PASSED="false"
           VALIDATION_ERRORS=""
           VALIDATION_SUMMARY=""
 
           echo "🔍 Starting validation for repository: ${REPO_NAME:-'(empty)'}"
+          echo "📋 Operation: ${OPERATION:-'(empty)'}"
 
           # --- Check required fields ---
           if [[ -z "$REPO_NAME" ]]; then
@@ -105,31 +113,70 @@ jobs:
             if [[ $API_EXIT_CODE -eq 0 && -n "$API_RESPONSE" ]]; then
               # Repo exists — check if archived
               IS_ARCHIVED=$(echo "$API_RESPONSE" | jq -r '.archived // "false"')
-              if [[ "$IS_ARCHIVED" == "true" ]]; then
-                VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${REPO_NAME}\` is already archived"
-                VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Exists | \`${ORG_NAME}/${REPO_NAME}\` | ❌ Already archived |\n"
-                echo "❌ Repository is already archived"
-              else
-                VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Exists | \`${ORG_NAME}/${REPO_NAME}\` | ✅ Found (Active) |\n"
-                echo "✅ Repository found and active"
-
-                # --- Check if repository exists in YAML config ---
-                if [[ -f "data/repositories.yaml" ]]; then
-                  echo "📋 Checking YAML configuration..."
-                  if grep -qP "^\s+-?\s*name:\s+['\"]?${REPO_NAME}['\"]?\s*$" data/repositories.yaml; then
-                    VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ✅ Found |\n"
-                    VALIDATION_PASSED="true"
-                    echo "✅ Repository found in YAML config"
-                  else
-                    VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${REPO_NAME}\` not found in \`data/repositories.yaml\`"
-                    VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ❌ Not found |\n"
-                    echo "❌ Repository not found in YAML config"
-                  fi
+              VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Operation | ${OPERATION} | ✅ Specified |\n"
+              VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Exists | \`${ORG_NAME}/${REPO_NAME}\` | ✅ Found |\n"
+              
+              # Validate based on operation type
+              if [[ "$OPERATION" == "Archive Repository" ]]; then
+                echo "🔍 Validating ARCHIVE operation..."
+                if [[ "$IS_ARCHIVED" == "true" ]]; then
+                  VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${REPO_NAME}\` is already archived"
+                  VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Status | \`${ORG_NAME}/${REPO_NAME}\` | ❌ Already archived (cannot archive) |\n"
+                  echo "❌ Repository is already archived"
                 else
-                  VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ⚠️ File \`data/repositories.yaml\` not found"
-                  VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ⚠️ File missing |\n"
-                  echo "⚠️ YAML config file not found"
+                  VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Status | \`${ORG_NAME}/${REPO_NAME}\` | ✅ Active (ready to archive) |\n"
+                  echo "✅ Repository found and active (ready to archive)"
+                  
+                  # --- Check if repository exists in YAML config ---
+                  if [[ -f "data/repositories.yaml" ]]; then
+                    echo "📋 Checking YAML configuration..."
+                    if grep -qP "^\s+-?\s*name:\s+['\"]?${REPO_NAME}['\"]?\s*$" data/repositories.yaml; then
+                      VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ✅ Found |\n"
+                      VALIDATION_PASSED="true"
+                      echo "✅ Repository found in YAML config"
+                    else
+                      VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${REPO_NAME}\` not found in \`data/repositories.yaml\`"
+                      VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ❌ Not found |\n"
+                      echo "❌ Repository not found in YAML config"
+                    fi
+                  else
+                    VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ⚠️ File \`data/repositories.yaml\` not found"
+                    VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ⚠️ File missing |\n"
+                    echo "⚠️ YAML config file not found"
+                  fi
                 fi
+              elif [[ "$OPERATION" == "Unarchive Repository" ]]; then
+                echo "🔍 Validating UNARCHIVE operation..."
+                if [[ "$IS_ARCHIVED" == "false" ]]; then
+                  VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${REPO_NAME}\` is not archived (cannot unarchive)"
+                  VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Status | \`${ORG_NAME}/${REPO_NAME}\` | ❌ Not archived (cannot unarchive) |\n"
+                  echo "❌ Repository is not archived"
+                else
+                  VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Status | \`${ORG_NAME}/${REPO_NAME}\` | ✅ Archived (ready to unarchive) |\n"
+                  echo "✅ Repository found and archived (ready to unarchive)"
+                  
+                  # --- Check if repository exists in YAML config ---
+                  if [[ -f "data/repositories.yaml" ]]; then
+                    echo "📋 Checking YAML configuration..."
+                    if grep -qP "^\s+-?\s*name:\s+['\"]?${REPO_NAME}['\"]?\s*$" data/repositories.yaml; then
+                      VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ✅ Found |\n"
+                      VALIDATION_PASSED="true"
+                      echo "✅ Repository found in YAML config"
+                    else
+                      VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${REPO_NAME}\` not found in \`data/repositories.yaml\`"
+                      VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ❌ Not found |\n"
+                      echo "❌ Repository not found in YAML config"
+                    fi
+                  else
+                    VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ⚠️ File \`data/repositories.yaml\` not found"
+                    VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ⚠️ File missing |\n"
+                    echo "⚠️ YAML config file not found"
+                  fi
+                fi
+              else
+                VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Invalid operation type: \`${OPERATION}\` (must be 'Archive Repository' or 'Unarchive Repository')"
+                VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Operation | ${OPERATION} | ❌ Invalid |\n"
+                echo "❌ Invalid operation type"
               fi
             else
               # Repository not found or API error
@@ -172,6 +219,7 @@ jobs:
         run: |
           REPO_NAME="${{ steps.parse.outputs.repo-name }}"
           ORG_NAME="${{ github.repository_owner }}"
+          OPERATION="${{ steps.parse.outputs.operation }}"
           JUSTIFICATION="${JUSTIFICATION}"
           VALIDATION_PASSED="${{ steps.validate.outputs.validation-passed }}"
           VALIDATION_TABLE="${VALIDATION_TABLE}"
@@ -181,31 +229,50 @@ jobs:
           SUMMARY_TABLE=$(jq -nc \
             --arg repo "$REPO_NAME" \
             --arg org "$ORG_NAME" \
+            --arg operation "$OPERATION" \
             --arg justification "${JUSTIFICATION:-_Not provided_}" \
             '[
               {field: "Repository Name", value: ("`" + $repo + "`")},
               {field: "Organization", value: ("`" + $org + "`")},
+              {field: "Operation", value: $operation},
               {field: "Business Justification", value: $justification}
             ]')
 
           # --- Build details-sections JSON ---
-          ARCHIVE_WARNING="⚠️ **Archiving a repository will:**\n- Make the repository **read-only**\n- Disable push access, issues, pull requests, labels, milestones, projects, wiki, releases, commits, tags, branches, reactions, and comments\n- The repository will still be **visible** and **cloneable**\n- This action **can be reversed** by unarchiving the repository"
+          if [[ "$OPERATION" == "Archive Repository" ]]; then
+            IMPACT_WARNING="⚠️ **Archiving a repository will:**\n- Make the repository **read-only**\n- Disable push access, issues, pull requests, labels, milestones, projects, wiki, releases, commits, tags, branches, reactions, and comments\n- The repository will still be **visible** and **cloneable**\n- This action **can be reversed** by unarchiving the repository"
+            IMPACT_HEADING="⚠️ Archive Impact"
+          else
+            IMPACT_WARNING="📂 **Unarchiving a repository will:**\n- Make the repository **read-write** again\n- Enable push access, issues, pull requests, and all other features\n- The repository will be **fully functional** again"
+            IMPACT_HEADING="📂 Unarchive Impact"
+          fi
 
           DETAILS_JSON=$(jq -nc \
             --arg validation "$VALIDATION_TABLE" \
-            --arg warning "$ARCHIVE_WARNING" \
+            --arg warning "$IMPACT_WARNING" \
+            --arg heading "$IMPACT_HEADING" \
             '[
               {heading: "🔍 Validation Results", body: $validation},
-              {heading: "⚠️ Archive Impact", body: $warning}
+              {heading: $heading, body: $warning}
             ]')
 
           # --- Build next-steps ---
           if [[ "$VALIDATION_PASSED" == "true" ]]; then
-            NEXT_STEPS="- A PR will be created to update \`data/repositories.yaml\` with \`archived: true\`
+            if [[ "$OPERATION" == "Archive Repository" ]]; then
+              NEXT_STEPS="- A PR will be created to update \`data/repositories.yaml\` with \`archived: true\`
           - **Terraform CI** will automatically run \`terraform plan\` on the PR and post results as a comment
           - A reviewer must **review the plan**, then **approve and merge** the PR
           - Once merged, the **Terraform Apply** workflow runs automatically against the \`dev\` environment
+          - The repository will become **read-only** on GitHub
           - This issue will be **closed automatically** when the PR merges"
+            else
+              NEXT_STEPS="- A PR will be created to remove \`archived: true\` from \`data/repositories.yaml\`
+          - **Terraform CI** will automatically run \`terraform plan\` on the PR and post results as a comment
+          - A reviewer must **review the plan**, then **approve and merge** the PR
+          - Once merged, the **Terraform Apply** workflow runs automatically against the \`dev\` environment
+          - The repository will become **read-write** on GitHub
+          - This issue will be **closed automatically** when the PR merges"
+            fi
           else
             NEXT_STEPS=""
           fi
@@ -250,6 +317,7 @@ jobs:
         uses: actions/github-script@v7
         env:
           VALIDATION_PASSED: ${{ steps.validate.outputs.validation-passed }}
+          OPERATION_TYPE: ${{ steps.parse.outputs.operation }}
           SUMMARY_TABLE: ${{ steps.build-details.outputs.summary-table }}
           DETAILS_JSON: ${{ steps.build-details.outputs.details-json }}
           NEXT_STEPS: ${{ steps.build-details.outputs.next-steps }}
@@ -259,14 +327,18 @@ jobs:
           script: |
             try {
               const passed = process.env.VALIDATION_PASSED === 'true';
+              const operationType = process.env.OPERATION_TYPE || 'Archive Repository';
               const summaryRows = JSON.parse(process.env.SUMMARY_TABLE || '[]');
               const detailSections = JSON.parse(process.env.DETAILS_JSON || '[]');
               const nextSteps = process.env.NEXT_STEPS || '';
               const errorDetails = process.env.ERROR_DETAILS || '';
 
+              const operationEmoji = operationType === 'Archive Repository' ? '🗃️' : '📂';
+              const operationName = operationType === 'Archive Repository' ? 'Archive' : 'Unarchive';
+
               const title = passed
-                ? '## ✅ Archive Request — Validation Passed'
-                : '## ❌ Archive Request — Validation Failed';
+                ? `## ✅ ${operationName} Request — Validation Passed`
+                : `## ❌ ${operationName} Request — Validation Failed`;
 
               let body = `${title}\n\n`;
 
@@ -354,6 +426,7 @@ jobs:
         shell: bash
         env:
           JUSTIFICATION: ${{ needs.validate-request.outputs.justification }}
+          OPERATION: ${{ needs.validate-request.outputs.operation-type }}
           GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
         run: |
           set -e  # Exit on any error
@@ -361,9 +434,21 @@ jobs:
           REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
           ORG_NAME="${{ github.repository_owner }}"
           ISSUE_NUMBER="${{ github.event.client_payload.issue_number }}"
-          BRANCH_NAME="archive/${REPO_NAME}-${ISSUE_NUMBER}"
+          OPERATION_TYPE="${OPERATION}"
+          
+          # Determine branch and action names based on operation
+          if [[ "$OPERATION_TYPE" == "Archive Repository" ]]; then
+            BRANCH_NAME="archive/${REPO_NAME}-${ISSUE_NUMBER}"
+            ACTION_VERB="archive"
+            ACTION_EMOJI="🗃️"
+          else
+            BRANCH_NAME="unarchive/${REPO_NAME}-${ISSUE_NUMBER}"
+            ACTION_VERB="unarchive"
+            ACTION_EMOJI="📂"
+          fi
 
-          echo "📌 Archive Request Details:"
+          echo "📌 Repository Request Details:"
+          echo "  Operation: ${OPERATION_TYPE}"
           echo "  Repository: ${ORG_NAME}/${REPO_NAME}"
           echo "  Branch: ${BRANCH_NAME}"
           echo "  Issue: #${ISSUE_NUMBER}"
@@ -393,12 +478,14 @@ jobs:
           fi
           echo "✅ Found: $YAML_FILE"
 
-          # Use PowerShell to safely insert archived: true after the name line
+          # Use PowerShell to safely update archived flag based on operation
           pwsh -Command "
             \$yamlFile = '${YAML_FILE}'
             \$repoName = '${REPO_NAME}'
+            \$operation = '${ACTION_VERB}'
 
             Write-Host '📝 Updating ' + \$yamlFile + ' for repository: ' + \$repoName
+            Write-Host '   Operation: ' + \$operation
 
             # Read all lines
             \$lines = Get-Content \$yamlFile
@@ -419,28 +506,44 @@ jobs:
 
             Write-Host '✅ Found repository at line: ' + (\$repoLineIndex + 1)
 
-            # Check if already archived
-            \$alreadyArchived = \$false
-            for (\$i = \$repoLineIndex + 1; \$i -lt [Math]::Min(\$repoLineIndex + 10, \$lines.Count); \$i++) {
+            # Find the archived line for this repo (within next 20 lines)
+            \$archivedLineIndex = -1
+            for (\$i = \$repoLineIndex + 1; \$i -lt [Math]::Min(\$repoLineIndex + 20, \$lines.Count); \$i++) {
               if (\$lines[\$i] -match '^\s+-\s*name:') { break }
-              if (\$lines[\$i] -match 'archived:\s*true') {
-                \$alreadyArchived = \$true
+              if (\$lines[\$i] -match '^\s+archived:') {
+                \$archivedLineIndex = \$i
                 break
               }
             }
 
-            if (\$alreadyArchived) {
-              Write-Host '⚠️ Already archived — no changes needed'
-              exit 0
-            }
-
-            # Build new lines with archived: true inserted after name line
+            # Build new lines based on operation
             \$newLines = [System.Collections.Generic.List[string]]::new()
-            for (\$i = 0; \$i -lt \$lines.Count; \$i++) {
-              \$newLines.Add(\$lines[\$i])
-              if (\$i -eq \$repoLineIndex) {
-                \$newLines.Add('    archived: true')
-                Write-Host '✅ Inserted archived: true after line ' + (\$i + 1)
+            
+            if (\$operation -eq 'archive') {
+              # ARCHIVE: Add archived: true if not present
+              for (\$i = 0; \$i -lt \$lines.Count; \$i++) {
+                \$newLines.Add(\$lines[\$i])
+                if (\$i -eq \$repoLineIndex) {
+                  if (\$archivedLineIndex -eq -1) {
+                    \$newLines.Add('    archived: true')
+                    Write-Host '✅ Inserted archived: true after line ' + (\$i + 1)
+                  } else {
+                    Write-Host '✅ Repository already has archived field'
+                  }
+                }
+              }
+            } else {
+              # UNARCHIVE: Remove archived: true line
+              for (\$i = 0; \$i -lt \$lines.Count; \$i++) {
+                if (\$i -eq \$archivedLineIndex) {
+                  Write-Host '✅ Removing archived: true line at ' + (\$i + 1)
+                  continue
+                }
+                \$newLines.Add(\$lines[\$i])
+              }
+              
+              if (\$archivedLineIndex -eq -1) {
+                Write-Host '⚠️ Repository does not have archived field to remove'
               }
             }
 
@@ -457,10 +560,18 @@ jobs:
 
             # Verify change exists
             \$tempContent = Get-Content \$tempFile -Raw
-            if (\$tempContent -notmatch ('name:\s+' + [regex]::Escape(\$repoName) + '[\s\S]{0,100}archived:\s*true')) {
-              Write-Error 'Verification failed — archived: true not found'
-              Remove-Item \$tempFile -Force
-              exit 1
+            if (\$operation -eq 'archive') {
+              if (\$tempContent -notmatch ('name:\s+' + [regex]::Escape(\$repoName) + '[\s\S]{0,100}archived:\s*true')) {
+                Write-Error 'Verification failed — archived: true not found'
+                Remove-Item \$tempFile -Force
+                exit 1
+              }
+            } else {
+              # For unarchive, verify archived: true is removed
+              \$repoSection = \$tempContent -match ('name:\s+' + [regex]::Escape(\$repoName) + '[\s\S]{0,200}') | ForEach-Object { \$_ }
+              if (\$repoSection -match 'archived:\s*true') {
+                Write-Host '⚠️ Warning: archived: true still present after unarchive operation'
+              }
             }
 
             # Replace original
@@ -472,7 +583,7 @@ jobs:
             \$finalLines = Get-Content \$yamlFile
             for (\$i = 0; \$i -lt \$finalLines.Count; \$i++) {
               if (\$finalLines[\$i] -match ('name:\s+' + [regex]::Escape(\$repoName))) {
-                \$end = [Math]::Min(\$i + 6, \$finalLines.Count - 1)
+                \$end = [Math]::Min(\$i + 8, \$finalLines.Count - 1)
                 \$finalLines[\$i..\$end] | ForEach-Object { Write-Host \$_ }
                 break
               }
@@ -496,18 +607,37 @@ jobs:
           git add "$YAML_FILE"
           
           # Build commit message (using heredoc to avoid indentation issues)
-          COMMIT_MSG=$(cat <<EOF
+          if [[ "$ACTION_VERB" == "archive" ]]; then
+            COMMIT_MSG=$(cat <<EOF
           feat: 🗃️ archive repository '${REPO_NAME}'
 
           Set archived: true for ${ORG_NAME}/${REPO_NAME} in data/repositories.yaml
 
           - Repository: ${ORG_NAME}/${REPO_NAME}
+          - Operation: Archive
           - Requested by: @${{ github.event.client_payload.issue_user_login }}
           - Issue: #${ISSUE_NUMBER}
 
           Related to #${ISSUE_NUMBER}
           EOF
-          )
+            )
+            PR_TITLE="feat: 🗃️ archive repository \`${REPO_NAME}\`"
+          else
+            COMMIT_MSG=$(cat <<EOF
+          feat: 📂 unarchive repository '${REPO_NAME}'
+
+          Remove archived: true for ${ORG_NAME}/${REPO_NAME} in data/repositories.yaml
+
+          - Repository: ${ORG_NAME}/${REPO_NAME}
+          - Operation: Unarchive
+          - Requested by: @${{ github.event.client_payload.issue_user_login }}
+          - Issue: #${ISSUE_NUMBER}
+
+          Related to #${ISSUE_NUMBER}
+          EOF
+            )
+            PR_TITLE="feat: 📂 unarchive repository \`${REPO_NAME}\`"
+          fi
 
           git commit -m "$COMMIT_MSG" || {
             echo "⚠️ Nothing to commit (repository may already be archived)"
@@ -524,18 +654,27 @@ jobs:
           echo "🔄 Creating pull request..."
 
           # Build PR body (using heredoc for proper formatting)
-          PR_BODY=$(cat <<EOF
+          if [[ "$ACTION_VERB" == "archive" ]]; then
+            PR_BODY=$(cat <<EOF
           ## 🗃️ Archive Repository: \`${REPO_NAME}\`
 
           ### Summary
           | Field | Value |
           |-------|-------|
           | **Repository** | \`${ORG_NAME}/${REPO_NAME}\` |
+          | **Operation** | Archive |
           | **Requested by** | @${{ github.event.client_payload.issue_user_login }} |
           | **Justification** | ${JUSTIFICATION:-Not provided} |
 
           ### Changes
           - Sets \`archived: true\` for \`${REPO_NAME}\` in \`data/repositories.yaml\`
+
+          ### ⚠️ Archive Impact
+          Archiving a repository will:
+          - Make the repository **read-only**
+          - Disable push access, issues, pull requests, labels, milestones, projects, wiki, releases, commits, tags, branches, reactions, and comments
+          - The repository will still be **visible** and **cloneable**
+          - This action **can be reversed** by unarchiving the repository
 
           ### CI Checks
           - **Terraform CI** will run \`terraform plan\` automatically on this PR
@@ -557,7 +696,50 @@ jobs:
 
           Closes #${ISSUE_NUMBER}
           EOF
-          )
+            )
+          else
+            PR_BODY=$(cat <<EOF
+          ## 📂 Unarchive Repository: \`${REPO_NAME}\`
+
+          ### Summary
+          | Field | Value |
+          |-------|-------|
+          | **Repository** | \`${ORG_NAME}/${REPO_NAME}\` |
+          | **Operation** | Unarchive |
+          | **Requested by** | @${{ github.event.client_payload.issue_user_login }} |
+          | **Justification** | ${JUSTIFICATION:-Not provided} |
+
+          ### Changes
+          - Removes \`archived: true\` for \`${REPO_NAME}\` in \`data/repositories.yaml\`
+
+          ### 📂 Unarchive Impact
+          Unarchiving a repository will:
+          - Make the repository **read-write** again
+          - Enable push access, issues, pull requests, and all other features
+          - The repository will be **fully functional** again
+
+          ### CI Checks
+          - **Terraform CI** will run \`terraform plan\` automatically on this PR
+          - Review the plan output in the PR comment before approving
+
+          ### ⚠️ What happens after merge
+          1. The **Terraform Apply** workflow triggers automatically (push to \`main\` on \`data/*.yaml\`)
+          2. Terraform runs \`init\` → \`plan\` → \`apply\` against the \`dev\` environment
+          3. The repository \`${ORG_NAME}/${REPO_NAME}\` becomes **read-write** on GitHub
+
+          ### Review Checklist
+          - [ ] Review the Terraform plan output (posted as PR comment by CI)
+          - [ ] Verify the correct repository is being unarchived
+          - [ ] Confirm business justification is valid
+          - [ ] Ensure required teams/permissions are configured
+
+          ---
+          > 🤖 *Automated by Archive Repo workflow*
+
+          Closes #${ISSUE_NUMBER}
+          EOF
+            )
+          fi
 
           # Ensure required labels exist before creating PR
           gh label create "archive" \
@@ -573,7 +755,7 @@ jobs:
           PR_URL=$(gh pr create \
             --base main \
             --head "${BRANCH_NAME}" \
-            --title "feat: 🗃️ archive repository \`${REPO_NAME}\`" \
+            --title "${PR_TITLE}" \
             --body "${PR_BODY}" \
             --label "archive" \
             --label "infrastructure") || {
@@ -609,16 +791,18 @@ jobs:
           BRANCH_NAME: ${{ steps.create-pr.outputs.branch-name }}
           ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
           REPO_NAME: ${{ needs.validate-request.outputs.repo-name }}
+          OPERATION_TYPE: ${{ needs.validate-request.outputs.operation-type }}
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
             try {
-              const prUrl      = process.env.PR_URL;
-              const prNumber   = process.env.PR_NUMBER;
-              const branch     = process.env.BRANCH_NAME;
-              const repoName   = process.env.REPO_NAME;
-              const org        = context.repo.owner;
-              const issueNumber = parseInt(process.env.ISSUE_NUMBER, 10);
+              const prUrl         = process.env.PR_URL;
+              const prNumber      = process.env.PR_NUMBER;
+              const branch        = process.env.BRANCH_NAME;
+              const repoName      = process.env.REPO_NAME;
+              const operationType = process.env.OPERATION_TYPE;
+              const org           = context.repo.owner;
+              const issueNumber   = parseInt(process.env.ISSUE_NUMBER, 10);
 
               if (!prUrl || !prNumber || !branch || !repoName) {
                 console.error('Missing PR information:', { prUrl, prNumber, branch, repoName });
@@ -626,13 +810,17 @@ jobs:
                 return;
               }
 
+              const operationEmoji = operationType === 'Archive Repository' ? '🗃️' : '📂';
+              const operationTitle = operationType === 'Archive Repository' ? 'Archive' : 'Unarchive';
+
               const body = [
-                '## 🔄 Archive PR Created — Awaiting Review & Merge',
+                `## 🔄 ${operationTitle} PR Created — Awaiting Review & Merge`,
                 '',
                 '### 📋 Summary',
                 '',
                 '| Field | Value |',
                 '|-------|-------|',
+                `| **Operation** | ${operationEmoji} ${operationTitle} |`,
                 `| **Pull Request** | [#${prNumber}](${prUrl}) |`,
                 `| **Branch** | \`${branch}\` |`,
                 `| **Repository** | \`${org}/${repoName}\` |`,
@@ -646,7 +834,7 @@ jobs:
                 `4. This issue will be **closed automatically** when the PR merges`,
                 '',
                 '---',
-                `*Archive request from issue #${issueNumber}*`,
+                `*${operationTitle} request from issue #${issueNumber}*`,
               ].join('\n');
 
               await github.rest.issues.createComment({
@@ -663,7 +851,7 @@ jobs:
                 labels: ['archive-pr-created'],
               });
 
-              console.log(`✅ Posted PR notification for issue #${issueNumber}: ${prUrl}`);
+              console.log(`✅ Posted ${operationTitle.toLowerCase()} PR notification for issue #${issueNumber}: ${prUrl}`);
             } catch (error) {
               console.error('Error posting PR notification:', error);
               core.setFailed(`Failed to notify issue with PR link: ${error.message}`);
