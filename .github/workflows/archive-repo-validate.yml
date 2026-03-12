@@ -984,11 +984,12 @@ jobs:
       - name: Terraform Plan
         id: plan
         run: |
+          set -o pipefail
           terraform plan \
             -var-file=environments/dev/terraform.tfvars \
             -no-color \
             -out=tfplan 2>&1 | tee plan_output.txt
-          echo "exitcode=$?" >> $GITHUB_OUTPUT
+          echo "exitcode=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
@@ -1063,5 +1064,4 @@ jobs:
 
             if (planOutcome !== 'success') {
               core.setFailed('Terraform plan failed — see plan output above.');
-            }
             }
