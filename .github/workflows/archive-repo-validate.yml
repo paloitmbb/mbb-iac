@@ -479,119 +479,153 @@ jobs:
           fi
           echo "✅ Found: $YAML_FILE"
 
-          # Use PowerShell to safely update archived flag based on operation
-          pwsh -Command "
-            \$yamlFile = '${YAML_FILE}'
-            \$repoName = '${REPO_NAME}'
-            \$operation = '${ACTION_VERB}'
+          # Write PowerShell script to temp file to avoid escaping issues
+          cat > /tmp/update_yaml.ps1 << 'PSEOF'
+          param(
+            [string]$yamlFile,
+            [string]$repoName,
+            [string]$operation
+          )
 
-            Write-Host '📝 Updating ' + \$yamlFile + ' for repository: ' + \$repoName
-            Write-Host '   Operation: ' + \$operation
+          Write-Host "📝 Updating $yamlFile for repository: $repoName"
+          Write-Host "   Operation: $operation"
 
-            # Read all lines
-            \$lines = Get-Content \$yamlFile
+          # Read all lines
+          $lines = Get-Content $yamlFile
 
-            # Find repo name line index
-            \$repoLineIndex = -1
-            for (\$i = 0; \$i -lt \$lines.Count; \$i++) {
-              if (\$lines[\$i] -match ('^\s+-?\s*name:\s+' + [regex]::Escape(\$repoName) + '\s*$')) {
-                \$repoLineIndex = \$i
-                break
+          # Find repo name line index
+          $repoLineIndex = -1
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match ('^[\s]*-?[\s]*name:[\s]+' + [regex]::Escape($repoName) + '[\s]*$')) {
+              $repoLineIndex = $i
+              break
+            }
+          }
+
+          if ($repoLineIndex -eq -1) {
+            Write-Error "Repository '$repoName' not found in $yamlFile"
+            exit 1
+          }
+
+          Write-Host "✅ Found repository at line: $($repoLineIndex + 1)"
+
+          # Find the archived line for this repo (within next 20 lines)
+          $archivedLineIndex = -1
+          for ($i = $repoLineIndex + 1; $i -lt [Math]::Min($repoLineIndex + 20, $lines.Count); $i++) {
+            # Stop searching if we hit next repo entry
+            if ($lines[$i] -match '^\s*-\s*name:') { break }
+            if ($lines[$i] -match '^\s+archived:') {
+              $archivedLineIndex = $i
+              break
+            }
+          }
+
+          Write-Host "   Archived line index: $archivedLineIndex"
+
+          # Build new lines based on operation
+          $newLines = [System.Collections.Generic.List[string]]::new()
+
+          if ($operation -eq 'archive') {
+            # ARCHIVE: Add archived: true after name line if not already present
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+              $newLines.Add($lines[$i])
+              if ($i -eq $repoLineIndex -and $archivedLineIndex -eq -1) {
+                $newLines.Add('    archived: true')
+                Write-Host "✅ Inserted 'archived: true' after line $($i + 1)"
               }
             }
+            if ($archivedLineIndex -ne -1) {
+              Write-Host "✅ Repository already has 'archived' field — no insertion needed"
+            }
 
-            if (\$repoLineIndex -eq -1) {
-              Write-Error 'Repository ' + \$repoName + ' not found in ' + \$yamlFile
+          } else {
+            # UNARCHIVE: Remove the archived line and any immediately following blank line
+            if ($archivedLineIndex -eq -1) {
+              Write-Host "⚠️ No 'archived' line found — nothing to remove"
+              exit 0
+            }
+
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+              # Skip the archived: true line
+              if ($i -eq $archivedLineIndex) {
+                Write-Host "✅ Removing 'archived: true' at line $($i + 1): '$($lines[$i])'"
+                # Also skip immediately following blank line if present
+                if (($i + 1) -lt $lines.Count -and $lines[$i + 1].Trim() -eq '') {
+                  Write-Host "   Also removing following blank line at $($i + 2)"
+                  $i++
+                }
+                continue
+              }
+              $newLines.Add($lines[$i])
+            }
+          }
+
+          # Write to temp file first
+          $tempFile = [System.IO.Path]::GetTempFileName()
+          $newLines | Set-Content $tempFile -Encoding UTF8
+
+          # Verify temp file not empty
+          if ((Get-Item $tempFile).Length -eq 0) {
+            Write-Error "Output file is empty — aborting"
+            Remove-Item $tempFile -Force
+            exit 1
+          }
+
+          # Verify the change
+          $tempContent = Get-Content $tempFile -Raw
+
+          if ($operation -eq 'archive') {
+            # Verify archived: true is present after the repo name
+            $pattern = 'name:\s+' + [regex]::Escape($repoName) + '[\s\S]{0,100}archived:\s*true'
+            if ($tempContent -notmatch $pattern) {
+              Write-Error "Verification failed — 'archived: true' not found after 'name: $repoName'"
+              Remove-Item $tempFile -Force
               exit 1
             }
+            Write-Host "✅ Verified: 'archived: true' is present"
 
-            Write-Host '✅ Found repository at line: ' + (\$repoLineIndex + 1)
-
-            # Find the archived line for this repo (within next 20 lines)
-            \$archivedLineIndex = -1
-            for (\$i = \$repoLineIndex + 1; \$i -lt [Math]::Min(\$repoLineIndex + 20, \$lines.Count); \$i++) {
-              if (\$lines[\$i] -match '^\s+-\s*name:') { break }
-              if (\$lines[\$i] -match '^\s+archived:') {
-                \$archivedLineIndex = \$i
-                break
+          } else {
+            # Verify archived: true is NOT present in the repo section
+            $pattern = 'name:\s+' + [regex]::Escape($repoName) + '([\s\S]{0,200})'
+            if ($tempContent -match $pattern) {
+              $section = $Matches[0]
+              # Check section does not bleed into next repo
+              $nextRepo = [regex]::Match($section, '(?s)-\s*name:\s+(?!' + [regex]::Escape($repoName) + ')')
+              if ($nextRepo.Success) {
+                $section = $section.Substring(0, $nextRepo.Index)
               }
-            }
-
-            # Build new lines based on operation
-            \$newLines = [System.Collections.Generic.List[string]]::new()
-            
-            if (\$operation -eq 'archive') {
-              # ARCHIVE: Add archived: true if not present
-              for (\$i = 0; \$i -lt \$lines.Count; \$i++) {
-                \$newLines.Add(\$lines[\$i])
-                if (\$i -eq \$repoLineIndex) {
-                  if (\$archivedLineIndex -eq -1) {
-                    \$newLines.Add('    archived: true')
-                    Write-Host '✅ Inserted archived: true after line ' + (\$i + 1)
-                  } else {
-                    Write-Host '✅ Repository already has archived field'
-                  }
-                }
-              }
-            } else {
-              # UNARCHIVE: Remove archived: true line
-              for (\$i = 0; \$i -lt \$lines.Count; \$i++) {
-                if (\$i -eq \$archivedLineIndex) {
-                  Write-Host '✅ Removing archived: true line at ' + (\$i + 1)
-                  continue
-                }
-                \$newLines.Add(\$lines[\$i])
-              }
-              
-              if (\$archivedLineIndex -eq -1) {
-                Write-Host '⚠️ Repository does not have archived field to remove'
-              }
-            }
-
-            # Write to temp file first
-            \$tempFile = [System.IO.Path]::GetTempFileName()
-            \$newLines | Set-Content \$tempFile -Encoding UTF8
-
-            # Verify temp file not empty
-            if ((Get-Item \$tempFile).Length -eq 0) {
-              Write-Error 'Output file is empty — aborting'
-              Remove-Item \$tempFile -Force
-              exit 1
-            }
-
-            # Verify change exists
-            \$tempContent = Get-Content \$tempFile -Raw
-            if (\$operation -eq 'archive') {
-              if (\$tempContent -notmatch ('name:\s+' + [regex]::Escape(\$repoName) + '[\s\S]{0,100}archived:\s*true')) {
-                Write-Error 'Verification failed — archived: true not found'
-                Remove-Item \$tempFile -Force
+              if ($section -match 'archived:\s*true') {
+                Write-Error "Verification failed — 'archived: true' still present after unarchive"
+                Remove-Item $tempFile -Force
                 exit 1
               }
-            } else {
-              # For unarchive, verify archived: true is removed
-              \$repoSection = \$tempContent -match ('name:\s+' + [regex]::Escape(\$repoName) + '[\s\S]{0,200}') | ForEach-Object { \$_ }
-              if (\$repoSection -match 'archived:\s*true') {
-                Write-Host '⚠️ Warning: archived: true still present after unarchive operation'
-              }
             }
+            Write-Host "✅ Verified: 'archived: true' is removed"
+          }
 
-            # Replace original
-            Move-Item \$tempFile \$yamlFile -Force
-            Write-Host '✅ YAML updated successfully'
+          # Replace original file
+          Move-Item $tempFile $yamlFile -Force
+          Write-Host "✅ YAML updated successfully"
 
-            # Show result
-            Write-Host '--- Updated section ---'
-            \$finalLines = Get-Content \$yamlFile
-            for (\$i = 0; \$i -lt \$finalLines.Count; \$i++) {
-              if (\$finalLines[\$i] -match ('name:\s+' + [regex]::Escape(\$repoName))) {
-                \$end = [Math]::Min(\$i + 8, \$finalLines.Count - 1)
-                \$finalLines[\$i..\$end] | ForEach-Object { Write-Host \$_ }
-                break
-              }
+          # Show updated section for confirmation
+          Write-Host "--- Updated section ---"
+          $finalLines = Get-Content $yamlFile
+          for ($i = 0; $i -lt $finalLines.Count; $i++) {
+            if ($finalLines[$i] -match ('name:\s+' + [regex]::Escape($repoName))) {
+              $end = [Math]::Min($i + 8, $finalLines.Count - 1)
+              $finalLines[$i..$end] | ForEach-Object { Write-Host $_ }
+              break
             }
-          "
+          }
+          PSEOF
 
-          # Check exit code from PowerShell
+          # Execute the PowerShell script with clean parameters
+          pwsh /tmp/update_yaml.ps1 \
+            -yamlFile "${YAML_FILE}" \
+            -repoName "${REPO_NAME}" \
+            -operation "${ACTION_VERB}"
+
+          # Check exit code
           if [[ $? -ne 0 ]]; then
             echo "::error::PowerShell YAML update failed"
             exit 1
