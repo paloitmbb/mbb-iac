@@ -129,12 +129,12 @@ repositories:
     default_branch: main
     topics: ["maybank", "mbb", "python"]
     security:
-      enable_vulnerability_alerts: true
+      enable_vulnerability_alerts: false
       enable_advanced_security: false
       enable_secret_scanning: false
       enable_secret_scanning_push_protection: false
-      enable_dependabot_alerts: true
-      enable_dependabot_security_updates: true
+      enable_dependabot_alerts: false
+      enable_dependabot_security_updates: false
 
   - name: mbb-new-test3
     archived: true
@@ -147,12 +147,12 @@ repositories:
     default_branch: main
     topics: ["maybank", "mbb", "react"]
     security:
-      enable_vulnerability_alerts: true
+      enable_vulnerability_alerts: false
       enable_advanced_security: false
       enable_secret_scanning: false
       enable_secret_scanning_push_protection: false
-      enable_dependabot_alerts: true
-      enable_dependabot_security_updates: true
+      enable_dependabot_alerts: false
+      enable_dependabot_security_updates: false
 
   - name: mbb-python-api
     description: "Mbb Python Api using Python"
