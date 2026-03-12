@@ -21,13 +21,13 @@ body:
       required: true
 
   - type: dropdown
-    id: repo-visibility
+    id: operation-type
     attributes:
-      label: Current Repository Visibility
+      label: Operation Type
+      description: Select whether you want to archive or unarchive this repository
       options:
-        - private
-        - public
-        - internal
+        - Archive Repository
+        - Unarchive Repository
     validations:
       required: true
 
@@ -53,7 +53,7 @@ body:
         - "No"
         - "Yes"
     validations:
-      required: true
+      required: false
   
   - type: input
     id: replacement-repo-name
@@ -66,17 +66,6 @@ body:
       placeholder: my-new-project
     validations:
       required: false
-
-  - type: dropdown
-    id: operation-type
-    attributes:
-      label: Operation Type
-      description: Select whether you want to archive or unarchive this repository
-      options:
-        - Archive Repository
-        - Unarchive Repository
-    validations:
-      required: true
 
   - type: checkboxes
     id: repo-action-checklist
