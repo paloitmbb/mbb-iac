@@ -102,6 +102,7 @@ repositories:
       enable_dependabot_security_updates: true
 
   - name: mbb-new-test1
+    archived: true
     description: "Mbb New Test1 using Java Springboot"
     visibility: private
     features:
@@ -121,6 +122,7 @@ repositories:
   - name: mbb-new-test2
     archived: true
     description: "Mbb New Test2 using Python"
+    visibility: private
     features:
       has_issues: true
       has_projects: true
@@ -138,6 +140,7 @@ repositories:
   - name: mbb-new-test3
     archived: true
     description: "Mbb New Test3 using React"
+    visibility: private
     features:
       has_issues: true
       has_projects: true
