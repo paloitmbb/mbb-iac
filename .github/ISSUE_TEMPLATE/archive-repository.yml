@@ -20,17 +20,6 @@ body:
     validations:
       required: true
 
-  - type: dropdown
-    id: operation-type
-    attributes:
-      label: Operation Type
-      description: Select whether you want to archive or unarchive this repository
-      options:
-        - Archive Repository
-        - Unarchive Repository
-    validations:
-      required: true
-
   - type: textarea
     id: reason
     attributes:
@@ -71,7 +60,7 @@ body:
     id: repo-action-checklist
     attributes:
       label: Repository Action Checklist
-      description: Please confirm all relevant items are completed before submitting (applies to both archiving and unarchiving)
+      description: Please confirm all relevant items are completed before submitting
       options:
         - label: Stakeholders and contributors have been notified
           required: true
