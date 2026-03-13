@@ -30,9 +30,9 @@ module "github_organization" {
   advanced_security_enabled_for_new_repositories               = var.ghas_config.default_enabled
   secret_scanning_enabled_for_new_repositories                 = var.ghas_config.organization_level.enable_secret_scanning
   secret_scanning_push_protection_enabled_for_new_repositories = var.ghas_config.organization_level.enable_push_protection
-  dependabot_alerts_enabled_for_new_repositories                    = var.ghas_config.organization_level.enable_dependabot_alerts
-  dependabot_security_updates_enabled_for_new_repositories          = var.ghas_config.organization_level.enable_dependabot_security_updates
-  dependency_graph_enabled_for_new_repositories                     = var.ghas_config.organization_level.enable_dependency_graph
+  dependabot_alerts_enabled_for_new_repositories               = var.ghas_config.organization_level.enable_dependabot_alerts
+  dependabot_security_updates_enabled_for_new_repositories     = var.ghas_config.organization_level.enable_dependabot_security_updates
+  dependency_graph_enabled_for_new_repositories                = var.ghas_config.organization_level.enable_dependency_graph
 }
 
 # Repository Management
