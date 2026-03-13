@@ -90,3 +90,124 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           ARM_USE_OIDC: true
+
+  # ============================================================================
+  # Job 2: Seed newly created repositories with tech-stack template
+  # Runs once after all terraform-apply matrix jobs succeed.
+  # Detects repos added to data/repositories.yaml in this push, maps their
+  # topics to a stack folder in paloitmbb/mbb-repo-templates/stacks/, and
+  # pushes that folder's content as the initial commit to the new repo.
+  # ============================================================================
+  seed-repository-template:
+    name: 🌱 Seed - Bootstrap Repository Template
+    runs-on: ubuntu-latest
+    needs: terraform-apply
+    if: needs.terraform-apply.result == 'success'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need previous commit to diff repositories.yaml
+
+      - name: Detect newly added repositories and resolve tech stacks
+        id: detect
+        shell: bash
+        run: |
+          pip install pyyaml --quiet
+
+          python3 - << 'PYEOF'
+          import subprocess, yaml, json, os
+
+          # Find repo names that were added in this commit
+          diff = subprocess.check_output(
+              ['git', 'diff', 'HEAD~1', 'HEAD', '--', 'data/repositories.yaml'],
+              text=True
+          )
+
+          added_names = set()
+          for line in diff.splitlines():
+              if line.startswith('+') and '- name:' in line:
+                  name = line.split('- name:')[1].strip()
+                  added_names.add(name)
+
+          if not added_names:
+              print('ℹ️  No new repositories detected in this commit')
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('has-new-repos=false\n')
+                  f.write('repos-json=[]\n')
+              exit(0)
+
+          print(f'Newly added repos: {sorted(added_names)}')
+
+          with open('data/repositories.yaml') as f:
+              data = yaml.safe_load(f)
+
+          # Supported stack folder names in mbb-repo-templates/stacks/
+          KNOWN_STACKS = ['python', 'react', 'nodejs', 'java-springboot']
+
+          result = []
+          for repo in data.get('repositories', []):
+              if repo['name'] not in added_names:
+                  continue
+              topics = repo.get('topics', [])
+              stack = next((t for t in topics if t in KNOWN_STACKS), None)
+              if stack:
+                  result.append({
+                      'name': repo['name'],
+                      'stack': stack,
+                      'default_branch': repo.get('default_branch', 'main'),
+                  })
+                  print(f"  → {repo['name']} : stack={stack}")
+              else:
+                  print(f"  ⚠️  {repo['name']}: no known stack in topics {topics} — skipping seed")
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'has-new-repos={"true" if result else "false"}\n')
+              f.write(f'repos-json={json.dumps(result)}\n')
+          PYEOF
+
+      - name: Clone template repository
+        if: steps.detect.outputs.has-new-repos == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/mbb-repo-templates
+          token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          path: mbb-repo-templates
+
+      - name: Push template stack to each new repository
+        if: steps.detect.outputs.has-new-repos == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ORG: ${{ github.repository_owner }}
+          REPOS_JSON: ${{ steps.detect.outputs.repos-json }}
+        run: |
+          echo "$REPOS_JSON" | jq -c '.[]' | while read -r repo; do
+            NAME=$(echo "$repo" | jq -r '.name')
+            STACK=$(echo "$repo" | jq -r '.stack')
+            BRANCH=$(echo "$repo" | jq -r '.default_branch')
+            STACK_PATH="mbb-repo-templates/stacks/$STACK"
+
+            if [[ ! -d "$STACK_PATH" ]]; then
+              echo "⚠️  Stack folder '$STACK_PATH' not found in mbb-repo-templates — skipping $NAME"
+              echo "  Available stacks: $(ls mbb-repo-templates/stacks/ 2>/dev/null | tr '\n' ' ')"
+              continue
+            fi
+
+            SEED_DIR="seed-$NAME"
+            cp -r "$STACK_PATH" "$SEED_DIR"
+
+            (
+              cd "$SEED_DIR"
+              git init
+              git config user.name  "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              git add -A
+              git commit -m "feat: 🌱 bootstrap repository from ${STACK} template"
+              git branch -M "$BRANCH"
+              git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${ORG}/${NAME}.git"
+              git push -u origin "$BRANCH"
+            ) && echo "✅ Seeded $NAME with $STACK template" \
+              || echo "❌ Failed to seed $NAME — check logs above"
+          done
