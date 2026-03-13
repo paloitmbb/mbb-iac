@@ -85,6 +85,7 @@ repositories:
       enable_dependabot_security_updates: true
 
   - name: mbb-test-0
+    archived: true
     description: "Mbb Test 0 using React"
     visibility: private
     features:
@@ -94,12 +95,12 @@ repositories:
     default_branch: main
     topics: ["maybank", "mbb", "react"]
     security:
-      enable_vulnerability_alerts: true
+      enable_vulnerability_alerts: false
       enable_advanced_security: false
       enable_secret_scanning: false
       enable_secret_scanning_push_protection: false
-      enable_dependabot_alerts: true
-      enable_dependabot_security_updates: true
+      enable_dependabot_alerts: false
+      enable_dependabot_security_updates: false
 
   - name: mbb-new-test1
     archived: true
