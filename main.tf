@@ -30,9 +30,9 @@ module "github_organization" {
   advanced_security_enabled_for_new_repositories               = var.ghas_config.default_enabled
   secret_scanning_enabled_for_new_repositories                 = var.ghas_config.organization_level.enable_secret_scanning
   secret_scanning_push_protection_enabled_for_new_repositories = var.ghas_config.organization_level.enable_push_protection
-  dependabot_alerts_enabled_for_new_repositories                    = var.ghas_config.organization_level.enable_dependabot_alerts
-  dependabot_security_updates_enabled_for_new_repositories          = var.ghas_config.organization_level.enable_dependabot_security_updates
-  dependency_graph_enabled_for_new_repositories                     = var.ghas_config.organization_level.enable_dependency_graph
+  dependabot_alerts_enabled_for_new_repositories               = var.ghas_config.organization_level.enable_dependabot_alerts
+  dependabot_security_updates_enabled_for_new_repositories     = var.ghas_config.organization_level.enable_dependabot_security_updates
+  dependency_graph_enabled_for_new_repositories                = var.ghas_config.organization_level.enable_dependency_graph
 }
 
 # Repository Management
@@ -49,6 +49,7 @@ module "github_repositories" {
   default_branch          = each.value.default_branch
   topics                  = each.value.topics
   archived                = try(each.value.archived, false)
+  vulnerability_alerts    = try(each.value.security.enable_vulnerability_alerts, true)
   branch_protection_rules = each.value.branch_protection
 
   # GHAS settings managed within the repository resource
@@ -60,9 +61,11 @@ module "github_repositories" {
 }
 
 # Security Configuration (Dependabot security updates)
+# Archived repos are excluded so that Terraform destroys their module instances
+# (reverse depends_on order) BEFORE archiving the repository resource.
 module "github_security" {
   source   = "./modules/github-security"
-  for_each = { for repo in local.all_repositories : repo.name => repo if try(repo.security, null) != null }
+  for_each = { for repo in local.all_repositories : repo.name => repo if try(repo.security, null) != null && !try(repo.archived, false) }
 
   repository_name                    = each.value.name
   enable_dependabot_security_updates = try(each.value.security.enable_dependabot_security_updates, true)
