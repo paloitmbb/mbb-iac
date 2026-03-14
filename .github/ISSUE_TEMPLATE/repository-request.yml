@@ -44,7 +44,7 @@ body:
       description: Primary technology stack for this repository
       options:
         - React
-        - Java Springboot
+        - Java-Springboot
         - NodeJS
         - Python
         - Others (specify below)
