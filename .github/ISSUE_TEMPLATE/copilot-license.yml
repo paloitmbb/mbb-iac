@@ -26,7 +26,7 @@ body:
     attributes:
       label: GitHub Username
       description: The GitHub username of the user
-      placeholder: octocat
+      placeholder: "e.g., john-doe_mbbgrp or jane.smith_mbbgrp"
     validations:
       required: true
 
