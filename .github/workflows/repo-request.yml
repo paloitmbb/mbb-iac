@@ -1,13 +1,13 @@
 name: Automated Repository Creation Workflow
 
-# on:
-#   issues:
-#     types: [opened]
+on:
+  repository_dispatch:
+    types: [repo-request]
 
-# permissions:
-#   issues: write
-#   contents: write
-#   pull-requests: write
+permissions:
+  issues: write
+  contents: write
+  pull-requests: write
 
 jobs:
   # ============================================================================
@@ -16,7 +16,7 @@ jobs:
   validate-request:
     name: Validate Repository Request
     runs-on: ubuntu-latest
-    if: startsWith(github.event.issue.title, '[REPO REQUEST]')
+    if: startsWith(github.event.client_payload.issue_title, '[REPO REQUEST]')
     outputs:
       repo-name: ${{ steps.parse.outputs.repo-name }}
       tech-stack: ${{ steps.parse.outputs.tech-stack }}
@@ -37,7 +37,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const issueBody = context.payload.issue.body;
+            const issueBody = context.payload.client_payload.issue_body;
 
             // Helper function to extract field value
             function extractField(body, fieldLabel) {
@@ -342,7 +342,7 @@ jobs:
             }
 
             await github.rest.issues.createComment({
-              issue_number: context.issue.number,
+              issue_number: context.payload.client_payload.issue_number,
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: commentBody
@@ -351,14 +351,14 @@ jobs:
             // Add label based on validation
             if (passed) {
               await github.rest.issues.addLabels({
-                issue_number: context.issue.number,
+                issue_number: context.payload.client_payload.issue_number,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 labels: ['validation-passed']
               });
             } else {
               await github.rest.issues.addLabels({
-                issue_number: context.issue.number,
+                issue_number: context.payload.client_payload.issue_number,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 labels: ['validation-failed']
@@ -366,7 +366,7 @@ jobs:
 
               // Close issue if validation failed
               await github.rest.issues.update({
-                issue_number: context.issue.number,
+                issue_number: context.payload.client_payload.issue_number,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 state: 'closed'
@@ -509,7 +509,7 @@ jobs:
           # Build commit message with team access info
           COMMIT_MSG="feat: ✨ add repository ${REPO_NAME} with team access
 
-          Repository request from issue #${{ github.event.issue.number }}
+          Repository request from issue #${{ github.event.client_payload.issue_number }}
 
           - Repository: ${REPO_NAME}
           - Tech Stack: ${{ needs.validate-request.outputs.tech-stack }}
@@ -523,7 +523,7 @@ jobs:
 
           COMMIT_MSG="${COMMIT_MSG}
 
-          Related to #${{ github.event.issue.number }}"
+          Related to #${{ github.event.client_payload.issue_number }}"
 
           git commit -m "$COMMIT_MSG"
           git push origin "${BRANCH_NAME}"
@@ -539,7 +539,7 @@ jobs:
             const techStack = '${{ needs.validate-request.outputs.tech-stack }}';
             const defaultBranch = '${{ needs.validate-request.outputs.default-branch }}';
             const branchName = '${{ steps.create-branch.outputs.branch }}';
-            const issueNumber = context.issue.number;
+            const issueNumber = context.payload.client_payload.issue_number;
 
             const teams = '${{ needs.validate-request.outputs.teams-display }}';
             const teamsList = teams && teams !== 'None' ? teams : 'None';
@@ -554,7 +554,7 @@ jobs:
             | **Tech Stack** | ${techStack} |
             | **Default Branch** | \`${defaultBranch}\` |
             | **Teams with Access** | ${teamsList} |
-            | **Requested By** | @${context.payload.issue.user.login} |
+            | **Requested By** | @${context.payload.client_payload.issue_user_login} |
 
             ### Team Access
 
@@ -644,7 +644,7 @@ jobs:
             summary += `3. 🚀 Run Terraform apply to create repository and grant team access\n\n`;
 
             summary += '---\n\n';
-            summary += `*PR created for issue #${context.issue.number}*\n`;
+            summary += `*PR created for issue #${context.payload.client_payload.issue_number}*\n`;
 
             await core.summary
               .addRaw(summary)
@@ -690,7 +690,7 @@ jobs:
             *Automated by GitHub Actions workflow*`;
 
             await github.rest.issues.createComment({
-              issue_number: context.issue.number,
+              issue_number: context.payload.client_payload.issue_number,
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: commentBody
@@ -698,7 +698,7 @@ jobs:
 
             // Link issue to PR (will be closed when PR is merged)
             await github.rest.issues.addLabels({
-              issue_number: context.issue.number,
+              issue_number: context.payload.client_payload.issue_number,
               owner: context.repo.owner,
               repo: context.repo.repo,
               labels: ['pr-created']
@@ -717,7 +717,7 @@ jobs:
             summary += '|-------|-------|\n';
             summary += `| **Repository Name** | \`${repoName}\` |\n`;
             summary += `| **Workflow Run** | [View Logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) |\n`;
-            summary += `| **Issue** | #${context.issue.number} |\n\n`;
+            summary += `| **Issue** | #${context.payload.client_payload.issue_number} |\n\n`;
 
             summary += '## 🔧 Troubleshooting Steps\n\n';
             summary += '1. 📋 Check the workflow logs for detailed error messages\n';
@@ -752,7 +752,7 @@ jobs:
             *Automated by GitHub Actions workflow*`;
 
             await github.rest.issues.createComment({
-              issue_number: context.issue.number,
+              issue_number: context.payload.client_payload.issue_number,
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: commentBody
@@ -760,7 +760,7 @@ jobs:
 
             // Add failure label
             await github.rest.issues.addLabels({
-              issue_number: context.issue.number,
+              issue_number: context.payload.client_payload.issue_number,
               owner: context.repo.owner,
               repo: context.repo.repo,
               labels: ['creation-failed']

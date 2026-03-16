@@ -9,7 +9,7 @@ on:
     types: [opened]
 
 permissions:
-  contents: write   # required for createDispatchEvent (repository_dispatch)
+  contents: read
   issues: read
 
 jobs:
@@ -28,11 +28,13 @@ jobs:
             const issueBody = context.payload.issue.body || '';
 
             // ── Routing table ──
-           
+
             const routes = [
-              { prefix: '[GHES Migration]', eventType: 'ghes-migration' },
-              { prefix: '[REPO ARCHIVE]',   eventType: 'repo-archive'    },
-              { prefix: '[COPILOT LICENSE]', eventType: 'copilot-license' }
+              { prefix: '[GHES Migration]',  eventType: 'ghes-migration'  },
+              { prefix: '[REPO ARCHIVE]',    eventType: 'repo-archive'    },
+              { prefix: '[COPILOT LICENSE]', eventType: 'copilot-license' },
+              { prefix: '[REPO REQUEST]',    eventType: 'repo-request'    },
+              { prefix: '[TEAM REQUEST]',    eventType: 'team-management' }
             ];
 
             let matched = false;

@@ -53,12 +53,15 @@ jobs:
       - name: Validate request
         id: validate
         uses: actions/github-script@v7
+        env:
+          PARSED_ACTION: ${{ steps.parse.outputs.action }}
+          PARSED_USERNAME: ${{ steps.parse.outputs.github-username }}
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
             const org = context.repo.owner;
-            const action = '${{ steps.parse.outputs.action }}';
-            const username = '${{ steps.parse.outputs.github-username }}';
+            const action = process.env.PARSED_ACTION || '';
+            const username = process.env.PARSED_USERNAME || '';
             const errors = [];
             const validations = [];
 
@@ -101,16 +104,23 @@ jobs:
       - name: Post validation summary to issue
         if: always()
         uses: actions/github-script@v7
+        env:
+          VALIDATION_PASSED: ${{ steps.validate.outputs.validation-passed }}
+          VALIDATION_ERRORS: ${{ steps.validate.outputs.errors }}
+          VALIDATION_RESULTS: ${{ steps.validate.outputs.validations }}
+          PARSED_ACTION: ${{ steps.parse.outputs.action }}
+          PARSED_USERNAME: ${{ steps.parse.outputs.github-username }}
+          PARSED_JUSTIFICATION: ${{ steps.parse.outputs.justification }}
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
-            const passed = '${{ steps.validate.outputs.validation-passed }}' === 'true';
-            const errors = JSON.parse('${{ steps.validate.outputs.errors }}' || '[]');
-            const validations = JSON.parse('${{ steps.validate.outputs.validations }}' || '[]');
+            const passed = process.env.VALIDATION_PASSED === 'true';
+            const errors = JSON.parse(process.env.VALIDATION_ERRORS || '[]');
+            const validations = JSON.parse(process.env.VALIDATION_RESULTS || '[]');
 
-            const action = '${{ steps.parse.outputs.action }}';
-            const username = '${{ steps.parse.outputs.github-username }}';
-            const justification = '${{ steps.parse.outputs.justification }}';
+            const action = process.env.PARSED_ACTION || '';
+            const username = process.env.PARSED_USERNAME || '';
+            const justification = process.env.PARSED_JUSTIFICATION || '';
             const issueNumber = context.payload.client_payload.issue_number;
             const requestedBy = context.payload.client_payload.issue_user_login;
 
@@ -192,12 +202,15 @@ jobs:
       - name: Execute Copilot license change
         id: execute
         uses: actions/github-script@v7
+        env:
+          PARSED_ACTION: ${{ needs.validate-request.outputs.action }}
+          PARSED_USERNAME: ${{ needs.validate-request.outputs.github-username }}
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
             const org = context.repo.owner;
-            const action = '${{ needs.validate-request.outputs.action }}';
-            const username = '${{ needs.validate-request.outputs.github-username }}';
+            const action = process.env.PARSED_ACTION || '';
+            const username = process.env.PARSED_USERNAME || '';
             let result = {};
 
             if (action === 'assign') {
@@ -234,12 +247,16 @@ jobs:
       - name: Post execution summary to issue
         if: always()
         uses: actions/github-script@v7
+        env:
+          EXECUTE_OUTCOME: ${{ steps.execute.outcome }}
+          EXECUTE_ACTION: ${{ steps.execute.outputs.action }}
+          EXECUTE_DETAILS: ${{ steps.execute.outputs.details }}
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
-            const success = '${{ steps.execute.outcome }}' === 'success';
-            const action = '${{ steps.execute.outputs.action }}' || 'Unknown action';
-            const details = '${{ steps.execute.outputs.details }}' || 'No details available';
+            const success = process.env.EXECUTE_OUTCOME === 'success';
+            const action = process.env.EXECUTE_ACTION || 'Unknown action';
+            const details = process.env.EXECUTE_DETAILS || 'No details available';
             const issueNumber = context.payload.client_payload.issue_number;
 
             let comment = success

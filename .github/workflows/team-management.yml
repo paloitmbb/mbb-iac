@@ -1,8 +1,8 @@
 name: "Issue Triggered Team Management Workflow"
 
 on:
-  issues:
-    types: [opened]
+  repository_dispatch:
+    types: [team-management]
 
 permissions:
   issues: write
@@ -14,7 +14,7 @@ jobs:
   validate-request:
     name: Validate Team Request
     runs-on: ubuntu-latest
-    if: contains(github.event.issue.labels.*.name, 'team-request')
+    if: startsWith(github.event.client_payload.issue_title, '[TEAM REQUEST]')
     outputs:
       request-type: ${{ steps.parse.outputs.request-type }}
       team-name: ${{ steps.parse.outputs.team-name }}
@@ -32,7 +32,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const issueBody = context.payload.issue.body;
+            const issueBody = context.payload.client_payload.issue_body;
 
             function extractField(body, fieldLabel) {
               const regex = new RegExp(`### ${fieldLabel}\\s*\\n\\s*([^\\n#]+)`, 'i');
@@ -51,7 +51,7 @@ jobs:
             // Default team maintainer to requestor for maintainer role requests
             const isMaintainerRequest = requestType.toLowerCase().includes('maintainer');
             if (isMaintainerRequest && (!teamMaintainer || teamMaintainer === '_No response_')) {
-              teamMaintainer = context.payload.issue.user.login;
+              teamMaintainer = context.payload.client_payload.issue_user_login;
             }
 
             core.setOutput('request-type', requestType);
@@ -231,7 +231,7 @@ jobs:
             comment += `| **Team Maintainer** | ${teamMaintainer || '_N/A_'} |\n`;
             comment += `| **Repository** | ${repository || '_N/A_'} |\n`;
             comment += `| **Permission** | ${permission || '_N/A_'} |\n`;
-            comment += `| **Requested By** | @${context.payload.issue.user.login} |\n\n`;
+            comment += `| **Requested By** | @${context.payload.client_payload.issue_user_login} |\n\n`;
 
             // Validation results
             comment += '### 🔍 Validation Results\n\n';
@@ -264,7 +264,7 @@ jobs:
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
+              issue_number: context.payload.client_payload.issue_number,
               body: comment,
             });
 
@@ -273,7 +273,7 @@ jobs:
             await github.rest.issues.addLabels({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
+              issue_number: context.payload.client_payload.issue_number,
               labels,
             });
 
@@ -282,7 +282,7 @@ jobs:
               await github.rest.issues.update({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: context.issue.number,
+                issue_number: context.payload.client_payload.issue_number,
                 state: 'closed',
                 state_reason: 'not_planned',
               });
@@ -296,7 +296,7 @@ jobs:
             const passed = '${{ steps.validate.outputs.validation-passed }}' === 'true';
             const requestType = `${{ steps.parse.outputs.request-type }}`;
             const teamName = `${{ steps.parse.outputs.team-name }}`;
-            const issueNumber = context.issue.number;
+            const issueNumber = context.payload.client_payload.issue_number;
 
             let summary = passed
               ? '# ✅ Team Request Validation Passed\n\n'
@@ -307,7 +307,7 @@ jobs:
             summary += `| **Request Type** | ${requestType} |\n`;
             summary += `| **Team** | \`${teamName}\` |\n`;
             summary += `| **Issue** | [#${issueNumber}](https://github.com/${context.repo.owner}/${context.repo.repo}/issues/${issueNumber}) |\n`;
-            summary += `| **Requestor** | @${context.payload.issue.user.login} |\n`;
+            summary += `| **Requestor** | @${context.payload.client_payload.issue_user_login} |\n`;
             summary += `| **Status** | ${passed ? '✅ Passed' : '❌ Failed'} |\n\n`;
 
             if (passed) {
@@ -416,7 +416,7 @@ jobs:
                 const createdSlug = createResponse.data.slug;
 
                 // Assign requestor as team maintainer
-                const requestor = context.payload.issue.user.login;
+                const requestor = context.payload.client_payload.issue_user_login;
                 await github.rest.teams.addOrUpdateMembershipForUserInOrg({
                   org,
                   team_slug: createdSlug,
@@ -486,7 +486,7 @@ jobs:
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
+              issue_number: context.payload.client_payload.issue_number,
               body: comment,
             });
 
@@ -495,21 +495,21 @@ jobs:
               await github.rest.issues.update({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: context.issue.number,
+                issue_number: context.payload.client_payload.issue_number,
                 state: 'closed',
                 state_reason: 'completed',
               });
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: context.issue.number,
+                issue_number: context.payload.client_payload.issue_number,
                 labels: ['completed'],
               });
             } else {
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: context.issue.number,
+                issue_number: context.payload.client_payload.issue_number,
                 labels: ['execution-failed'],
               });
             }
@@ -524,7 +524,7 @@ jobs:
             const details = '${{ steps.execute.outputs.details }}' || 'No details';
             const requestType = '${{ needs.validate-request.outputs.request-type }}';
             const teamName = '${{ needs.validate-request.outputs.team-name }}';
-            const issueNumber = context.issue.number;
+            const issueNumber = context.payload.client_payload.issue_number;
 
             let summary = success
               ? '# ✅ Team Request Executed Successfully\n\n'
