@@ -1,14 +1,17 @@
-name: Terraform Apply - Archive Repository
+name: Terraform Apply - Infrastructure
 
 on:
   push:
     branches:
       - main
     paths:
+      - "environments/**/*.tfvars"
       - "data/*.yaml"
       - "data/*.yml"
       - "data/**/*.yaml"
       - "data/**/*.yml"
+      - "modules/**/*.tf"
+      - "*.tf"
   workflow_dispatch:
     inputs:
       environment:
@@ -26,13 +29,13 @@ permissions:
   id-token: write  # Required for OIDC authentication with Azure
 
 jobs:
-  terraform-apply-archive:
-    name: 🗃️ Apply - Archive Repository
+  terraform-apply:
+    name: 🚀 Apply - Infrastructure Changes
     runs-on: ubuntu-latest
-    # Only run for archive PR merges (commit message from archive workflow)
+    # Skip archive PR merges (handled by terraform-apply-archive.yml)
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      contains(github.event.head_commit.message, 'archive repository')
+      !contains(github.event.head_commit.message, 'archive repository')
     strategy:
       matrix:
         environment: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.environment)) || fromJSON('["dev"]') }}
@@ -62,56 +65,7 @@ jobs:
           terraform init -backend-config=environments/${{ matrix.environment }}/backend.tfvars
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
-          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-          ARM_USE_OIDC: true
-
-      - name: Clean up security state for archived repos
-        run: |
-          # When a repo is newly archived, its github_security module instance
-          # may still be in state. The GitHub API rejects changes on archived
-          # repos, so we remove the orphaned entry from state before plan/apply.
-          echo "🔍 Checking for orphaned security module instances..."
-          STATE_LIST=$(terraform state list 2>/dev/null || echo "")
-          CLEANED=0
-          SEEN_KEYS=""
-
-          for item in $STATE_LIST; do
-            repo_key=$(echo "$item" | sed -n 's/^module\.github_security\["\([^"]*\)"\].*/\1/p')
-            [ -z "$repo_key" ] && continue
-
-            # Deduplicate — multiple resources per module instance
-            if echo "$SEEN_KEYS" | grep -qF "|${repo_key}|" 2>/dev/null; then
-              continue
-            fi
-            SEEN_KEYS="${SEEN_KEYS}|${repo_key}|"
-
-            is_archived=$(python3 -c "
-          import yaml, sys
-          with open('data/repositories.yaml') as f:
-              data = yaml.safe_load(f)
-          for repo in data.get('repositories', []):
-              if repo['name'] == sys.argv[1] and repo.get('archived', False):
-                  print('true')
-                  sys.exit(0)
-          print('false')
-          " "$repo_key" 2>/dev/null || echo "false")
-
-            if [ "$is_archived" = "true" ]; then
-              echo "🗑️  Removing security state for archived repo: $repo_key"
-              terraform state rm "module.github_security[\"$repo_key\"]" || true
-              CLEANED=$((CLEANED + 1))
-            fi
-          done
-
-          if [ "$CLEANED" -gt 0 ]; then
-            echo "✅ Cleaned $CLEANED orphaned security module instance(s)"
-          else
-            echo "✅ No orphaned security state found"
-          fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          # Azure authentication via OIDC (azure/login@v2 handles token)
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
@@ -122,6 +76,7 @@ jobs:
           terraform plan -var-file=environments/${{ matrix.environment }}/terraform.tfvars -out=environments/${{ matrix.environment }}/tfplan
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          # Azure authentication via OIDC (azure/login@v2 handles token)
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
@@ -132,6 +87,7 @@ jobs:
           terraform apply -auto-approve environments/${{ matrix.environment }}/tfplan
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          # Azure authentication via OIDC (azure/login@v2 handles token)
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}

@@ -32,8 +32,6 @@ jobs:
   terraform-apply:
     name: 🚀 Apply - Infrastructure Changes
     runs-on: ubuntu-latest
-    # Skip if this is a repo-request PR merge (handled by terraform-apply-repo.yml)
-    # if: ${{ !contains(github.event.head_commit.message, 'repo-request') && !contains(github.event.head_commit.message, 'add repository') }}
     strategy:
       matrix:
         environment: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.environment)) || fromJSON('["dev"]') }}
@@ -97,12 +95,16 @@ jobs:
   # Detects repos added to data/repositories.yaml in this push, maps their
   # topics to a stack folder in paloitmbb/mbb-repo-templates/stacks/, and
   # pushes that folder's content as the initial commit to the new repo.
+  # Skips for archive repository commits (handled by terraform-apply-archive.yml)
   # ============================================================================
   seed-repository-template:
     name: 🌱 Seed - Bootstrap Repository Template
     runs-on: ubuntu-latest
     needs: terraform-apply
-    if: needs.terraform-apply.result == 'success'
+    if: >-
+      needs.terraform-apply.result == 'success' &&
+      (github.event_name == 'workflow_dispatch' ||
+      !contains(github.event.head_commit.message, 'archive repository'))
 
     steps:
       - name: Checkout
