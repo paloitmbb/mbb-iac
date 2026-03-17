@@ -30,7 +30,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.ORG_GITHUB_TOKEN }}
           ref: main
 
       # -----------------------------------------------------------------------
@@ -76,7 +76,7 @@ jobs:
         id: validate
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
           ORG_NAME: ${{ github.repository_owner }}
         run: |
           set -e  # Exit on any error
@@ -264,7 +264,7 @@ jobs:
           NEXT_STEPS: ${{ steps.build-details.outputs.next-steps }}
           ERROR_DETAILS: ${{ steps.build-details.outputs.error-details }}
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
             try {
               const passed = process.env.VALIDATION_PASSED === 'true';
@@ -356,7 +356,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.ORG_GITHUB_TOKEN }}
           ref: main
           
 
@@ -368,7 +368,7 @@ jobs:
         shell: bash
         env:
           JUSTIFICATION: ${{ needs.validate-request.outputs.justification }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
         run: |
           set -e  # Exit on any error
           
@@ -683,7 +683,7 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
           REPO_NAME: ${{ needs.validate-request.outputs.repo-name }}
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
             try {
               const prUrl       = process.env.PR_URL;
