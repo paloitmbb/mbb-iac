@@ -155,6 +155,7 @@ repositories:
       enable_dependabot_security_updates: true
 
   - name: mbb-api-crud
+    archived: true
     description: "Mbb Api Crud using Python"
     visibility: private
     features:
@@ -164,12 +165,12 @@ repositories:
     default_branch: main
     topics: ["maybank", "mbb", "python"]
     security:
-      enable_vulnerability_alerts: true
+      enable_vulnerability_alerts: false
       enable_advanced_security: false
       enable_secret_scanning: false
       enable_secret_scanning_push_protection: false
-      enable_dependabot_alerts: true
-      enable_dependabot_security_updates: true
+      enable_dependabot_alerts: false
+      enable_dependabot_security_updates: false
 
   - name: mbb-repo-testing
     description: "Mbb Repo Testing using Python"
