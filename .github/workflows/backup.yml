@@ -1,0 +1,209 @@
+name: Scheduled Org Backup
+
+on:
+  schedule:
+    # Weekly on Sundays at 02:00 UTC — Tier 1 (weekly), Tier 2 (biweekly), Tier 3 (every 3 weeks)
+    - cron: "0 2 * * 0"
+    # Monthly on the 1st at 02:00 UTC — Tier 4 / default
+    - cron: "0 2 1 * *"
+  workflow_dispatch:
+    inputs:
+      force_tiers:
+        description: >
+          Comma-separated tiers to force-run (e.g. "1,2,3,4").
+          Leave empty to use schedule-based logic.
+        required: false
+        default: ""
+
+env:
+  GITHUB_ORG: ${{ github.repository_owner }}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  # ---------- Discover repos & determine which tiers to back up ----------
+  discover:
+    name: Discover repos & resolve tiers
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.build-matrix.outputs.matrix }}
+      repo_count: ${{ steps.build-matrix.outputs.repo_count }}
+      tiers_run: ${{ steps.build-matrix.outputs.tiers_run }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq jq
+
+      - name: Run discovery
+        run: bash scripts/discover-repos.sh
+        env:
+          GH_BACKUP_TOKEN: ${{ secrets.GH_BACKUP_TOKEN }}
+
+      - name: Determine which tiers are due
+        id: tiers
+        run: |
+          WEEK_NUM=$(date -u +%V | sed 's/^0*//')
+          DAY_OF_MONTH=$(date -u +%d | sed 's/^0*//')
+          FORCE="${{ github.event.inputs.force_tiers }}"
+
+          RUN_TIER1="false"
+          RUN_TIER2="false"
+          RUN_TIER3="false"
+          RUN_TIER4="false"
+
+          if [[ -n "$FORCE" ]]; then
+            [[ "$FORCE" == *"1"* ]] && RUN_TIER1="true"
+            [[ "$FORCE" == *"2"* ]] && RUN_TIER2="true"
+            [[ "$FORCE" == *"3"* ]] && RUN_TIER3="true"
+            [[ "$FORCE" == *"4"* ]] && RUN_TIER4="true"
+          else
+            if [[ "$DAY_OF_MONTH" -eq 1 ]]; then
+              RUN_TIER4="true"
+              DOW=$(date -u +%u)
+              if [[ "$DOW" -eq 7 ]]; then
+                RUN_TIER1="true"
+                [[ $((WEEK_NUM % 2)) -eq 0 ]] && RUN_TIER2="true"
+                [[ $((WEEK_NUM % 3)) -eq 0 ]] && RUN_TIER3="true"
+              fi
+            else
+              RUN_TIER1="true"
+              [[ $((WEEK_NUM % 2)) -eq 0 ]] && RUN_TIER2="true"
+              [[ $((WEEK_NUM % 3)) -eq 0 ]] && RUN_TIER3="true"
+            fi
+          fi
+
+          echo "run_tier1=${RUN_TIER1}" >> "$GITHUB_OUTPUT"
+          echo "run_tier2=${RUN_TIER2}" >> "$GITHUB_OUTPUT"
+          echo "run_tier3=${RUN_TIER3}" >> "$GITHUB_OUTPUT"
+          echo "run_tier4=${RUN_TIER4}" >> "$GITHUB_OUTPUT"
+          echo "Tiers to run: T1=${RUN_TIER1} T2=${RUN_TIER2} T3=${RUN_TIER3} T4=${RUN_TIER4}"
+
+      - name: Build unified backup matrix
+        id: build-matrix
+        run: |
+          REPOS="[]"
+          TIERS_RUN=""
+
+          if [[ "${{ steps.tiers.outputs.run_tier1 }}" == "true" ]]; then
+            TIER1=$(jq -c '[.tier1[] | {repo: ., tier: "tier-1"}]' repo-tiers.json)
+            REPOS=$(echo "$REPOS" "$TIER1" | jq -sc '.[0] + .[1]')
+            TIERS_RUN="${TIERS_RUN}tier-1 "
+          fi
+          if [[ "${{ steps.tiers.outputs.run_tier2 }}" == "true" ]]; then
+            TIER2=$(jq -c '[.tier2[] | {repo: ., tier: "tier-2"}]' repo-tiers.json)
+            REPOS=$(echo "$REPOS" "$TIER2" | jq -sc '.[0] + .[1]')
+            TIERS_RUN="${TIERS_RUN}tier-2 "
+          fi
+          if [[ "${{ steps.tiers.outputs.run_tier3 }}" == "true" ]]; then
+            TIER3=$(jq -c '[.tier3[] | {repo: ., tier: "tier-3"}]' repo-tiers.json)
+            REPOS=$(echo "$REPOS" "$TIER3" | jq -sc '.[0] + .[1]')
+            TIERS_RUN="${TIERS_RUN}tier-3 "
+          fi
+          if [[ "${{ steps.tiers.outputs.run_tier4 }}" == "true" ]]; then
+            TIER4=$(jq -c '[.tier4_default[] | {repo: ., tier: "tier-4"}]' repo-tiers.json)
+            REPOS=$(echo "$REPOS" "$TIER4" | jq -sc '.[0] + .[1]')
+            TIERS_RUN="${TIERS_RUN}tier-4 "
+          fi
+
+          COUNT=$(echo "$REPOS" | jq 'length')
+          MATRIX=$(echo "$REPOS" | jq -c '{include: .}')
+
+          echo "matrix=${MATRIX}" >> "$GITHUB_OUTPUT"
+          echo "repo_count=${COUNT}" >> "$GITHUB_OUTPUT"
+          echo "tiers_run=${TIERS_RUN}" >> "$GITHUB_OUTPUT"
+          echo "Repos to back up: ${COUNT} | Tiers: ${TIERS_RUN}"
+
+      - name: Write discovery summary
+        run: |
+          {
+            echo "## Discovery Summary"
+            echo ""
+            echo "| Tier | Repos | Scheduled |"
+            echo "|------|-------|-----------|"
+            echo "| Tier 1 (weekly) | $(jq '.tier1 | length' repo-tiers.json) | ${{ steps.tiers.outputs.run_tier1 }} |"
+            echo "| Tier 2 (biweekly) | $(jq '.tier2 | length' repo-tiers.json) | ${{ steps.tiers.outputs.run_tier2 }} |"
+            echo "| Tier 3 (every 3 wks) | $(jq '.tier3 | length' repo-tiers.json) | ${{ steps.tiers.outputs.run_tier3 }} |"
+            echo "| Tier 4 / default | $(jq '.tier4_default | length' repo-tiers.json) | ${{ steps.tiers.outputs.run_tier4 }} |"
+            echo ""
+            echo "**Total repos to back up this run:** ${{ steps.build-matrix.outputs.repo_count }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------- Backup each repo in parallel ----------
+  backup:
+    name: "Backup ${{ matrix.repo }} (${{ matrix.tier }})"
+    needs: discover
+    if: needs.discover.outputs.repo_count != '0'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
+    steps:
+      - name: Checkout workflows repo
+        uses: actions/checkout@v4
+
+      - name: Install Azure CLI
+        run: |
+          if ! command -v az &> /dev/null; then
+            curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+          fi
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run backup
+        id: backup
+        run: bash scripts/backup-repo.sh "${{ matrix.repo }}"
+        env:
+          GH_BACKUP_TOKEN: ${{ secrets.GH_BACKUP_TOKEN }}
+          AZURE_STORAGE_ACCOUNT: ${{ vars.AZURE_STORAGE_ACCOUNT }}
+          AZURE_CONTAINER_NAME: ${{ vars.AZURE_CONTAINER_NAME }}
+
+      - name: Write per-repo summary
+        if: always()
+        run: |
+          STATUS="${{ steps.backup.outcome }}"
+          ICON=$( [[ "$STATUS" == "success" ]] && echo "✅" || echo "❌" )
+          {
+            echo "### ${ICON} ${{ matrix.repo }}"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Status | ${STATUS} |"
+            echo "| Blob | ${{ steps.backup.outputs.blob_name }} |"
+            echo "| Size | ${{ steps.backup.outputs.backup_size }} |"
+            echo "| Tier | ${{ matrix.tier }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------- Aggregate results ----------
+  notify:
+    name: Write aggregate summary
+    needs: [discover, backup]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Write aggregate summary
+        run: |
+          TIERS="${{ needs.discover.outputs.tiers_run }}"
+          COUNT="${{ needs.discover.outputs.repo_count }}"
+          STATUS="${{ needs.backup.result }}"
+          ICON=$( [[ "$STATUS" == "success" ]] && echo "✅" || echo "⚠️" )
+          {
+            echo "## ${ICON} Aggregate Backup Summary"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Tiers | ${TIERS} |"
+            echo "| Repos | ${COUNT} |"
+            echo "| Overall | ${STATUS} |"
+            echo "| Timestamp | $(date -u +"%Y-%m-%d %H:%M:%S UTC") |"
+          } >> "$GITHUB_STEP_SUMMARY"
