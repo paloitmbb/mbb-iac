@@ -27,6 +27,7 @@ jobs:
   discover:
     name: Discover repos & resolve tiers
     runs-on: ubuntu-latest
+    environment: dev
     outputs:
       matrix: ${{ steps.build-matrix.outputs.matrix }}
       repo_count: ${{ steps.build-matrix.outputs.repo_count }}
@@ -139,6 +140,7 @@ jobs:
     needs: discover
     if: needs.discover.outputs.repo_count != '0'
     runs-on: ubuntu-latest
+    environment: dev
     strategy:
       fail-fast: false
       max-parallel: 10
