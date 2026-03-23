@@ -43,13 +43,13 @@ body:
         - "Yes"
     validations:
       required: false
-  
+
   - type: input
     id: replacement-repo-name
     attributes:
       label: Replacement Repository Name
       description: >
-        If you selected "Yes" above, provide the exact name of the 
+        If you selected "Yes" above, provide the exact name of the
         replacement repository in this organisation.
         Leave blank if there is no replacement.
       placeholder: my-new-project
@@ -68,5 +68,3 @@ body:
           required: false
         - label: Final release/tag has been created (if applicable)
           required: false  # optional — not always needed
-
-

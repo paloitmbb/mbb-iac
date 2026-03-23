@@ -717,30 +717,30 @@ terraform plan
 
 ### DO
 
-✅ Use scripts for all Terraform operations  
-✅ Test changes in dev environment first  
-✅ Review plan output before applying  
-✅ Keep modules focused and reusable  
-✅ Document all variables and outputs  
-✅ Use YAML for managing many repositories  
-✅ Version control all configuration  
-✅ Follow conventional commit messages  
-✅ Use state locking for concurrent safety  
-✅ Keep secrets in environment variables  
+✅ Use scripts for all Terraform operations
+✅ Test changes in dev environment first
+✅ Review plan output before applying
+✅ Keep modules focused and reusable
+✅ Document all variables and outputs
+✅ Use YAML for managing many repositories
+✅ Version control all configuration
+✅ Follow conventional commit messages
+✅ Use state locking for concurrent safety
+✅ Keep secrets in environment variables
 ✅ Use only verified GitHub Actions from trusted publishers
 
 ### DON'T
 
-❌ Commit secrets or tokens to Git  
-❌ Apply changes without reviewing plan  
-❌ Skip dev environment testing  
-❌ Hardcode values in modules  
-❌ Bypass validation checks  
-❌ Modify state files manually  
-❌ Use deprecated provider features  
-❌ Share state files publicly  
-❌ Skip backend initialization  
-❌ Ignore provider version constraints  
+❌ Commit secrets or tokens to Git
+❌ Apply changes without reviewing plan
+❌ Skip dev environment testing
+❌ Hardcode values in modules
+❌ Bypass validation checks
+❌ Modify state files manually
+❌ Use deprecated provider features
+❌ Share state files publicly
+❌ Skip backend initialization
+❌ Ignore provider version constraints
 ❌ Use unverified or unknown third-party GitHub Actions
 
 ## Additional Resources

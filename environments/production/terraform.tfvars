@@ -5,7 +5,7 @@ organization = {
   billing_email                   = "billing@example.com"
   company                         = "Your Company"
   description                     = "Production Environment"
-  default_repository_permission   = "read"
+  default_repository_permission   = "none"
   members_can_create_repositories = false
 }
 

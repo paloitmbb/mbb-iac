@@ -61,7 +61,7 @@ jobs:
           issue-number: ${{ github.event.client_payload.issue_number }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-    
+
       - name: Validate migration repositories
         uses: paloitmbb/mbb-tf-actions/actions/ghes-validate-repos@main
         with:
@@ -81,7 +81,7 @@ jobs:
           gh issue edit ${{ github.event.client_payload.issue_number }} --add-label "in-progress"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Comment on unexpected failure
         if: failure()
         env:
@@ -176,7 +176,7 @@ jobs:
           source-server-url: ${{ vars.GH_SOURCE_SERVER_URL }}
           repository: ${{ needs.validate.outputs.source_organization }}/${{ needs.validate.outputs.source_repo }}
           token: ${{ secrets.GH_SOURCE_PAT }}
- 
+
       - name: Post pre-migration summary
         uses: actions/github-script@v7
         with:
@@ -360,7 +360,7 @@ jobs:
             summary += `| **Last Update** | ${lastUpdate} |\n`;
             summary += `| **PR Review Count** | ${prReviewCount} |\n`;
             summary += `| **Created** | ${created} |\n`;
-            
+
             summary += `| **CODEOWNERS** | ${hasCodeowners === 'true' ? '✅ Present' : '⚠️ Not found'} |\n`;
             summary += `| **Stale Branches (>${90} days)** | ${staleBranchesCount || '0'} |\n\n`;
 
@@ -407,9 +407,9 @@ jobs:
         id: check-env
         run: |
           TARGET_ORG="${{ needs.validate.outputs.target_organization }}"
-          
+
           echo "🔍 Determining environment based on target organization: ${TARGET_ORG}"
-          
+
           if [[ "${TARGET_ORG}" == "maybank-ghes" ]]; then
             echo "environment=sit" >> $GITHUB_OUTPUT
             echo "✅ Environment: SIT (maybank-ghes)"
@@ -558,7 +558,7 @@ jobs:
           echo "Is empty check: $([ -z '${{ needs.validate.outputs.team_mappings }}' ] && echo 'YES - EMPTY' || echo 'NO - HAS VALUE')"
           echo "Is null check: $([ '${{ needs.validate.outputs.team_mappings }}' = 'null' ] && echo 'YES - NULL' || echo 'NO - NOT NULL')"
           echo "Length in bash: ${#TEAM_MAPPINGS}"
-          
+
           if [ -z "$TEAM_MAPPINGS" ]; then
             echo ""
             echo "❌ PROBLEM IDENTIFIED: Team mappings is EMPTY"
@@ -746,7 +746,7 @@ jobs:
           application-tier: ${{ needs.validate.outputs.application_tier }}
 
 
-          
+
       - name: Comment post-migration setup
         run: |
           STALE_COUNT="${{ needs.pre-migration.outputs.source_stale_branches_count }}"
@@ -877,14 +877,14 @@ jobs:
             ISSUE_NUMBER="${{ needs.validate.outputs.issue_number }}"
             SOURCE_REPO="${{ needs.validate.outputs.source_repo }}"
             TARGET_REPO="${{ needs.validate.outputs.target_repo }}"
-            
+
             # Create a meaningful blob name
             BLOB_NAME="ghes-migrations/${TARGET_REPO}/${{ github.run_id }}_issue-${ISSUE_NUMBER}.log"
-            
+
             echo "📤 Uploading attested log to Azure Blob Storage..."
             echo "   Storage: ${STORAGE_ACCOUNT}/${CONTAINER_NAME}"
             echo "   Blob: ${BLOB_NAME}"
-            
+
             az storage blob upload \
               --account-name "${STORAGE_ACCOUNT}" \
               --container-name "${CONTAINER_NAME}" \
@@ -892,7 +892,7 @@ jobs:
               --file "workflow_run_${{ github.run_id }}.log" \
               --auth-mode login \
               --overwrite true
-            
+
             echo "   ✅ Log uploaded successfully"
 
   # ─────────────────────────────────────────────

@@ -5,7 +5,7 @@ organization = {
   billing_email                   = "zang@palo-it.com"
   company                         = "Palo IT Singapore"
   description                     = "Temporary Organization for Github IaC Sandbox"
-  default_repository_permission   = "read"
+  default_repository_permission   = "none"
   members_can_create_repositories = false
 }
 

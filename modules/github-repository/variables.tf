@@ -38,11 +38,11 @@ variable "has_wiki" {
   default     = false
 }
 
-variable "has_downloads" {
-  description = "Enable downloads for the repository"
-  type        = bool
-  default     = false
-}
+# variable "has_downloads" {
+#   description = "Enable downloads for the repository"
+#   type        = bool
+#   default     = false
+# }
 
 variable "auto_init" {
   description = "Initialize the repository with a README file"
@@ -190,4 +190,3 @@ variable "enable_secret_scanning_push_protection" {
   type        = bool
   default     = false
 }
-
