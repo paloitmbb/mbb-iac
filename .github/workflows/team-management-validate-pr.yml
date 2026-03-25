@@ -1,0 +1,472 @@
+name: "Team Management - Validate & Create PR"
+
+on:
+  repository_dispatch:
+    types: [team-management-terraform]
+
+permissions:
+  issues: write
+  pull-requests: write
+  contents: write
+
+jobs:
+  validate-and-create-pr:
+    name: Validate Request & Create PR
+    runs-on: ubuntu-latest
+    if: startsWith(github.event.client_payload.issue_title, '[TEAM REQUEST]')
+    outputs:
+      request-type: ${{ steps.parse.outputs.request-type }}
+      team-name: ${{ steps.parse.outputs.team-name }}
+      repository: ${{ steps.parse.outputs.repository }}
+      permission: ${{ steps.parse.outputs.permission }}
+      justification: ${{ steps.parse.outputs.justification }}
+      validation-passed: ${{ steps.validate.outputs.validation-passed }}
+      errors: ${{ steps.validate.outputs.errors }}
+      validations: ${{ steps.validate.outputs.validations }}
+      pr-number: ${{ steps.create-pr.outputs.pr-number }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Parse issue form
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueBody = context.payload.client_payload.issue_body;
+
+            function extractField(body, fieldLabel) {
+              const regex = new RegExp(`### ${fieldLabel}\\s*\\n\\s*([^\\n#]+)`, 'i');
+              const match = body.match(regex);
+              return match ? match[1].trim() : '';
+            }
+
+            const requestType = extractField(issueBody, 'Request Type');
+            const teamName = extractField(issueBody, 'Team');
+            const repository = extractField(issueBody, 'Repository');
+            const rawPermission = extractField(issueBody, 'Permission Level');
+            const permission = (rawPermission && rawPermission !== '_No response_') ? rawPermission : 'pull';
+            const justification = extractField(issueBody, 'Justification / Remark');
+
+            core.setOutput('request-type', requestType);
+            core.setOutput('team-name', teamName ? teamName.toLowerCase().replace(/\s+/g, '-') : '');
+            core.setOutput('repository', repository ? repository.toLowerCase().replace(/\s+/g, '-') : '');
+            core.setOutput('permission', permission);
+            core.setOutput('justification', justification);
+
+            console.log(`Request Type: ${requestType}`);
+            console.log(`Team Name: ${teamName}`);
+            console.log(`Repository: ${repository}`);
+            console.log(`Permission: ${permission}`);
+
+      - name: Validate team request
+        id: validate
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const org = context.repo.owner;
+            const fs = require('fs');
+            const requestType = '${{ steps.parse.outputs.request-type }}';
+            const teamName = '${{ steps.parse.outputs.team-name }}';
+            const repository = '${{ steps.parse.outputs.repository }}';
+            const errors = [];
+            const validations = [];
+
+            // --- Common Validations ---
+
+            // Validate request type
+            const validTypes = [
+              'Give team access to a repository',
+              'Remove team access to a repository',
+              'Create new team',
+              'Delete team'
+            ];
+            if (!validTypes.includes(requestType)) {
+              errors.push(`Invalid request type: "${requestType}". Must be one of: ${validTypes.join(', ')}`);
+            } else {
+              validations.push({ check: 'Request type is valid', result: '✅ Passed' });
+            }
+
+            // Validate team name
+            if (!teamName) {
+              errors.push('Team name is required');
+            } else if (!/^[a-zA-Z0-9._-]+$/.test(teamName)) {
+              errors.push('Team name must contain only alphanumeric characters, hyphens, underscores, and periods');
+            } else {
+              validations.push({ check: 'Team name format', result: '✅ Passed' });
+            }
+
+            // Load existing teams from teams.yaml
+            let existingTeams = [];
+            try {
+              const yaml = require('js-yaml');
+              const teamsFile = fs.readFileSync('./data/teams.yaml', 'utf8');
+              const teamsData = yaml.load(teamsFile) || { teams: [] };
+              existingTeams = teamsData.teams || [];
+            } catch (e) {
+              console.log('Warning: Could not load teams.yaml');
+            }
+
+            // --- Team Existence Check ---
+            let teamExists = existingTeams.some(t => t.name === teamName);
+            if (!teamExists) {
+              // Also check via GitHub API
+              try {
+                await github.rest.teams.getByName({ org, team_slug: teamName });
+                teamExists = true;
+              } catch (e) {
+                if (e.status !== 404) throw e;
+              }
+            }
+
+            // Validate based on request type
+            if (requestType === 'Create new team') {
+              if (teamExists) {
+                errors.push(`Team "${teamName}" already exists. Cannot create a duplicate.`);
+                validations.push({ check: 'Team does not exist (required for create)', result: '❌ Team already exists' });
+              } else {
+                validations.push({ check: 'Team does not exist (required for create)', result: '✅ Passed' });
+              }
+            } else if (['Give team access to a repository', 'Remove team access to a repository', 'Delete team'].includes(requestType)) {
+              if (!teamExists) {
+                errors.push(`Team "${teamName}" does not exist in the organization.`);
+                validations.push({ check: 'Team exists', result: '❌ Not found' });
+              } else {
+                validations.push({ check: 'Team exists', result: '✅ Passed' });
+              }
+            }
+
+            // --- Repository Validation (for repository access requests) ---
+            const isAccessRequest = requestType.includes('access to a repository');
+            if (isAccessRequest) {
+              if (!repository || repository === '_No response_') {
+                errors.push('Repository name is required for team access requests');
+              } else {
+                try {
+                  await github.rest.repos.get({ owner: org, repo: repository });
+                  validations.push({ check: `Repository "${repository}" exists`, result: '✅ Passed' });
+                } catch (e) {
+                  errors.push(`Repository "${repository}" does not exist in the organization`);
+                  validations.push({ check: `Repository "${repository}" exists`, result: '❌ Not found' });
+                }
+              }
+            }
+
+            // --- Output Results ---
+            const passed = errors.length === 0;
+            core.setOutput('validation-passed', passed.toString());
+            core.setOutput('errors', JSON.stringify(errors));
+            core.setOutput('validations', JSON.stringify(validations));
+
+            console.log(`Validation ${passed ? 'PASSED' : 'FAILED'} - ${errors.length} error(s)`);
+
+            if (!passed) {
+              core.setFailed(`Validation failed with ${errors.length} error(s): ${errors.join('; ')}`);
+            }
+
+      - name: Post validation summary to issue
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          ERRORS_JSON: ${{ steps.validate.outputs.errors }}
+          VALIDATIONS_JSON: ${{ steps.validate.outputs.validations }}
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const passed = '${{ steps.validate.outputs.validation-passed }}' === 'true';
+            const errors = JSON.parse(process.env.ERRORS_JSON || '[]');
+            const validations = JSON.parse(process.env.VALIDATIONS_JSON || '[]');
+
+            const requestType = `${{ steps.parse.outputs.request-type }}`;
+            const teamName = `${{ steps.parse.outputs.team-name }}`;
+            const repository = `${{ steps.parse.outputs.repository }}`;
+            const permission = `${{ steps.parse.outputs.permission }}`;
+
+            let comment = passed
+              ? '## ✅ Validation Passed\n\n'
+              : '## ❌ Validation Failed\n\n';
+
+            // Request summary table
+            comment += '### 📋 Request Summary\n\n';
+            comment += '| Field | Value |\n';
+            comment += '|-------|-------|\n';
+            comment += `| **Request Type** | ${requestType} |\n`;
+            comment += `| **Team** | \`${teamName}\` |\n`;
+            comment += `| **Repository** | ${repository || '_N/A_'} |\n`;
+            comment += `| **Permission** | ${permission || '_N/A_'} |\n`;
+            comment += `| **Requested By** | @${context.payload.client_payload.issue_user_login} |\n\n`;
+
+            // Validation results
+            comment += '### 🔍 Validation Results\n\n';
+            comment += '| Check | Result |\n';
+            comment += '|-------|--------|\n';
+            for (const v of validations) {
+              comment += `| ${v.check} | ${v.result} |\n`;
+            }
+            comment += '\n';
+
+            // Errors (if any)
+            if (errors.length > 0) {
+              comment += '### ⚠️ Errors\n\n';
+              for (const e of errors) {
+                comment += `- ❌ ${e}\n`;
+              }
+              comment += '\n';
+            }
+
+            // Next steps
+            if (passed) {
+              comment += '### 📝 Next Steps\n\n';
+              comment += '- ⏳ A pull request has been created with the changes\n';
+              comment += '- Once approved and merged, changes will be applied automatically\n';
+            } else {
+              comment += '### 📝 Next Steps\n\n';
+              comment += '- Please fix the validation errors and create a new request issue.\n';
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.client_payload.issue_number,
+              body: comment,
+            });
+
+            // Add labels
+            const labels = passed ? ['validation-passed'] : ['validation-failed'];
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.client_payload.issue_number,
+              labels,
+            });
+
+            // Close issue if validation failed
+            if (!passed) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.client_payload.issue_number,
+                state: 'closed',
+                state_reason: 'not_planned',
+              });
+            }
+
+      - name: Update teams.yaml and create PR
+        if: steps.validate.outputs.validation-passed == 'true'
+        id: create-pr
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const yaml = require('js-yaml');
+
+            const requestType = '${{ steps.parse.outputs.request-type }}';
+            const teamName = '${{ steps.parse.outputs.team-name }}';
+            const repository = '${{ steps.parse.outputs.repository }}';
+            const permission = '${{ steps.parse.outputs.permission }}';
+            const requestor = context.payload.client_payload.issue_user_login;
+            const issueNumber = context.payload.client_payload.issue_number;
+
+            // Read teams.yaml
+            const teamsFilePath = 'data/teams.yaml';
+            let teamsContent = fs.readFileSync(teamsFilePath, 'utf8');
+            let teamsData = yaml.load(teamsContent) || { teams: [] };
+
+            // Initialize teams array if not exists
+            if (!teamsData.teams) {
+              teamsData.teams = [];
+            }
+
+            let teamIndex = teamsData.teams.findIndex(t => t.name === teamName);
+            let updated = false;
+
+            switch (requestType) {
+              case 'Create new team':
+                if (teamIndex === -1) {
+                  teamsData.teams.push({
+                    name: teamName,
+                    description: `Team created by @${requestor} via issue #${issueNumber}`,
+                    privacy: 'closed',
+                    maintainers: [requestor],
+                    members: [],
+                    repositories: []
+                  });
+                  updated = true;
+                }
+                break;
+
+              case 'Delete team':
+                if (teamIndex !== -1) {
+                  teamsData.teams.splice(teamIndex, 1);
+                  updated = true;
+                }
+                break;
+
+              case 'Give team access to a repository':
+                if (teamIndex !== -1) {
+                  const repoIndex = teamsData.teams[teamIndex].repositories.findIndex(r => r.repository === repository);
+                  if (repoIndex === -1) {
+                    teamsData.teams[teamIndex].repositories.push({
+                      repository: repository,
+                      permission: permission
+                    });
+                    updated = true;
+                  }
+                }
+                break;
+
+              case 'Remove team access to a repository':
+                if (teamIndex !== -1) {
+                  const repoIndex = teamsData.teams[teamIndex].repositories.findIndex(r => r.repository === repository);
+                  if (repoIndex !== -1) {
+                    teamsData.teams[teamIndex].repositories.splice(repoIndex, 1);
+                    updated = true;
+                  }
+                }
+                break;
+            }
+
+            if (!updated) {
+              console.log('No changes needed to teams.yaml');
+              process.exit(0);
+            }
+
+            // Write updated teams.yaml
+            const updatedContent = yaml.dump(teamsData, { lineWidth: -1 });
+            fs.writeFileSync(teamsFilePath, updatedContent);
+
+            // Create/update branch and PR
+            const branchName = `team-management/issue-${issueNumber}-${teamName}`;
+            const commitMessage = `chore(teams): ${requestType.toLowerCase()} for team \`${teamName}\`\n\nRelated to issue #${issueNumber}\nRequested by @${requestor}`;
+
+            // Get current commit
+            const { data: ref } = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'heads/main'
+            });
+            const baseCommitSha = ref.object.sha;
+
+            // Create blob for updated file
+            const { data: blob } = await github.rest.git.createBlob({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              content: updatedContent,
+              encoding: 'utf-8'
+            });
+
+            // Get current tree
+            const { data: baseTree } = await github.rest.git.getTree({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tree_sha: baseCommitSha,
+              recursive: true
+            });
+
+            // Create new tree with updated file
+            const { data: newTree } = await github.rest.git.createTree({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              base_tree: baseTree.sha,
+              tree: [{
+                path: teamsFilePath,
+                mode: '100644',
+                type: 'blob',
+                sha: blob.sha
+              }]
+            });
+
+            // Create commit
+            const { data: newCommit } = await github.rest.git.createCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              message: commitMessage,
+              tree: newTree.sha,
+              parents: [baseCommitSha]
+            });
+
+            // Create/update branch
+            try {
+              await github.rest.git.updateRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `heads/${branchName}`,
+                sha: newCommit.sha
+              });
+              console.log(`Updated branch: ${branchName}`);
+            } catch (e) {
+              if (e.status === 422) {
+                // Branch doesn't exist, create it
+                await github.rest.git.createRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `refs/heads/${branchName}`,
+                  sha: newCommit.sha
+                });
+                console.log(`Created branch: ${branchName}`);
+              } else {
+                throw e;
+              }
+            }
+
+            // Create or update PR
+            const { data: existingPRs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${branchName}`,
+              state: 'open'
+            });
+
+            let prNumber;
+            if (existingPRs.length > 0) {
+              prNumber = existingPRs[0].number;
+              console.log(`Using existing PR: #${prNumber}`);
+            } else {
+              const prTitle = `chore(teams): ${requestType.toLowerCase()} - ${teamName}`;
+              const prBody = `## Team Management Request\n\n**Request Type:** ${requestType}\n**Team:** \`${teamName}\`\n${repository ? `**Repository:** \`${repository}\`\n` : ''}${permission && permission !== 'pull' ? `**Permission:** ${permission}\n` : ''}**Requested By:** @${requestor}\n**Issue:** #${issueNumber}`;
+
+              const { data: newPR } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: prTitle,
+                body: prBody,
+                head: branchName,
+                base: 'main'
+              });
+              prNumber = newPR.number;
+              console.log(`Created PR: #${prNumber}`);
+            }
+
+            core.setOutput('pr-number', prNumber);
+
+      - name: Post PR creation summary to issue
+        if: steps.validate.outputs.validation-passed == 'true' && always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const prNumber = '${{ steps.create-pr.outputs.pr-number }}';
+            const requestType = `${{ steps.parse.outputs.request-type }}`;
+            const teamName = `${{ steps.parse.outputs.team-name }}`;
+
+            let comment = '## ✅ Pull Request Created\n\n';
+            comment += '### 📋 Summary\n\n';
+            comment += `A pull request has been created to apply the following change:\n\n`;
+            comment += `- **Request Type:** ${requestType}\n`;
+            comment += `- **Team:** \`${teamName}\`\n`;
+            comment += `- **PR:** [#${prNumber}](${context.payload.repository.html_url}/pull/${prNumber})\n\n`;
+            comment += '### 📝 Next Steps\n\n';
+            comment += `1. Review the changes in [PR #${prNumber}](${context.payload.repository.html_url}/pull/${prNumber})\n`;
+            comment += '2. Approve the PR if changes look correct\n';
+            comment += '3. Merge the PR to apply changes automatically via Terraform\n';
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.client_payload.issue_number,
+              body: comment,
+            });

@@ -1,0 +1,21 @@
+# GitHub Teams Configuration
+# This file defines all GitHub teams managed by Terraform
+# Teams are created, updated, and managed based on this configuration
+
+# Add your teams here following this format:
+# teams:
+#   - name: team-slug
+#     description: "Team description"
+#     privacy: closed
+#     maintainers:
+#       - username1
+#       - username2
+#     members:
+#       - username3
+#     repositories:
+#       - repository: repo-name
+#         permission: push
+#
+# Permission levels: pull, push, repo-owner, triage, maintain, admin
+
+teams: []

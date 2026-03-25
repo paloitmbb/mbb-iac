@@ -1,0 +1,159 @@
+name: "Team Management - Terraform Plan & Apply"
+
+on:
+  pull_request:
+    paths:
+      - "data/teams.yaml"
+      - "modules/github-team/**"
+      - "main.tf"
+  push:
+    branches:
+      - main
+    paths:
+      - "data/teams.yaml"
+      - "modules/github-team/**"
+      - "main.tf"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  terraform-plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    outputs:
+      plan-output: ${{ steps.plan.outputs.stdout }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.5
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init
+        run: ./scripts/init.sh dev
+        env:
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -out=tfplan
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+        continue-on-error: true
+
+      - name: Post Terraform Plan to PR
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const planFile = 'tfplan';
+            let planOutput = '';
+
+            try {
+              // Try to get human-readable plan
+              const { execSync } = require('child_process');
+              planOutput = execSync('terraform show -no-color tfplan', {
+                encoding: 'utf-8'
+              }).substring(0, 65000); // Limit output
+            } catch (e) {
+              planOutput = 'Error reading plan file';
+            }
+
+            const outcome = '${{ steps.plan.outcome }}';
+            const status = outcome === 'success' ? '✅ Plan Successful' : '❌ Plan Failed';
+
+            let comment = `## ${status}\n\n`;
+            comment += '### 🔧 Terraform Plan Output\n\n';
+            comment += '```hcl\n';
+            comment += planOutput;
+            comment += '\n```\n\n';
+            comment += '### 📝 Review Notes\n\n';
+            comment += '- Review the planned changes above\n';
+            comment += '- Once approved, merge this PR to apply changes\n';
+            comment += '- Apply will run automatically via Terraform Apply workflow\n';
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment,
+            });
+
+  terraform-apply:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.5
+
+      - name: Terraform Init
+        run: ./scripts/init.sh dev
+        env:
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Apply
+        id: apply
+        run: terraform apply -auto-approve
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+
+      - name: Generate Apply Summary
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const outcome = '${{ steps.apply.outcome }}';
+            const status = outcome === 'success' ? '✅ Apply Successful' : '❌ Apply Failed';
+
+            let summary = `# ${status}\n\n`;
+            summary += '## Team Management Changes\n\n';
+            summary += '| Status | Message |\n';
+            summary += '|--------|----------|\n';
+            summary += `| ${outcome === 'success' ? '✅ Success' : '❌ Failed'} | Terraform apply completed |\n\n`;
+
+            if (outcome !== 'success') {
+              summary += '## 🔧 Troubleshooting\n\n';
+              summary += `- [View Workflow Logs](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})\n`;
+              summary += '- Check GitHub token permissions\n';
+              summary += '- Verify Azure backend credentials\n';
+            }
+
+            await core.summary.addRaw(summary).write();
