@@ -40,9 +40,9 @@ variable "repositories" {
   default = []
   validation {
     condition = alltrue([
-      for repo in var.repositories : contains(["pull", "push", "repo-owner", "triage", "maintain", "admin"], repo.permission)
+      for repo in var.repositories : contains(["pull", "triage", "push", "maintain", "admin"], repo.permission)
     ])
-    error_message = "Permission must be one of: pull, push, repo-owner, triage, maintain, admin"
+    error_message = "Permission must be one of: pull, triage, push, maintain, admin"
   }
 }
 

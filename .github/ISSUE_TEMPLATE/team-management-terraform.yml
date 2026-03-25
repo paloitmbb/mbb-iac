@@ -64,11 +64,13 @@ body:
       description: >
         Permission level for team access to repository.
         Only applicable for "Give team access to a repository".
-        Use "pull" for read-only, "push" for read/write, or "repo-owner" for the custom owner role. Defaults to "pull" if not specified.
+        Use "pull" for read-only, "push" for read/write, "maintain" for maintainer access, or "admin" for full access. Defaults to "pull" if not specified.
       options:
         - pull
+        - triage
         - push
-        - repo-owner
+        - maintain
+        - admin
       default: 0
     validations:
       required: false
