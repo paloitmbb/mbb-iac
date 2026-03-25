@@ -83,13 +83,13 @@ module "github_teams" {
   source   = "./modules/github-team"
   for_each = { for team in local.all_teams : team.name => team }
 
-  team_name   = each.value.name
-  description = each.value.description
-  privacy     = each.value.privacy
-  maintainers = each.value.maintainers
-  members     = each.value.members
+  team_name    = each.value.name
+  description  = each.value.description
+  privacy      = each.value.privacy
+  maintainers  = each.value.maintainers
+  members      = each.value.members
   repositories = each.value.repositories
-  deleted     = each.value.deleted
+  deleted      = each.value.deleted
 
   depends_on = [module.github_organization, module.github_repositories]
 }
