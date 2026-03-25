@@ -6,14 +6,14 @@ resource "github_team" "this" {
 }
 
 resource "github_team_membership" "maintainers" {
-  for_each = var.deleted ? {} : toset(var.maintainers)
+  for_each = var.deleted ? toset([]) : toset(var.maintainers)
   team_id  = github_team.this[0].id
   username = each.value
   role     = "maintainer"
 }
 
 resource "github_team_membership" "members" {
-  for_each = var.deleted ? {} : toset(var.members)
+  for_each = var.deleted ? toset([]) : toset(var.members)
   team_id  = github_team.this[0].id
   username = each.value
   role     = "member"
