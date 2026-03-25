@@ -8,7 +8,7 @@ body:
       value: |
         ## MBB GHES → GHEC Repository Migration
         Use this form to request migration of a repository from **GitHub Enterprise Server (GHES)** to **GitHub Enterprise Cloud (GHEC)**.
-        
+
   - type: markdown
     attributes:
       value: |

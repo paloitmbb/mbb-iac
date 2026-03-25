@@ -117,7 +117,7 @@ jobs:
               IS_ARCHIVED=$(echo "$API_RESPONSE" | jq -r '.archived // "false"')
               VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Operation | Archive Repository | ✅ Specified |\n"
               VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Exists | \`${ORG_NAME}/${REPO_NAME}\` | ✅ Found |\n"
-              
+
               echo "🔍 Validating ARCHIVE operation..."
               if [[ "$IS_ARCHIVED" == "true" ]]; then
                 VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${REPO_NAME}\` is already archived"
@@ -126,7 +126,7 @@ jobs:
               else
                 VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Status | \`${ORG_NAME}/${REPO_NAME}\` | ✅ Active (ready to archive) |\n"
                 echo "✅ Repository found and active (ready to archive)"
-                
+
                 # --- Check if repository exists in YAML config ---
                 if [[ -f "data/repositories.yaml" ]]; then
                   echo "📋 Checking YAML configuration..."
@@ -384,7 +384,7 @@ jobs:
         with:
           token: ${{ secrets.ORG_GITHUB_TOKEN }}
           ref: main
-          
+
 
       # -----------------------------------------------------------------------
       # Step 1: Create branch and update YAML
@@ -397,11 +397,11 @@ jobs:
           GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
         run: |
           set -e  # Exit on any error
-          
+
           REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
           ORG_NAME="${{ github.repository_owner }}"
           ISSUE_NUMBER="${{ github.event.client_payload.issue_number }}"
-          
+
           BRANCH_NAME="archive/${REPO_NAME}-${ISSUE_NUMBER}"
 
           echo "📌 Archive Request Details:"
@@ -442,7 +442,7 @@ jobs:
           echo "Current working directory: $(pwd)"
           echo "Contents of data directory:"
           ls -la data/ || echo "data directory not found"
-          
+
           YAML_FILE="data/repositories.yaml"
           if [[ ! -f "$YAML_FILE" ]]; then
             echo "::error::File $YAML_FILE not found"
@@ -492,7 +492,7 @@ jobs:
           }
 
           Write-Host "   Archived line index: $archivedLineIndex"
-                      
+
           # Find the end of the current repo section (next repo or end of file)
           $repoEndIndex = $lines.Count
           for ($i = $repoLineIndex + 1; $i -lt $lines.Count; $i++) {
@@ -502,7 +502,7 @@ jobs:
             }
           }
           Write-Host "   Repo section spans lines $($repoLineIndex + 1) to $($repoEndIndex)"
-           
+
           # Initialize the list to hold modified lines
           $newLines = [System.Collections.Generic.List[string]]::new()
 
@@ -604,10 +604,10 @@ jobs:
           else
             echo "⚠️ No changes detected in $YAML_FILE"
           fi
-          
+
           # Stage and commit the YAML change
           git add "$YAML_FILE"
-          
+
           COMMIT_MSG=$(cat <<EOF
           feat: 🗃️ archive repository '${REPO_NAME}'
 
@@ -722,7 +722,7 @@ jobs:
 
           # Extract PR number from URL (portable - works on all systems)
           PR_NUMBER=$(echo "$PR_URL" | sed 's|.*/pull/||' | tr -d '[:space:]')
-          
+
           # Fallback: use gh CLI if extraction failed
           if [[ -z "$PR_NUMBER" || ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
             PR_NUMBER=$(gh pr view "${BRANCH_NAME}" --json number --jq '.number')
@@ -808,5 +808,3 @@ jobs:
               console.error('Error posting PR notification:', error);
               core.setFailed(`Failed to notify issue with PR link: ${error.message}`);
             }
-
- 

@@ -3,10 +3,10 @@ resource "github_repository" "this" {
   description = var.description
   visibility  = var.visibility
 
-  has_issues    = var.has_issues
-  has_projects  = var.has_projects
-  has_wiki      = var.has_wiki
-  has_downloads = var.has_downloads
+  has_issues   = var.has_issues
+  has_projects = var.has_projects
+  has_wiki     = var.has_wiki
+  # has_downloads = var.has_downloads
 
   auto_init              = var.auto_init
   gitignore_template     = var.gitignore_template
