@@ -352,10 +352,8 @@ jobs:
 
           # Stage and commit
           git add data/teams.yaml
-          git commit -m "chore(teams): ${REQUEST_TYPE_LOWER} for team \`${TEAM_NAME}\`
-
-Related to issue #${ISSUE_NUMBER}
-Requested by @${REQUESTOR}"
+          COMMIT_MSG="chore(teams): ${REQUEST_TYPE_LOWER} for team \`${TEAM_NAME}\`"$'\n\n'"Related to issue #${ISSUE_NUMBER}"$'\n'"Requested by @${REQUESTOR}"
+          git commit -m "$COMMIT_MSG"
 
           git push origin "${BRANCH_NAME}"
           echo "✅ Pushed to remote: ${BRANCH_NAME}"
