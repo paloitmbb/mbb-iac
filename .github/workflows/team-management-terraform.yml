@@ -43,6 +43,10 @@ jobs:
     name: Terraform Plan
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    strategy:
+      matrix:
+        environment: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.environment)) || fromJSON('["dev"]') }}
+
     outputs:
       plan-output: ${{ steps.plan.outputs.stdout }}
 
@@ -131,6 +135,9 @@ jobs:
     name: Terraform Apply
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      matrix:
+        environment: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.environment)) || fromJSON('["dev"]') }}
 
     steps:
       - name: Checkout code
