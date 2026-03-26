@@ -28,6 +28,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.ORG_GITHUB_TOKEN }}
 
       - name: Parse issue form
         id: parse
@@ -67,7 +69,6 @@ jobs:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
             const org = context.repo.owner;
-            const fs = require('fs');
             const requestType = '${{ steps.parse.outputs.request-type }}';
             const teamName = '${{ steps.parse.outputs.team-name }}';
             const repository = '${{ steps.parse.outputs.repository }}';
@@ -98,27 +99,13 @@ jobs:
               validations.push({ check: 'Team name format', result: '✅ Passed' });
             }
 
-            // Load existing teams from teams.yaml
-            let existingTeams = [];
+            // --- Team Existence Check (via GitHub API) ---
+            let teamExists = false;
             try {
-              const yaml = require('js-yaml');
-              const teamsFile = fs.readFileSync('./data/teams.yaml', 'utf8');
-              const teamsData = yaml.load(teamsFile) || { teams: [] };
-              existingTeams = teamsData.teams || [];
+              await github.rest.teams.getByName({ org, team_slug: teamName });
+              teamExists = true;
             } catch (e) {
-              console.log('Warning: Could not load teams.yaml');
-            }
-
-            // --- Team Existence Check ---
-            let teamExists = existingTeams.some(t => t.name === teamName);
-            if (!teamExists) {
-              // Also check via GitHub API
-              try {
-                await github.rest.teams.getByName({ org, team_slug: teamName });
-                teamExists = true;
-              } catch (e) {
-                if (e.status !== 404) throw e;
-              }
+              if (e.status !== 404) throw e;
             }
 
             // Validate based on request type
@@ -253,198 +240,149 @@ jobs:
               });
             }
 
-      - name: Update teams.yaml and create PR
+      - name: Install yq
         if: steps.validate.outputs.validation-passed == 'true'
+        shell: bash
+        run: |
+          echo "::group::Install yq"
+          if command -v yq &> /dev/null; then
+            echo "✅ yq is already installed: $(yq --version)"
+          else
+            echo "📦 Installing yq..."
+            sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+            echo "✅ yq installed: $(yq --version)"
+          fi
+          echo "::endgroup::"
+
+      - name: Update teams.yaml
+        if: steps.validate.outputs.validation-passed == 'true'
+        id: update-yaml
+        shell: bash
+        env:
+          REQUEST_TYPE: ${{ steps.parse.outputs.request-type }}
+          TEAM_NAME: ${{ steps.parse.outputs.team-name }}
+          REPOSITORY: ${{ steps.parse.outputs.repository }}
+          PERMISSION: ${{ steps.parse.outputs.permission }}
+          REQUESTOR: ${{ github.event.client_payload.issue_user_login }}
+          ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
+        run: |
+          echo "::group::Update teams.yaml"
+          TEAMS_FILE="data/teams.yaml"
+          DEFAULTS_FILE="data/defaults.yaml"
+          UPDATED=false
+
+          # Load team defaults
+          TEAM_PRIVACY=$(yq eval '.team_defaults.privacy' "$DEFAULTS_FILE")
+          DEFAULT_PERMISSION=$(yq eval '.team_defaults.default_repository_permission' "$DEFAULTS_FILE")
+          # Fall back to parsed permission if default not set, then to 'pull'
+          EFFECTIVE_PERMISSION=${PERMISSION:-${DEFAULT_PERMISSION:-pull}}
+
+          case "$REQUEST_TYPE" in
+            "Create new team")
+              export DESCRIPTION="Team created by @${REQUESTOR} via issue #${ISSUE_NUMBER}"
+              export TEAM_PRIVACY
+              yq -i '.teams = (.teams // []) + [{"name": strenv(TEAM_NAME), "description": strenv(DESCRIPTION), "privacy": strenv(TEAM_PRIVACY), "repositories": []}]' "$TEAMS_FILE"
+              UPDATED=true
+              echo "✅ Created new team entry: ${TEAM_NAME} (privacy: ${TEAM_PRIVACY})"
+              ;;
+            "Delete team")
+              yq -i 'del(.teams[] | select(.name == strenv(TEAM_NAME)))' "$TEAMS_FILE"
+              UPDATED=true
+              echo "✅ Deleted team entry: ${TEAM_NAME}"
+              ;;
+            "Give team access to a repository")
+              export EFFECTIVE_PERMISSION
+              yq -i '(.teams[] | select(.name == strenv(TEAM_NAME)) | .repositories) = ((.teams[] | select(.name == strenv(TEAM_NAME)) | .repositories) // []) + [{"repository": strenv(REPOSITORY), "permission": strenv(EFFECTIVE_PERMISSION)}]' "$TEAMS_FILE"
+              UPDATED=true
+              echo "✅ Added ${REPOSITORY} (${EFFECTIVE_PERMISSION}) access to team ${TEAM_NAME}"
+              ;;
+            "Remove team access to a repository")
+              yq -i 'del(.teams[] | select(.name == strenv(TEAM_NAME)) | .repositories[] | select(.repository == strenv(REPOSITORY)))' "$TEAMS_FILE"
+              UPDATED=true
+              echo "✅ Removed ${REPOSITORY} access from team ${TEAM_NAME}"
+              ;;
+            *)
+              echo "⚠️ Unknown request type: ${REQUEST_TYPE}"
+              ;;
+          esac
+
+          if [ "$UPDATED" = "true" ]; then
+            if yq eval '.' "$TEAMS_FILE" > /dev/null 2>&1; then
+              echo "✅ YAML syntax is valid"
+              echo "yaml-updated=true" >> $GITHUB_OUTPUT
+            else
+              echo "❌ YAML syntax validation failed"
+              echo "yaml-updated=false" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+          else
+            echo "No changes made to teams.yaml"
+            echo "yaml-updated=false" >> $GITHUB_OUTPUT
+          fi
+          echo "::endgroup::"
+
+      - name: Create branch and PR
+        if: steps.validate.outputs.validation-passed == 'true' && steps.update-yaml.outputs.yaml-updated == 'true'
         id: create-pr
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-            const yaml = require('js-yaml');
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          REQUEST_TYPE: ${{ steps.parse.outputs.request-type }}
+          TEAM_NAME: ${{ steps.parse.outputs.team-name }}
+          REPOSITORY: ${{ steps.parse.outputs.repository }}
+          PERMISSION: ${{ steps.parse.outputs.permission }}
+          REQUESTOR: ${{ github.event.client_payload.issue_user_login }}
+          ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
+        run: |
+          echo "::group::Create branch and PR"
+          BRANCH_NAME="team-management/issue-${ISSUE_NUMBER}-${TEAM_NAME}"
+          REQUEST_TYPE_LOWER=$(echo "$REQUEST_TYPE" | tr '[:upper:]' '[:lower:]')
 
-            const requestType = '${{ steps.parse.outputs.request-type }}';
-            const teamName = '${{ steps.parse.outputs.team-name }}';
-            const repository = '${{ steps.parse.outputs.repository }}';
-            const permission = '${{ steps.parse.outputs.permission }}';
-            const requestor = context.payload.client_payload.issue_user_login;
-            const issueNumber = context.payload.client_payload.issue_number;
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH_NAME"
+          git add data/teams.yaml
+          git commit -m "chore(teams): ${REQUEST_TYPE_LOWER} for team \`${TEAM_NAME}\`
 
-            // Read teams.yaml
-            const teamsFilePath = 'data/teams.yaml';
-            let teamsContent = fs.readFileSync(teamsFilePath, 'utf8');
-            let teamsData = yaml.load(teamsContent) || { teams: [] };
+          Related to issue #${ISSUE_NUMBER}
+          Requested by @${REQUESTOR}"
+                    git push origin "$BRANCH_NAME" || git push --force-with-lease origin "$BRANCH_NAME"
 
-            // Initialize teams array if not exists
-            if (!teamsData.teams) {
-              teamsData.teams = [];
-            }
+          # Check for existing open PR on this branch
+          EXISTING_PR=$(gh pr list --head "$BRANCH_NAME" --state open --json number --jq '.[0].number' 2>/dev/null || echo "")
 
-            let teamIndex = teamsData.teams.findIndex(t => t.name === teamName);
-            let updated = false;
+          if [ -n "$EXISTING_PR" ] && [ "$EXISTING_PR" != "null" ]; then
+            PR_NUMBER="$EXISTING_PR"
+            echo "Using existing PR: #${PR_NUMBER}"
+          else
+            PR_TITLE="chore(teams): ${REQUEST_TYPE_LOWER} - ${TEAM_NAME}"
+            PR_BODY="## Team Management Request
 
-            switch (requestType) {
-              case 'Create new team':
-                if (teamIndex === -1) {
-                  teamsData.teams.push({
-                    name: teamName,
-                    description: `Team created by @${requestor} via issue #${issueNumber}`,
-                    privacy: 'closed',
-                    maintainers: [requestor],
-                    members: [],
-                    repositories: []
-                  });
-                  updated = true;
-                }
-                break;
+          **Request Type:** ${REQUEST_TYPE}
+          **Team:** \`${TEAM_NAME}\`"
+                      [ -n "$REPOSITORY" ] && PR_BODY="${PR_BODY}
+          **Repository:** \`${REPOSITORY}\`"
+                      [ -n "$PERMISSION" ] && [ "$PERMISSION" != "pull" ] && PR_BODY="${PR_BODY}
+          **Permission:** ${PERMISSION}"
+                      PR_BODY="${PR_BODY}
+          **Requested By:** @${REQUESTOR}
+          **Issue:** #${ISSUE_NUMBER}"
 
-              case 'Delete team':
-                if (teamIndex !== -1) {
-                  teamsData.teams.splice(teamIndex, 1);
-                  updated = true;
-                }
-                break;
+            PR_NUMBER=$(gh pr create \
+              --title "$PR_TITLE" \
+              --body "$PR_BODY" \
+              --base main \
+              --head "$BRANCH_NAME" \
+              --json number --jq '.number')
+            echo "Created PR: #${PR_NUMBER}"
+          fi
 
-              case 'Give team access to a repository':
-                if (teamIndex !== -1) {
-                  const repoIndex = teamsData.teams[teamIndex].repositories.findIndex(r => r.repository === repository);
-                  if (repoIndex === -1) {
-                    teamsData.teams[teamIndex].repositories.push({
-                      repository: repository,
-                      permission: permission
-                    });
-                    updated = true;
-                  }
-                }
-                break;
-
-              case 'Remove team access to a repository':
-                if (teamIndex !== -1) {
-                  const repoIndex = teamsData.teams[teamIndex].repositories.findIndex(r => r.repository === repository);
-                  if (repoIndex !== -1) {
-                    teamsData.teams[teamIndex].repositories.splice(repoIndex, 1);
-                    updated = true;
-                  }
-                }
-                break;
-            }
-
-            if (!updated) {
-              console.log('No changes needed to teams.yaml');
-              process.exit(0);
-            }
-
-            // Write updated teams.yaml
-            const updatedContent = yaml.dump(teamsData, { lineWidth: -1 });
-            fs.writeFileSync(teamsFilePath, updatedContent);
-
-            // Create/update branch and PR
-            const branchName = `team-management/issue-${issueNumber}-${teamName}`;
-            const commitMessage = `chore(teams): ${requestType.toLowerCase()} for team \`${teamName}\`\n\nRelated to issue #${issueNumber}\nRequested by @${requestor}`;
-
-            // Get current commit
-            const { data: ref } = await github.rest.git.getRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: 'heads/main'
-            });
-            const baseCommitSha = ref.object.sha;
-
-            // Create blob for updated file
-            const { data: blob } = await github.rest.git.createBlob({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              content: updatedContent,
-              encoding: 'utf-8'
-            });
-
-            // Get current tree
-            const { data: baseTree } = await github.rest.git.getTree({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tree_sha: baseCommitSha,
-              recursive: true
-            });
-
-            // Create new tree with updated file
-            const { data: newTree } = await github.rest.git.createTree({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              base_tree: baseTree.sha,
-              tree: [{
-                path: teamsFilePath,
-                mode: '100644',
-                type: 'blob',
-                sha: blob.sha
-              }]
-            });
-
-            // Create commit
-            const { data: newCommit } = await github.rest.git.createCommit({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              message: commitMessage,
-              tree: newTree.sha,
-              parents: [baseCommitSha]
-            });
-
-            // Create/update branch
-            try {
-              await github.rest.git.updateRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: `heads/${branchName}`,
-                sha: newCommit.sha
-              });
-              console.log(`Updated branch: ${branchName}`);
-            } catch (e) {
-              if (e.status === 422) {
-                // Branch doesn't exist, create it
-                await github.rest.git.createRef({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  ref: `refs/heads/${branchName}`,
-                  sha: newCommit.sha
-                });
-                console.log(`Created branch: ${branchName}`);
-              } else {
-                throw e;
-              }
-            }
-
-            // Create or update PR
-            const { data: existingPRs } = await github.rest.pulls.list({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              head: `${context.repo.owner}:${branchName}`,
-              state: 'open'
-            });
-
-            let prNumber;
-            if (existingPRs.length > 0) {
-              prNumber = existingPRs[0].number;
-              console.log(`Using existing PR: #${prNumber}`);
-            } else {
-              const prTitle = `chore(teams): ${requestType.toLowerCase()} - ${teamName}`;
-              const prBody = `## Team Management Request\n\n**Request Type:** ${requestType}\n**Team:** \`${teamName}\`\n${repository ? `**Repository:** \`${repository}\`\n` : ''}${permission && permission !== 'pull' ? `**Permission:** ${permission}\n` : ''}**Requested By:** @${requestor}\n**Issue:** #${issueNumber}`;
-
-              const { data: newPR } = await github.rest.pulls.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: prTitle,
-                body: prBody,
-                head: branchName,
-                base: 'main'
-              });
-              prNumber = newPR.number;
-              console.log(`Created PR: #${prNumber}`);
-            }
-
-            core.setOutput('pr-number', prNumber);
+          echo "pr-number=${PR_NUMBER}" >> $GITHUB_OUTPUT
+          echo "::endgroup::"
 
       - name: Post PR creation summary to issue
-        if: steps.validate.outputs.validation-passed == 'true' && always()
+        if: always() && steps.create-pr.outputs.pr-number != ''
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
