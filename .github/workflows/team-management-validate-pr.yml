@@ -369,13 +369,13 @@ jobs:
           **Requested By:** @${REQUESTOR}
           **Issue:** #${ISSUE_NUMBER}"
 
-            PR_NUMBER=$(gh pr create \
+            PR_URL=$(gh pr create \
               --title "$PR_TITLE" \
               --body "$PR_BODY" \
               --base main \
-              --head "$BRANCH_NAME" \
-              --json number --jq '.number')
-            echo "Created PR: #${PR_NUMBER}"
+              --head "$BRANCH_NAME")
+            PR_NUMBER="${PR_URL##*/}"
+            echo "Created PR: #${PR_NUMBER} (${PR_URL})"
           fi
 
           echo "pr-number=${PR_NUMBER}" >> $GITHUB_OUTPUT
