@@ -24,3 +24,15 @@ repository_defaults:
   topics:
     - maybank
     - mbb
+
+# Default Team Configuration
+# These values are used as defaults for new teams created via the automated workflow
+team_defaults:
+  # Privacy level for new teams: closed (visible to org members) or secret (only visible to members)
+  privacy: closed
+
+  # Default permission level when granting a team access to a repository
+  # Options: pull, triage, push, maintain, admin
+  default_repository_permission: push
+
+
