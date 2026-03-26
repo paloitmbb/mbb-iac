@@ -21,3 +21,14 @@ ghas_config = {
     enable_dependency_graph            = true
   }
 }
+
+# Teams Configuration
+teams = [
+  {
+    name        = "engineering"
+    description = "Engineering Team"
+    privacy     = "closed"
+    members     = ["user1", "user2"]
+    maintainers = ["lead"]
+  }
+]
