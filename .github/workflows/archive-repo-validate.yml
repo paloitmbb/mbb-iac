@@ -97,6 +97,15 @@ jobs:
           else
             VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Name | \`${REPO_NAME}\` | ✅ Provided |\n"
             echo "✅ Repository name provided: ${REPO_NAME}"
+            
+            if [[ -z "$JUSTIFICATION" ]]; then
+              VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Business justification is required"
+              VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Business Justification | \`(empty)\` | ❌ Missing |\n"
+              echo "❌ Business justification is empty"
+            else
+              VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Business Justification | \`${JUSTIFICATION:0:50}...\` | ✅ Provided |\n"
+              echo "✅ Business justification provided"
+            fi
 
             # --- Check if repository exists on GitHub ---
             echo "📡 Checking if repository exists on GitHub..."
@@ -123,8 +132,24 @@ jobs:
                   echo "📋 Checking YAML configuration..."
                   if grep -qP "^\s+-?\s*name:\s+['\"]?${REPO_NAME}['\"]?\s*$" data/repositories.yaml; then
                     VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ✅ Found |\n"
-                    VALIDATION_PASSED="true"
                     echo "✅ Repository found in YAML config"
+
+                    # Check if already archived in YAML
+                    ALREADY_ARCHIVED=$(awk -v name="${REPO_NAME}" '
+                      /name:.*'"${REPO_NAME}"'/ { found=1 }
+                      found && /archived:[[:space:]]*true/ { print "true"; exit }
+                      found && /^[[:space:]]*-[[:space:]]*name:/ && !/'"${REPO_NAME}"'/ { exit }
+                    ' data/repositories.yaml)
+
+                    if [[ "$ALREADY_ARCHIVED" == "true" ]]; then
+                      VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${REPO_NAME}\` is already set to \`archived: true\` in \`data/repositories.yaml\`"
+                      VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Archived Status | \`data/repositories.yaml\` | ❌ Already archived |\n"
+                      echo "❌ Repository already marked as archived in YAML"
+                    else
+                      VALIDATION_PASSED="true"
+                      VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Archived Status | \`data/repositories.yaml\` | ✅ Not archived |\n"
+                      echo "✅ Repository not yet archived in YAML"
+                    fi
                   else
                     VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${REPO_NAME}\` not found in \`data/repositories.yaml\`"
                     VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ❌ Not found |\n"
@@ -143,6 +168,7 @@ jobs:
               VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Exists | \`${ORG_NAME}/${REPO_NAME}\` | ❌ Not found |\n"
             fi
           fi
+
 
           # --- Build full summary ---
           FULL_SUMMARY="| Check | Detail | Result |\n|-------|--------|--------|\n${VALIDATION_SUMMARY}"
@@ -255,7 +281,7 @@ jobs:
       # Step 4: Notify validation result on the issue
       # -----------------------------------------------------------------------
       - name: Notify validation result
-        if: success() || failure()
+        if: always()
         uses: actions/github-script@v7
         env:
           VALIDATION_PASSED: ${{ steps.validate.outputs.validation-passed }}
@@ -390,6 +416,23 @@ jobs:
           # Delete remote branch if it exists (ignore errors)
           git push origin --delete "${BRANCH_NAME}" 2>/dev/null || true
 
+          echo "🔍 Checking for existing PR on branch ${BRANCH_NAME}..."
+          EXISTING_PR=$(gh pr list \
+            --head "${BRANCH_NAME}" \
+            --state open \
+            --json number \
+            --jq '.[0].number' 2>/dev/null || true)
+
+          if [[ -n "$EXISTING_PR" && "$EXISTING_PR" =~ ^[0-9]+$ ]]; then
+            echo "⚠️ Found existing open PR #${EXISTING_PR} — closing it before re-creating"
+            gh pr close "${EXISTING_PR}" \
+              --comment "Closing — superseded by re-run of archive workflow for issue #${ISSUE_NUMBER}" \
+              --delete-branch 2>/dev/null || true
+            echo "✅ Closed existing PR #${EXISTING_PR}"
+          else
+            echo "✅ No existing open PR found for branch ${BRANCH_NAME}"
+          fi
+                    
           # Create and switch to feature branch
           git checkout -b "${BRANCH_NAME}"
           echo "✅ Created branch: ${BRANCH_NAME}"
@@ -424,7 +467,7 @@ jobs:
           # Find repo name line index
           $repoLineIndex = -1
           for ($i = 0; $i -lt $lines.Count; $i++) {
-            if ($lines[$i] -match ('^[\s]*-?[\s]*name:[\s]+' + [regex]::Escape($repoName) + '[\s]*$')) {
+            if ($lines[$i] -match ('^[\s]*-?[\s]*name:[\s]+[''"]?' + [regex]::Escape($repoName) + '[''"]?[\s]*$')) {
               $repoLineIndex = $i
               break
             }
@@ -487,16 +530,23 @@ jobs:
           }
 
           # Pass 2: Build output with archived: true inserted after name line
-          for ($i = 0; $i -lt $lines.Count; $i++) {
-            $newLines.Add($lines[$i])
-            if ($i -eq $repoLineIndex -and $archivedLineIndex -eq -1) {
-              $newLines.Add('    archived: true')
-              Write-Host "✅ Inserted 'archived: true' after line $($i + 1)"
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+
+              # Case 1: archived field exists — replace the line entirely
+              if ($i -eq $archivedLineIndex) {
+                $newLines.Add('    archived: true')
+                Write-Host "✅ Updated 'archived: false' to 'archived: true' at line $($i + 1)"
+                continue    # skip adding the original archived: false line
+              }
+
+              $newLines.Add($lines[$i])
+
+              # Case 2: archived field missing — insert after name line
+              if ($i -eq $repoLineIndex -and $archivedLineIndex -eq -1) {
+                $newLines.Add('    archived: true')
+                Write-Host "✅ Inserted 'archived: true' after name line $($i + 1)"
+              }
             }
-          }
-          if ($archivedLineIndex -ne -1) {
-            Write-Host "✅ Repository already has 'archived' field — no insertion needed"
-          }
 
           # Write to temp file first
           $tempFile = [System.IO.Path]::GetTempFileName()
@@ -529,7 +579,7 @@ jobs:
           Write-Host "--- Updated section ---"
           $finalLines = Get-Content $yamlFile
           for ($i = 0; $i -lt $finalLines.Count; $i++) {
-            if ($finalLines[$i] -match ('name:\s+' + [regex]::Escape($repoName))) {
+            if ($finalLines[$i] -match ('name:\s+[''"]?' + [regex]::Escape($repoName) + '[''"]?')) {
               $end = [Math]::Min($i + 8, $finalLines.Count - 1)
               $finalLines[$i..$end] | ForEach-Object { Write-Host $_ }
               break
@@ -573,8 +623,15 @@ jobs:
             )
           PR_TITLE="feat: 🗃️ archive repository \`${REPO_NAME}\`"
 
+          # Check for actual staged changes before committing
+          if git diff --cached --quiet; then
+            echo "::error::No changes detected in ${YAML_FILE} — repository may already be archived in YAML"
+            exit 1
+          fi
+
           git commit -m "$COMMIT_MSG" || {
-            echo "⚠️ Nothing to commit (repository may already be archived)"
+            echo "::error::Commit failed unexpectedly"
+            exit 1
           }
 
           # Push the branch
@@ -643,16 +700,25 @@ jobs:
             --force 2>/dev/null || true
 
           # Create PR using gh CLI
-          PR_URL=$(gh pr create \
-            --base main \
-            --head "${BRANCH_NAME}" \
-            --title "${PR_TITLE}" \
-            --body "${PR_BODY}" \
-            --label "archive" \
-            --label "infrastructure") || {
-            echo "::error::Failed to create PR"
-            exit 1
-          }
+              PR_URL=$(gh pr create \
+                --base main \
+                --head "${BRANCH_NAME}" \
+                --title "${PR_TITLE}" \
+                --body "${PR_BODY}" \
+                --label "archive" \
+                --label "infrastructure" 2>/dev/null) || {
+
+                echo "⚠️ gh pr create failed — checking if PR already exists..."
+                PR_URL=$(gh pr view "${BRANCH_NAME}" --json url --jq '.url' 2>/dev/null || true)
+
+                if [[ -z "$PR_URL" ]]; then
+                  echo "::error::Failed to create PR and no existing PR found"
+                  exit 1
+                fi
+                echo "✅ Found existing PR: ${PR_URL}"
+              }
+
+
 
           # Extract PR number from URL (portable - works on all systems)
           PR_NUMBER=$(echo "$PR_URL" | sed 's|.*/pull/||' | tr -d '[:space:]')

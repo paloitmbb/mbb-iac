@@ -104,7 +104,7 @@ jobs:
     if: >-
       needs.terraform-apply.result == 'success' &&
       (github.event_name == 'workflow_dispatch' ||
-      !contains(github.event.head_commit.message, 'archive repository'))
+      contains(github.event.head_commit.modified, 'data/repositories.yaml'))
 
     steps:
       - name: Checkout

@@ -1,0 +1,253 @@
+name: "Terraform Import: State Sync"
+
+# Imports GitHub repositories into Terraform state that are defined in
+# data/repositories.yaml but not yet present in the state file.
+#
+# Run this AFTER merging a drift-detection PR and BEFORE terraform-apply.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to import into"
+        required: true
+        type: choice
+        options:
+          - dev
+          - production
+      auto_apply:
+        description: "Run terraform apply after successful import"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write  # Required for OIDC authentication with Azure
+
+jobs:
+  terraform-import:
+    name: 📥 Import unmanaged repos into state
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: ${{ fromJSON(format('["{0}"]', inputs.environment)) }}
+
+    environment:
+      name: ${{ matrix.environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.5
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: |
+          terraform init -backend-config=environments/${{ matrix.environment }}/backend.tfvars
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Detect repos requiring import
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+          pip install pyyaml --quiet
+
+          python3 - << 'PYEOF'
+          import json, os, subprocess, yaml
+
+          # ── 1. Get repo names from YAML ──
+          with open("data/repositories.yaml") as f:
+              yaml_data = yaml.safe_load(f) or {"repositories": []}
+          yaml_names = {r["name"] for r in yaml_data.get("repositories", [])}
+          print(f"📄 {len(yaml_names)} repo(s) defined in repositories.yaml")
+
+          # ── 2. Get repo keys already in Terraform state ──
+          result = subprocess.run(
+              ["terraform", "state", "list"],
+              capture_output=True, text=True,
+          )
+          state_lines = result.stdout.strip().splitlines() if result.returncode == 0 else []
+
+          state_repo_keys = set()
+          for line in state_lines:
+              # Match: module.github_repositories["REPO_NAME"].github_repository.this
+              if 'module.github_repositories["' in line and "github_repository.this" in line:
+                  key = line.split('module.github_repositories["')[1].split('"]')[0]
+                  state_repo_keys.add(key)
+          print(f"🗂️  {len(state_repo_keys)} repo(s) already in Terraform state")
+
+          # ── 3. Compute repos needing import ──
+          to_import = sorted(yaml_names - state_repo_keys)
+          print(f"\n📥 {len(to_import)} repo(s) to import:")
+          for name in to_import:
+              print(f"  • {name}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"count={len(to_import)}\n")
+              out.write(f"repos-json={json.dumps(to_import)}\n")
+
+          # Persist for next step
+          with open("/tmp/repos_to_import.json", "w") as f:
+              json.dump(to_import, f)
+          PYEOF
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Import repositories into Terraform state
+        if: steps.detect.outputs.count != '0'
+        id: import
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMPORTED=0
+          FAILED=0
+          FAILED_REPOS=""
+
+          REPOS=$(python3 -c "import json; [print(r) for r in json.load(open('/tmp/repos_to_import.json'))]")
+
+          for REPO_NAME in $REPOS; do
+            echo "📥 Importing $REPO_NAME..."
+            if terraform import \
+                -var-file="environments/${{ matrix.environment }}/terraform.tfvars" \
+                "module.github_repositories[\"${REPO_NAME}\"].github_repository.this" \
+                "$REPO_NAME" 2>&1; then
+              echo "  ✅ Successfully imported $REPO_NAME"
+              IMPORTED=$((IMPORTED + 1))
+            else
+              echo "  ❌ Failed to import $REPO_NAME"
+              FAILED=$((FAILED + 1))
+              FAILED_REPOS="${FAILED_REPOS}${REPO_NAME}, "
+            fi
+            echo ""
+          done
+
+          echo "imported=$IMPORTED" >> $GITHUB_OUTPUT
+          echo "failed=$FAILED" >> $GITHUB_OUTPUT
+          echo "failed-repos=${FAILED_REPOS%, }" >> $GITHUB_OUTPUT
+
+          if [ "$FAILED" -gt 0 ]; then
+            echo "⚠️  $FAILED repo(s) failed to import: ${FAILED_REPOS%, }"
+          fi
+          echo "✅ Import complete: $IMPORTED succeeded, $FAILED failed"
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Terraform Plan (verification)
+        if: steps.detect.outputs.count != '0'
+        id: plan
+        run: |
+          echo "📋 Running terraform plan to verify import..."
+          terraform plan \
+            -var-file=environments/${{ matrix.environment }}/terraform.tfvars \
+            -detailed-exitcode \
+            -out=environments/${{ matrix.environment }}/tfplan 2>&1 | tee /tmp/plan_output.txt
+
+          PLAN_EXIT=${PIPESTATUS[0]}
+          echo "plan-exit-code=$PLAN_EXIT" >> $GITHUB_OUTPUT
+
+          if [ "$PLAN_EXIT" -eq 0 ]; then
+            echo "✅ No changes detected — state is fully in sync"
+          elif [ "$PLAN_EXIT" -eq 2 ]; then
+            echo "⚠️  Plan shows changes — review the output above"
+            echo "   This is expected if imported repo settings differ slightly from YAML config"
+          else
+            echo "❌ Plan failed"
+            exit 1
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Terraform Apply (optional)
+        if: inputs.auto_apply && steps.detect.outputs.count != '0' && steps.plan.outputs.plan-exit-code != '1'
+        run: |
+          echo "🚀 Applying to reconcile state..."
+          terraform apply -auto-approve environments/${{ matrix.environment }}/tfplan
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## 📥 Terraform Import Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          COUNT="${{ steps.detect.outputs.count }}"
+          if [ "$COUNT" = "0" ]; then
+            echo "✅ All repositories in \`data/repositories.yaml\` are already in Terraform state." >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          IMPORTED="${{ steps.import.outputs.imported || '0' }}"
+          FAILED="${{ steps.import.outputs.failed || '0' }}"
+          FAILED_REPOS="${{ steps.import.outputs.failed-repos }}"
+
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Repos to import | $COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Successfully imported | $IMPORTED |" >> $GITHUB_STEP_SUMMARY
+          echo "| Failed | $FAILED |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -n "$FAILED_REPOS" ]; then
+            echo "### ❌ Failed Imports" >> $GITHUB_STEP_SUMMARY
+            echo "$FAILED_REPOS" | tr ',' '\n' | while read -r repo; do
+              repo=$(echo "$repo" | xargs)
+              [ -n "$repo" ] && echo "- \`$repo\`" >> $GITHUB_STEP_SUMMARY
+            done
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          PLAN_EXIT="${{ steps.plan.outputs.plan-exit-code || 'N/A' }}"
+          if [ "$PLAN_EXIT" = "0" ]; then
+            echo "### ✅ Plan Verification" >> $GITHUB_STEP_SUMMARY
+            echo "No changes detected — state is fully synchronized." >> $GITHUB_STEP_SUMMARY
+          elif [ "$PLAN_EXIT" = "2" ]; then
+            echo "### ⚠️ Plan Verification" >> $GITHUB_STEP_SUMMARY
+            echo "Plan shows changes. Review the plan output and run \`terraform apply\` to reconcile." >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ inputs.auto_apply }}" = "true" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🚀 Auto-Apply" >> $GITHUB_STEP_SUMMARY
+            echo "Terraform apply was executed automatically after import." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 📋 Next Steps" >> $GITHUB_STEP_SUMMARY
+            echo "1. Review the plan output above" >> $GITHUB_STEP_SUMMARY
+            echo "2. Run \`terraform apply\` (or the Terraform Apply workflow) to reconcile any remaining drift" >> $GITHUB_STEP_SUMMARY
+          fi

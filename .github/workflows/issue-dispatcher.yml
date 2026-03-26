@@ -34,7 +34,8 @@ jobs:
               { prefix: '[REPO ARCHIVE]',    eventType: 'repo-archive'    },
               { prefix: '[COPILOT LICENSE]', eventType: 'copilot-license' },
               { prefix: '[REPO REQUEST]',    eventType: 'repo-request'    },
-              { prefix: '[TEAM REQUEST]',    eventType: 'team-management' }
+              { prefix: '[TEAM REQUEST]',    eventType: 'team-management' },
+              { prefix: '[team-management-terraform]', eventType: 'team-management-terraform' }
             ];
 
             let matched = false;

@@ -15,6 +15,24 @@ locals {
   all_repositories = coalescelist(var.repositories, local.yaml_repositories)
 }
 
+# Load teams from YAML data file
+locals {
+  teams_file = "${path.module}/data/teams.yaml"
+  teams_data = try(yamldecode(file(local.teams_file)), { teams = [] })
+
+  # Normalize YAML teams to ensure all optional attributes exist
+  all_teams = [
+    for team in local.teams_data.teams : merge(team, {
+      description  = try(team.description, "")
+      privacy      = try(team.privacy, "closed")
+      maintainers  = try(team.maintainers, [])
+      members      = try(team.members, [])
+      repositories = try(team.repositories, [])
+      deleted      = try(team.deleted, false)
+    })
+  ]
+}
+
 # Organization Management
 module "github_organization" {
   source = "./modules/github-organization"
@@ -58,6 +76,22 @@ module "github_repositories" {
   enable_secret_scanning_push_protection = try(each.value.security.enable_secret_scanning_push_protection, false)
 
   depends_on = [module.github_organization]
+}
+
+# Team Management
+module "github_teams" {
+  source   = "./modules/github-team"
+  for_each = { for team in local.all_teams : team.name => team }
+
+  team_name    = each.value.name
+  description  = each.value.description
+  privacy      = each.value.privacy
+  maintainers  = each.value.maintainers
+  members      = each.value.members
+  repositories = each.value.repositories
+  deleted      = each.value.deleted
+
+  depends_on = [module.github_organization, module.github_repositories]
 }
 
 # Security Configuration (Dependabot security updates)
