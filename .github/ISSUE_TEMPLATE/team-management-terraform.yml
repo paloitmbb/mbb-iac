@@ -1,6 +1,6 @@
 name: "👥 Team Management Request"
 description: Request team role changes, team access to repositories, or create a new team
-title: "[TEAM REQUEST] "
+title: "[team-management-terraform] "
 labels: ["team-request", "pending-review"]
 assignees:
   - devsecops-team
@@ -69,8 +69,7 @@ body:
         - pull
         - triage
         - push
-        - maintain
-        - admin
+        - repo-owner
       default: 0
     validations:
       required: false

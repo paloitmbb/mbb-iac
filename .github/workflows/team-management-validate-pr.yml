@@ -13,7 +13,7 @@ jobs:
   validate-and-create-pr:
     name: Validate Request & Create PR
     runs-on: ubuntu-latest
-    if: startsWith(github.event.client_payload.issue_title, '[TEAM REQUEST]')
+    if: startsWith(github.event.client_payload.issue_title, '[team-management-terraform]')
     outputs:
       request-type: ${{ steps.parse.outputs.request-type }}
       team-name: ${{ steps.parse.outputs.team-name }}
