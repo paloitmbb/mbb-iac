@@ -18,4 +18,8 @@
 #
 # Permission levels: pull, push, repo-owner, triage, maintain, admin
 
-teams: []
+teams:
+  - name: mob-devsecops-admin
+    description: 'Team created by @akshhayapaloit via issue #280'
+    privacy: closed
+    repositories: []
