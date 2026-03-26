@@ -23,7 +23,7 @@ jobs:
       validation-passed: ${{ steps.validate.outputs.validation-passed }}
       errors: ${{ steps.validate.outputs.errors }}
       validations: ${{ steps.validate.outputs.validations }}
-      pr-number: ${{ steps.create-pr.outputs.pr-number }}
+      pr-number: ${{ steps.create-pr-gh.outputs.pr-number }}
 
     steps:
       - name: Checkout code
@@ -335,59 +335,98 @@ jobs:
           REQUESTOR: ${{ github.event.client_payload.issue_user_login }}
           ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
         run: |
-          echo "::group::Create branch and PR"
+          echo "::group::Create Branch and Commit"
           BRANCH_NAME="team-management/issue-${ISSUE_NUMBER}-${TEAM_NAME}"
           REQUEST_TYPE_LOWER=$(echo "$REQUEST_TYPE" | tr '[:upper:]' '[:lower:]')
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$BRANCH_NAME"
+
+          # Delete remote branch if it exists (ignore errors)
+          echo "Cleaning up existing remote branch (if any)..."
+          git push origin --delete "${BRANCH_NAME}" 2>/dev/null || true
+
+          # Create and checkout new branch
+          git checkout -b "${BRANCH_NAME}"
+          echo "✅ Created branch: ${BRANCH_NAME}"
+
+          # Stage and commit
           git add data/teams.yaml
           git commit -m "chore(teams): ${REQUEST_TYPE_LOWER} for team \`${TEAM_NAME}\`
 
-          Related to issue #${ISSUE_NUMBER}
-          Requested by @${REQUESTOR}"
-                    git push origin "$BRANCH_NAME" || git push --force-with-lease origin "$BRANCH_NAME"
+Related to issue #${ISSUE_NUMBER}
+Requested by @${REQUESTOR}"
 
-          # Check for existing open PR on this branch
-          EXISTING_PR=$(gh pr list --head "$BRANCH_NAME" --state open --json number --jq '.[0].number' 2>/dev/null || echo "")
+          git push origin "${BRANCH_NAME}"
+          echo "✅ Pushed to remote: ${BRANCH_NAME}"
 
-          if [ -n "$EXISTING_PR" ] && [ "$EXISTING_PR" != "null" ]; then
-            PR_NUMBER="$EXISTING_PR"
-            echo "Using existing PR: #${PR_NUMBER}"
-          else
-            PR_TITLE="chore(teams): ${REQUEST_TYPE_LOWER} - ${TEAM_NAME}"
-            PR_BODY="## Team Management Request
-
-          **Request Type:** ${REQUEST_TYPE}
-          **Team:** \`${TEAM_NAME}\`"
-                      [ -n "$REPOSITORY" ] && PR_BODY="${PR_BODY}
-          **Repository:** \`${REPOSITORY}\`"
-                      [ -n "$PERMISSION" ] && [ "$PERMISSION" != "pull" ] && PR_BODY="${PR_BODY}
-          **Permission:** ${PERMISSION}"
-                      PR_BODY="${PR_BODY}
-          **Requested By:** @${REQUESTOR}
-          **Issue:** #${ISSUE_NUMBER}"
-
-            PR_URL=$(gh pr create \
-              --title "$PR_TITLE" \
-              --body "$PR_BODY" \
-              --base main \
-              --head "$BRANCH_NAME")
-            PR_NUMBER="${PR_URL##*/}"
-            echo "Created PR: #${PR_NUMBER} (${PR_URL})"
-          fi
-
-          echo "pr-number=${PR_NUMBER}" >> $GITHUB_OUTPUT
+          echo "branch-name=${BRANCH_NAME}" >> $GITHUB_OUTPUT
           echo "::endgroup::"
 
+      - name: Create Pull Request
+        if: steps.validate.outputs.validation-passed == 'true' && steps.update-yaml.outputs.yaml-updated == 'true'
+        id: create-pr-gh
+        uses: actions/github-script@v7
+        env:
+          REQUEST_TYPE: ${{ steps.parse.outputs.request-type }}
+          TEAM_NAME: ${{ steps.parse.outputs.team-name }}
+          REPOSITORY: ${{ steps.parse.outputs.repository }}
+          PERMISSION: ${{ steps.parse.outputs.permission }}
+          REQUESTOR: ${{ github.event.client_payload.issue_user_login }}
+          ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
+          BRANCH_NAME: ${{ steps.create-pr.outputs.branch-name }}
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const requestType = process.env.REQUEST_TYPE;
+            const teamName = process.env.TEAM_NAME;
+            const repository = process.env.REPOSITORY;
+            const permission = process.env.PERMISSION;
+            const requestor = process.env.REQUESTOR;
+            const issueNumber = process.env.ISSUE_NUMBER;
+            const branchName = process.env.BRANCH_NAME;
+
+            console.log('::group::Create Pull Request');
+
+            const requestTypeLower = requestType.toLowerCase();
+            const prTitle = `chore(teams): ${requestTypeLower} - ${teamName}`;
+
+            let prBody = `## Team Management Request\n\n**Request Type:** ${requestType}\n**Team:** \`${teamName}\``;
+            if (repository) prBody += `\n**Repository:** \`${repository}\``;
+            if (permission && permission !== 'pull') prBody += `\n**Permission:** ${permission}`;
+            prBody += `\n**Requested By:** @${requestor}\n**Issue:** #${issueNumber}`;
+
+            const pr = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: prTitle,
+              head: branchName,
+              base: 'main',
+              body: prBody
+            });
+
+            console.log(`✅ Pull request created: #${pr.data.number}`);
+            console.log(`URL: ${pr.data.html_url}`);
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.data.number,
+              labels: ['team-management', 'automated']
+            });
+
+            core.setOutput('pr-number', pr.data.number.toString());
+            core.setOutput('pr-url', pr.data.html_url);
+            console.log('::endgroup::');
+
       - name: Post PR creation summary to issue
-        if: always() && steps.create-pr.outputs.pr-number != ''
+        if: always() && steps.create-pr-gh.outputs.pr-number != ''
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
-            const prNumber = '${{ steps.create-pr.outputs.pr-number }}';
+            const prNumber = '${{ steps.create-pr-gh.outputs.pr-number }}';
+            const prUrl = '${{ steps.create-pr-gh.outputs.pr-url }}';
             const requestType = `${{ steps.parse.outputs.request-type }}`;
             const teamName = `${{ steps.parse.outputs.team-name }}`;
 
@@ -396,9 +435,9 @@ jobs:
             comment += `A pull request has been created to apply the following change:\n\n`;
             comment += `- **Request Type:** ${requestType}\n`;
             comment += `- **Team:** \`${teamName}\`\n`;
-            comment += `- **PR:** [#${prNumber}](${context.payload.repository.html_url}/pull/${prNumber})\n\n`;
+            comment += `- **PR:** [#${prNumber}](${prUrl})\n\n`;
             comment += '### 📝 Next Steps\n\n';
-            comment += `1. Review the changes in [PR #${prNumber}](${context.payload.repository.html_url}/pull/${prNumber})\n`;
+            comment += `1. Review the changes in [PR #${prNumber}](${prUrl})\n`;
             comment += '2. Approve the PR if changes look correct\n';
             comment += '3. Merge the PR to apply changes automatically via Terraform\n';
 
