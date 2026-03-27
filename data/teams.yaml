@@ -18,8 +18,4 @@
 #
 # Permission levels: pull, triage, push, maintain, admin
 
-teams:
-  - name: paloit-devsecops
-    description: 'Team created by @akshhayapaloit via issue #282'
-    privacy: closed
-    repositories: []
+teams: []
