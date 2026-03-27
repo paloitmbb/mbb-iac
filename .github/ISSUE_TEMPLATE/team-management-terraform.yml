@@ -69,7 +69,8 @@ body:
         - pull
         - triage
         - push
-        - repo-owner
+        - maintain
+        - admin
       default: 0
     validations:
       required: false
