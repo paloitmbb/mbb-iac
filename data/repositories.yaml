@@ -23,7 +23,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-
   - name: mbb-api-gateway
     description: API Gateway for microservices orchestration
     visibility: private
@@ -44,7 +43,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-
   - name: mbb-mobile-app
     description: Mobile banking application (iOS & Android)
     visibility: private
@@ -66,7 +64,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-
   - name: mbb-new-service
     description: "Mbb New Service using React"
     visibility: private
@@ -83,7 +80,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-
   - name: mbb-test-0
     archived: true
     description: "Mbb Test 0 using React"
@@ -101,7 +97,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: false
       enable_dependabot_security_updates: false
-
   - name: mbb-new-test1
     archived: true
     description: "Mbb New Test1 using Java Springboot"
@@ -119,7 +114,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: false
       enable_dependabot_security_updates: false
-
   - name: mbb-python-api
     description: "Mbb Python Api using Python"
     visibility: private
@@ -136,7 +130,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-
   - name: mbb-rest-api
     description: "Mbb Rest Api using Python"
     visibility: private
@@ -153,7 +146,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-
   - name: mbb-api-crud
     archived: true
     description: "Mbb Api Crud using Python"
@@ -171,7 +163,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: false
       enable_dependabot_security_updates: false
-
   - name: mbb-repo-testing
     description: "Mbb Repo Testing using Python"
     visibility: private
@@ -188,7 +179,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-
   - name: mbb-test-node
     description: "Mbb Test Node using NodeJS"
     visibility: private
@@ -205,7 +195,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-
   - name: mbb-temp-repo
     description: "Mbb Temp Repo using Python"
     visibility: private
@@ -222,7 +211,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-
   - name: temp-python-repo
     description: "Temp Python Repo using Python"
     visibility: private
@@ -239,7 +227,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-
   - name: test-java-springboot
     description: "Test Java Springboot using Java-Springboot"
     visibility: private
@@ -256,7 +243,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-
   - name: mbb-test-tf-remove-depresiaciation
     description: "Mbb Test Tf Remove Depresiaciation using Python"
     visibility: private
@@ -273,7 +259,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-
   - name: mbb-repo-create-test002
     description: "Mbb Repo Create Test002 using Java-Springboot"
     visibility: private
@@ -290,24 +275,6 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-
-  - name: mbb-demo-app-001
-    description: "Mbb Demo App 001 using React"
-    visibility: private
-    features:
-      has_issues: true
-      has_projects: true
-      has_wiki: false
-    default_branch: main
-    topics: ["maybank", "mbb", "react"]
-    security:
-      enable_vulnerability_alerts: true
-      enable_advanced_security: false
-      enable_secret_scanning: false
-      enable_secret_scanning_push_protection: false
-      enable_dependabot_alerts: true
-      enable_dependabot_security_updates: true
-
   - name: mbb-demo-app-002
     description: "Mbb Demo App 002 using React"
     visibility: private
