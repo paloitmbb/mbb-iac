@@ -22,6 +22,4 @@ teams:
   - name: paloit-devsecops
     description: 'Team created by @akshhayapaloit via issue #282'
     privacy: closed
-    repositories:
-      - repository: mbb-mobile-app
-        permission: admin
+    repositories: []
