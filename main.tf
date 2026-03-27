@@ -21,7 +21,7 @@ locals {
   teams_data = try(yamldecode(file(local.teams_file)), { teams = [] })
 
   # Normalize YAML teams to ensure all optional attributes exist
-  all_teams = [
+  yaml_teams = [
     for team in local.teams_data.teams : merge(team, {
       description  = try(team.description, "")
       privacy      = try(team.privacy, "closed")
@@ -31,6 +31,9 @@ locals {
       deleted      = try(team.deleted, false)
     })
   ]
+
+  # Merge teams from YAML file and tfvars (tfvars takes precedence if both exist)
+  all_teams = coalescelist(var.teams, local.yaml_teams)
 }
 
 # Organization Management

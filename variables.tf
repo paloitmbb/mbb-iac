@@ -43,6 +43,23 @@ variable "repositories" {
   default = []
 }
 
+variable "teams" {
+  description = "List of teams to manage. If provided, takes precedence over data/teams.yaml."
+  type = list(object({
+    name        = string
+    description = optional(string, "")
+    privacy     = optional(string, "closed")
+    maintainers = optional(list(string), [])
+    members     = optional(list(string), [])
+    repositories = optional(list(object({
+      repository = string
+      permission = string
+    })), [])
+    deleted = optional(bool, false)
+  }))
+  default = []
+}
+
 variable "ghas_config" {
   description = "GitHub Advanced Security configuration"
   type = object({
