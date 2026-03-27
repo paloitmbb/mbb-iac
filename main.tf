@@ -12,7 +12,7 @@ locals {
   ]
 
   # Merge repositories from YAML file and tfvars (tfvars takes precedence if both exist)
-  all_repositories = coalescelist(var.repositories, local.yaml_repositories)
+  all_repositories = length(var.repositories) > 0 ? var.repositories : local.yaml_repositories
 }
 
 # Load teams from YAML data file
@@ -33,7 +33,7 @@ locals {
   ]
 
   # Merge teams from YAML file and tfvars (tfvars takes precedence if both exist)
-  all_teams = coalescelist(var.teams, local.yaml_teams)
+  all_teams = length(var.teams) > 0 ? var.teams : local.yaml_teams
 }
 
 # Organization Management
