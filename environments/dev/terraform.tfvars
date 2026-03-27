@@ -22,14 +22,6 @@ ghas_config = {
   }
 }
 
-# Teams Configuration
-teams = [
-  {
-    name        = "engineering"
-    description = "Engineering Team"
-    privacy     = "closed"
-    members     = ["user1", "user2"]
-    maintainers = ["lead"]
-  }
-]
+# Teams are managed via data/teams.yaml
+teams = []
 
