@@ -16,7 +16,7 @@
 #       - repository: repo-name
 #         permission: push
 #
-# Permission levels: pull, push, repo-owner, triage, maintain, admin
+# Permission levels: pull, triage, push, maintain, admin
 
 teams:
   - name: paloit-devsecops
