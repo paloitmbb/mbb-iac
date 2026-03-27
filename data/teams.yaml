@@ -24,4 +24,4 @@ teams:
     privacy: closed
     repositories:
       - repository: mbb-mobile-app
-        permission: repo-owner
+        permission: admin
