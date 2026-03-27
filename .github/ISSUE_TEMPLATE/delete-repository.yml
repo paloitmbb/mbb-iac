@@ -1,0 +1,52 @@
+name: 🗑️ Delete Repository
+description: Request to permanently delete an existing GitHub repository
+title: "[REPO DELETE]"
+labels: ["repo-delete"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## ⚠️ Delete Repository Request
+        Use this template to request the **permanent deletion** of a GitHub repository.
+
+        > **This action is irreversible.** All code, issues, pull requests, wikis, and associated data will be permanently lost.
+
+  - type: input
+    id: repo-name
+    attributes:
+      label: Repository Name
+      description: The exact name of the repository to delete
+      placeholder: my-project
+    validations:
+      required: true
+
+  - type: textarea
+    id: reason
+    attributes:
+      label: Business Justification
+      description: Explain why this repository should be permanently deleted
+      placeholder: |
+        e.g.,
+        - Project has been decommissioned and data is no longer needed
+        - Code has been migrated to a new repository
+        - Repository was created by mistake
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmation-checklist
+    attributes:
+      label: Confirmation Checklist
+      description: All required items must be confirmed before this request can be processed
+      options:
+        - label: I confirm the repository name above is correct
+          required: true
+        - label: Stakeholders and contributors have been notified
+          required: true
+        - label: Any active CI/CD pipelines have been disabled
+          required: true
+        - label: I understand this deletion is **permanent and irreversible**
+          required: true
+        - label: Any important data or artefacts have been backed up elsewhere
+          required: false

@@ -1,0 +1,333 @@
+name: "Repo Delete - Validate & Create PR"
+
+on:
+  repository_dispatch:
+    types: [repo-delete]
+
+permissions:
+  issues: write
+  pull-requests: write
+  contents: write
+
+jobs:
+  validate-and-create-pr:
+    name: Validate Request & Create PR
+    runs-on: ubuntu-latest
+    if: startsWith(github.event.client_payload.issue_title, '[REPO DELETE]')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.ORG_GITHUB_TOKEN }}
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Step 1: Parse issue form
+      # ─────────────────────────────────────────────────────────────────────────
+      - name: Parse issue form
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.client_payload.issue_body;
+
+            function extractField(body, label) {
+              const regex = new RegExp(`### ${label}\\s*\\n\\s*([^\\n#]+)`, 'i');
+              const match = body.match(regex);
+              return match ? match[1].trim() : '';
+            }
+
+            const repoName = extractField(body, 'Repository Name');
+            const reason   = extractField(body, 'Business Justification');
+
+            core.setOutput('repo-name', repoName ? repoName.toLowerCase().replace(/\s+/g, '-') : '');
+            core.setOutput('reason',    reason);
+
+            console.log(`Repository: ${repoName}`);
+            console.log(`Reason: ${reason}`);
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Step 2: Validate — repo exists in repositories.yaml
+      # ─────────────────────────────────────────────────────────────────────────
+      - name: Validate delete request
+        id: validate
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const repoName = '${{ steps.parse.outputs.repo-name }}';
+            const errors = [];
+            const validations = [];
+
+            // Validate repo name present
+            if (!repoName) {
+              errors.push('Repository name is required');
+            } else if (!/^[a-zA-Z0-9._-]+$/.test(repoName)) {
+              errors.push('Repository name must contain only alphanumeric characters, hyphens, underscores, and periods');
+            } else {
+              validations.push({ check: 'Repository name format', result: '✅ Passed' });
+            }
+
+            // Validate repo exists in GitHub org
+            if (repoName) {
+              try {
+                await github.rest.repos.get({ owner: context.repo.owner, repo: repoName });
+                validations.push({ check: `Repository "${repoName}" exists in org`, result: '✅ Passed' });
+              } catch (e) {
+                errors.push(`Repository "${repoName}" does not exist in the organisation`);
+                validations.push({ check: `Repository "${repoName}" exists in org`, result: '❌ Not found' });
+              }
+            }
+
+            // Validate repo exists in repositories.yaml
+            if (repoName) {
+              const raw = fs.readFileSync('data/repositories.yaml', 'utf8');
+              const inYaml = raw.includes(`- name: ${repoName}`) || raw.includes(`name: ${repoName}`);
+              if (!inYaml) {
+                errors.push(`Repository "${repoName}" is not managed by Terraform (not found in data/repositories.yaml)`);
+                validations.push({ check: `"${repoName}" tracked in repositories.yaml`, result: '❌ Not found' });
+              } else {
+                validations.push({ check: `"${repoName}" tracked in repositories.yaml`, result: '✅ Passed' });
+              }
+            }
+
+            const passed = errors.length === 0;
+            core.setOutput('validation-passed', passed.toString());
+            core.setOutput('errors',      JSON.stringify(errors));
+            core.setOutput('validations', JSON.stringify(validations));
+
+            console.log(`Validation ${passed ? 'PASSED' : 'FAILED'} — ${errors.length} error(s)`);
+            if (!passed) core.setFailed(`Validation failed: ${errors.join('; ')}`);
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Step 3: Post validation summary comment + labels + close if failed
+      # ─────────────────────────────────────────────────────────────────────────
+      - name: Post validation summary to issue
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          ERRORS_JSON:      ${{ steps.validate.outputs.errors }}
+          VALIDATIONS_JSON: ${{ steps.validate.outputs.validations }}
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const passed      = '${{ steps.validate.outputs.validation-passed }}' === 'true';
+            const errors      = JSON.parse(process.env.ERRORS_JSON      || '[]');
+            const validations = JSON.parse(process.env.VALIDATIONS_JSON || '[]');
+            const repoName    = '${{ steps.parse.outputs.repo-name }}';
+            const requestor   = context.payload.client_payload.issue_user_login;
+
+            let comment = passed
+              ? '## ✅ Validation Passed\n\n'
+              : '## ❌ Validation Failed\n\n';
+
+            comment += '### 📋 Request Summary\n\n';
+            comment += '| Field | Value |\n|-------|-------|\n';
+            comment += `| **Action** | 🗑️ Delete |\n`;
+            comment += `| **Repository** | \`${repoName}\` |\n`;
+            comment += `| **Requested By** | @${requestor} |\n\n`;
+
+            comment += '### 🔍 Validation Results\n\n';
+            comment += '| Check | Result |\n|-------|--------|\n';
+            for (const v of validations) {
+              comment += `| ${v.check} | ${v.result} |\n`;
+            }
+            comment += '\n';
+
+            if (errors.length > 0) {
+              comment += '### ⚠️ Errors\n\n';
+              for (const e of errors) comment += `- ❌ ${e}\n`;
+              comment += '\n';
+            }
+
+            if (passed) {
+              comment += '### 📝 Next Steps\n\n';
+              comment += '- ⏳ A pull request has been created to remove `' + repoName + '` from `data/repositories.yaml`\n';
+              comment += '- Once the PR is approved and merged, Terraform will destroy the repository\n';
+            } else {
+              comment += '### 📝 Next Steps\n\n';
+              comment += '- Please fix the errors above and submit a new request\n';
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.payload.client_payload.issue_number,
+              body: comment,
+            });
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.payload.client_payload.issue_number,
+              labels: passed ? ['validation-passed'] : ['validation-failed'],
+            });
+
+            if (!passed) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo:  context.repo.repo,
+                issue_number: context.payload.client_payload.issue_number,
+                state: 'closed',
+                state_reason: 'not_planned',
+              });
+            }
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Step 4: Install yq
+      # ─────────────────────────────────────────────────────────────────────────
+      - name: Install yq
+        if: steps.validate.outputs.validation-passed == 'true'
+        shell: bash
+        run: |
+          if ! command -v yq &> /dev/null; then
+            sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          fi
+          echo "✅ yq $(yq --version)"
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Step 5: Remove repo entry from repositories.yaml
+      # ─────────────────────────────────────────────────────────────────────────
+      - name: Remove repository from repositories.yaml
+        if: steps.validate.outputs.validation-passed == 'true'
+        id: update-yaml
+        shell: bash
+        env:
+          REPO_NAME: ${{ steps.parse.outputs.repo-name }}
+        run: |
+          echo "::group::Remove ${REPO_NAME} from repositories.yaml"
+          REPOS_FILE="data/repositories.yaml"
+
+          # Remove the entire entry for REPO_NAME
+          yq -i 'del(.repositories[] | select(.name == strenv(REPO_NAME)))' "$REPOS_FILE"
+
+          if yq eval '.' "$REPOS_FILE" > /dev/null 2>&1; then
+            echo "✅ YAML valid after removal"
+            echo "yaml-updated=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ YAML invalid after removal"
+            echo "yaml-updated=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          echo "Remaining repositories: $(yq eval '.repositories | length' "$REPOS_FILE")"
+          echo "::endgroup::"
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Step 6: Create branch, commit, push
+      # ─────────────────────────────────────────────────────────────────────────
+      - name: Create branch and commit
+        if: steps.validate.outputs.validation-passed == 'true' && steps.update-yaml.outputs.yaml-updated == 'true'
+        id: create-branch
+        shell: bash
+        env:
+          GITHUB_TOKEN:  ${{ secrets.ORG_GITHUB_TOKEN }}
+          REPO_NAME:     ${{ steps.parse.outputs.repo-name }}
+          ISSUE_NUMBER:  ${{ github.event.client_payload.issue_number }}
+          REQUESTOR:     ${{ github.event.client_payload.issue_user_login }}
+        run: |
+          echo "::group::Create branch and commit"
+          BRANCH_NAME="repo-delete/issue-${ISSUE_NUMBER}-${REPO_NAME}"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Clean up remote branch if it exists from a previous run
+          git push origin --delete "${BRANCH_NAME}" 2>/dev/null || true
+          git fetch --prune origin
+
+          git checkout -b "${BRANCH_NAME}"
+          git add data/repositories.yaml
+
+          COMMIT_MSG="chore(repos): remove \`${REPO_NAME}\` from repositories.yaml"$'\n\n'"Requested by @${REQUESTOR} via issue #${ISSUE_NUMBER}"
+          git commit -m "$COMMIT_MSG"
+          git push origin "${BRANCH_NAME}"
+
+          echo "✅ Pushed branch: ${BRANCH_NAME}"
+          echo "branch-name=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+          echo "::endgroup::"
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Step 7: Create PR via GitHub API
+      # ─────────────────────────────────────────────────────────────────────────
+      - name: Create Pull Request
+        if: steps.validate.outputs.validation-passed == 'true' && steps.update-yaml.outputs.yaml-updated == 'true'
+        id: create-pr
+        uses: actions/github-script@v7
+        env:
+          REPO_NAME:    ${{ steps.parse.outputs.repo-name }}
+          REQUESTOR:    ${{ github.event.client_payload.issue_user_login }}
+          ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
+          BRANCH_NAME:  ${{ steps.create-branch.outputs.branch-name }}
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const repoName    = process.env.REPO_NAME;
+            const requestor   = process.env.REQUESTOR;
+            const issueNumber = process.env.ISSUE_NUMBER;
+            const branchName  = process.env.BRANCH_NAME;
+
+            const pr = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              title: `chore(repos): delete \`${repoName}\``,
+              head:  branchName,
+              base:  'main',
+              body: [
+                '## 🗑️ Repository Deletion Request',
+                '',
+                `**Repository:** \`${repoName}\``,
+                `**Requested By:** @${requestor}`,
+                `**Issue:** #${issueNumber}`,
+                '',
+                '### What this PR does',
+                `Removes \`${repoName}\` from \`data/repositories.yaml\`.`,
+                'On merge, Terraform will destroy the repository from GitHub.',
+                '',
+                '> ⚠️ **Review carefully before merging — this action is irreversible.**',
+              ].join('\n'),
+            });
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: pr.data.number,
+              labels: ['repo-delete', 'automated'],
+            });
+
+            core.setOutput('pr-number', pr.data.number.toString());
+            core.setOutput('pr-url',    pr.data.html_url);
+            console.log(`✅ PR created: #${pr.data.number} — ${pr.data.html_url}`);
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Step 8: Post PR link as comment on the issue
+      # ─────────────────────────────────────────────────────────────────────────
+      - name: Post PR link to issue
+        if: steps.create-pr.outputs.pr-number != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const prNumber = '${{ steps.create-pr.outputs.pr-number }}';
+            const prUrl    = '${{ steps.create-pr.outputs.pr-url }}';
+            const repoName = '${{ steps.parse.outputs.repo-name }}';
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.payload.client_payload.issue_number,
+              body: [
+                '## ✅ Pull Request Created',
+                '',
+                `A PR has been raised to remove \`${repoName}\` from Terraform management:`,
+                '',
+                `- **PR:** [#${prNumber}](${prUrl})`,
+                '',
+                '### 📝 Next Steps',
+                `1. Review the changes in [PR #${prNumber}](${prUrl})`,
+                '2. Approve the PR',
+                '3. Merge — Terraform will automatically destroy the repository',
+              ].join('\n'),
+            });
