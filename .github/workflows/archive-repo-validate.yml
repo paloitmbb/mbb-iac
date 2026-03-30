@@ -453,13 +453,14 @@ jobs:
             (.repositories[] | select(.name == strenv(REPO_NAME))).security.enable_dependabot_security_updates = false
           ' "$YAML_FILE"
 
-          # Verify the change was applied
-          if ! grep -A2 "name: ${REPO_NAME}" "$YAML_FILE" | grep -q "archived: true"; then
-            echo "::error::Verification failed — 'archived: true' not found for '${REPO_NAME}'"
+          # Verify the change was applied (use yq — archived may be anywhere in the block)
+          ARCHIVED=$(REPO_NAME="$REPO_NAME" yq '.repositories[] | select(.name == strenv(REPO_NAME)) | .archived' "$YAML_FILE")
+          if [[ "$ARCHIVED" != "true" ]]; then
+            echo "::error::Verification failed — 'archived: true' not found for '${REPO_NAME}' (got: '${ARCHIVED}')"
             exit 1
           fi
           echo "✅ Updated ${YAML_FILE} — set archived: true and disabled security alerts"
-          grep -A8 "name: ${REPO_NAME}" "$YAML_FILE" | head -10
+          REPO_NAME="$REPO_NAME" yq '.repositories[] | select(.name == strenv(REPO_NAME))' "$YAML_FILE"
 
       # -----------------------------------------------------------------------
       # Step 4: Commit and push
