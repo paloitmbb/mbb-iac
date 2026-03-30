@@ -101,7 +101,7 @@ variable "archived" {
 variable "archive_on_destroy" {
   description = "Archive the repository instead of deleting on destroy"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "topics" {

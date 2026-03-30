@@ -6,8 +6,9 @@ locals {
   # Normalize YAML repositories to ensure all optional attributes exist
   yaml_repositories = [
     for repo in local.repositories_data.repositories : merge(repo, {
-      security          = try(repo.security, null)
-      branch_protection = try(repo.branch_protection, null)
+      security           = try(repo.security, null)
+      branch_protection  = try(repo.branch_protection, null)
+      archive_on_destroy = try(repo.archive_on_destroy, false)
     })
   ]
 
@@ -70,6 +71,7 @@ module "github_repositories" {
   default_branch          = each.value.default_branch
   topics                  = each.value.topics
   archived                = try(each.value.archived, false)
+  archive_on_destroy      = try(each.value.archive_on_destroy, false)
   vulnerability_alerts    = try(each.value.security.enable_vulnerability_alerts, true)
   branch_protection_rules = each.value.branch_protection
 
