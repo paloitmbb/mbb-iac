@@ -9,7 +9,10 @@ body:
       value: |
         ## Archive Repository Request
         Use this template to request the archiving of an existing GitHub repository.
+
         **⚠️ Important:** Archiving a repository makes it **read-only**. All code, issues, pull requests, and other data will be preserved but no new commits, issues, or PRs can be created.
+
+        > To permanently **delete** a repository, use the [🗑️ Delete Repository](?template=delete-repository.yml) template instead.
 
   - type: input
     id: repo-name
@@ -44,18 +47,6 @@ body:
     validations:
       required: false
 
-  - type: input
-    id: replacement-repo-name
-    attributes:
-      label: Replacement Repository Name
-      description: >
-        If you selected "Yes" above, provide the exact name of the
-        replacement repository in this organisation.
-        Leave blank if there is no replacement.
-      placeholder: my-new-project
-    validations:
-      required: false
-
   - type: checkboxes
     id: repo-action-checklist
     attributes:
@@ -67,4 +58,4 @@ body:
         - label: Any active CI/CD pipelines have been reviewed and updated/disabled as needed
           required: false
         - label: Final release/tag has been created (if applicable)
-          required: false  # optional — not always needed
+          required: false
