@@ -366,9 +366,12 @@ jobs:
 
   # ============================================================================
   # Job 2: Create PR with YAML change
+  # Runs only after validation passes. Updates data/repositories.yaml via yq,
+  # opens a PR, and posts the PR link back to the issue.
+  # On merge → triggers terraform-apply.yml automatically (data/*.yaml push).
   # ============================================================================
   create-archive-pr:
-    name: Create Archive PR
+    name: 📝 Create PR - Archive Repository
     runs-on: ubuntu-latest
     needs: validate-request
     timeout-minutes: 20
@@ -376,7 +379,7 @@ jobs:
     outputs:
       pr-number: ${{ steps.create-pr.outputs.pr-number }}
       pr-url: ${{ steps.create-pr.outputs.pr-url }}
-      branch-name: ${{ steps.create-pr.outputs.branch-name }}
+      branch-name: ${{ steps.branch.outputs.branch-name }}
 
     steps:
       - name: Checkout repository
@@ -385,426 +388,254 @@ jobs:
           token: ${{ secrets.ORG_GITHUB_TOKEN }}
           ref: main
 
+      # -----------------------------------------------------------------------
+      # Step 1: Install yq
+      # -----------------------------------------------------------------------
+      - name: Install yq
+        run: |
+          YQ_VERSION="v4.44.1"
+          wget -qO /usr/local/bin/yq \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          chmod +x /usr/local/bin/yq
+          yq --version
 
       # -----------------------------------------------------------------------
-      # Step 1: Create branch and update YAML
+      # Step 2: Setup git and branch (handle stale branches/PRs)
       # -----------------------------------------------------------------------
-      - name: Create branch and PR
-        id: create-pr
+      - name: Setup git and branch
+        id: branch
         shell: bash
         env:
-          JUSTIFICATION: ${{ needs.validate-request.outputs.justification }}
           GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
         run: |
-          set -e  # Exit on any error
-
           REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
-          ORG_NAME="${{ github.repository_owner }}"
           ISSUE_NUMBER="${{ github.event.client_payload.issue_number }}"
+          BRANCH_NAME="archive/issue-${ISSUE_NUMBER}-${REPO_NAME}"
 
-          BRANCH_NAME="archive/${REPO_NAME}-${ISSUE_NUMBER}"
-
-          echo "📌 Archive Request Details:"
-          echo "  Repository: ${ORG_NAME}/${REPO_NAME}"
-          echo "  Branch: ${BRANCH_NAME}"
-          echo "  Issue: #${ISSUE_NUMBER}"
-
-          # Configure git
-          git config user.name "github-actions[bot]"
+          git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Delete remote branch if it exists (ignore errors)
+          # Close any existing open PR for this branch and delete the remote branch
+          EXISTING_PR=$(gh pr list \
+            --head "${BRANCH_NAME}" --state open \
+            --json number --jq '.[0].number' 2>/dev/null || true)
+          if [[ -n "$EXISTING_PR" && "$EXISTING_PR" =~ ^[0-9]+$ ]]; then
+            gh pr close "${EXISTING_PR}" \
+              --comment "Superseded by re-run of archive workflow for issue #${ISSUE_NUMBER}" \
+              2>/dev/null || true
+          fi
+          git fetch --prune
           git push origin --delete "${BRANCH_NAME}" 2>/dev/null || true
 
-          echo "🔍 Checking for existing PR on branch ${BRANCH_NAME}..."
-          EXISTING_PR=$(gh pr list \
-            --head "${BRANCH_NAME}" \
-            --state open \
-            --json number \
-            --jq '.[0].number' 2>/dev/null || true)
-
-          if [[ -n "$EXISTING_PR" && "$EXISTING_PR" =~ ^[0-9]+$ ]]; then
-            echo "⚠️ Found existing open PR #${EXISTING_PR} — closing it before re-creating"
-            gh pr close "${EXISTING_PR}" \
-              --comment "Closing — superseded by re-run of archive workflow for issue #${ISSUE_NUMBER}" \
-              --delete-branch 2>/dev/null || true
-            echo "✅ Closed existing PR #${EXISTING_PR}"
-          else
-            echo "✅ No existing open PR found for branch ${BRANCH_NAME}"
-          fi
-                    
-          # Create and switch to feature branch
           git checkout -b "${BRANCH_NAME}"
+          echo "branch-name=${BRANCH_NAME}" >> "$GITHUB_OUTPUT"
           echo "✅ Created branch: ${BRANCH_NAME}"
 
-          # --- UPDATE YAML FILE ---
-          echo "📝 Updating data/repositories.yaml..."
-          echo "Current working directory: $(pwd)"
-          echo "Contents of data directory:"
-          ls -la data/ || echo "data directory not found"
-
+      # -----------------------------------------------------------------------
+      # Step 3: Update repositories.yaml — set archived: true, disable security
+      # -----------------------------------------------------------------------
+      - name: Update repositories.yaml
+        id: update-yaml
+        shell: bash
+        env:
+          REPO_NAME: ${{ needs.validate-request.outputs.repo-name }}
+        run: |
           YAML_FILE="data/repositories.yaml"
-          if [[ ! -f "$YAML_FILE" ]]; then
-            echo "::error::File $YAML_FILE not found"
-            echo "::error::Please ensure repositories.yaml exists at: $PWD/$YAML_FILE"
+
+          # Set archived: true and disable all security alerts for the repo
+          REPO_NAME="$REPO_NAME" yq -i '
+            (.repositories[] | select(.name == strenv(REPO_NAME))).archived = true |
+            (.repositories[] | select(.name == strenv(REPO_NAME))).security.enable_vulnerability_alerts = false |
+            (.repositories[] | select(.name == strenv(REPO_NAME))).security.enable_advanced_security = false |
+            (.repositories[] | select(.name == strenv(REPO_NAME))).security.enable_secret_scanning = false |
+            (.repositories[] | select(.name == strenv(REPO_NAME))).security.enable_secret_scanning_push_protection = false |
+            (.repositories[] | select(.name == strenv(REPO_NAME))).security.enable_dependabot_alerts = false |
+            (.repositories[] | select(.name == strenv(REPO_NAME))).security.enable_dependabot_security_updates = false
+          ' "$YAML_FILE"
+
+          # Verify the change was applied
+          if ! grep -A2 "name: ${REPO_NAME}" "$YAML_FILE" | grep -q "archived: true"; then
+            echo "::error::Verification failed — 'archived: true' not found for '${REPO_NAME}'"
             exit 1
           fi
-          echo "✅ Found: $YAML_FILE"
+          echo "✅ Updated ${YAML_FILE} — set archived: true and disabled security alerts"
+          grep -A8 "name: ${REPO_NAME}" "$YAML_FILE" | head -10
 
-          # Write PowerShell script to temp file to avoid escaping issues
-          cat > /tmp/update_yaml.ps1 << 'PSEOF'
-          param(
-            [string]$yamlFile,
-            [string]$repoName
-          )
+      # -----------------------------------------------------------------------
+      # Step 4: Commit and push
+      # -----------------------------------------------------------------------
+      - name: Commit and push
+        shell: bash
+        env:
+          REPO_NAME: ${{ needs.validate-request.outputs.repo-name }}
+          BRANCH_NAME: ${{ steps.branch.outputs.branch-name }}
+          ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
+          ORG_NAME: ${{ github.repository_owner }}
+          REQUESTER: ${{ github.event.client_payload.issue_user_login }}
+        run: |
+          YAML_FILE="data/repositories.yaml"
 
-          Write-Host "📝 Updating $yamlFile for repository: $repoName"
-          Write-Host "   Operation: archive"
-
-          # Read all lines
-          $lines = Get-Content $yamlFile
-
-          # Find repo name line index
-          $repoLineIndex = -1
-          for ($i = 0; $i -lt $lines.Count; $i++) {
-            if ($lines[$i] -match ('^[\s]*-?[\s]*name:[\s]+[''"]?' + [regex]::Escape($repoName) + '[''"]?[\s]*$')) {
-              $repoLineIndex = $i
-              break
-            }
-          }
-
-          if ($repoLineIndex -eq -1) {
-            Write-Error "Repository '$repoName' not found in $yamlFile"
-            exit 1
-          }
-
-          Write-Host "✅ Found repository at line: $($repoLineIndex + 1)"
-
-          # Find the archived line for this repo (within next 20 lines)
-          $archivedLineIndex = -1
-          for ($i = $repoLineIndex + 1; $i -lt [Math]::Min($repoLineIndex + 20, $lines.Count); $i++) {
-            # Stop searching if we hit next repo entry
-            if ($lines[$i] -match '^\s*-\s*name:') { break }
-            if ($lines[$i] -match '^\s+archived:') {
-              $archivedLineIndex = $i
-              break
-            }
-          }
-
-          Write-Host "   Archived line index: $archivedLineIndex"
-
-          # Find the end of the current repo section (next repo or end of file)
-          $repoEndIndex = $lines.Count
-          for ($i = $repoLineIndex + 1; $i -lt $lines.Count; $i++) {
-            if ($lines[$i] -match '^\s*-\s*name:') {
-              $repoEndIndex = $i
-              break
-            }
-          }
-          Write-Host "   Repo section spans lines $($repoLineIndex + 1) to $($repoEndIndex)"
-
-          # Initialize the list to hold modified lines
-          $newLines = [System.Collections.Generic.List[string]]::new()
-
-          # Security fields that must be disabled before archiving
-          $securityFields = @(
-            'enable_vulnerability_alerts',
-            'enable_advanced_security',
-            'enable_secret_scanning',
-            'enable_secret_scanning_push_protection',
-            'enable_dependabot_alerts',
-            'enable_dependabot_security_updates'
-          )
-
-          # ARCHIVE: Set all security fields to false, then add archived: true
-          # Two-pass approach to avoid index misalignment from inserted lines
-
-          # Pass 1: Replace security field values in-place within the repo section
-          for ($i = $repoLineIndex; $i -lt $repoEndIndex; $i++) {
-            foreach ($field in $securityFields) {
-              if ($lines[$i] -match ('^\s+' + $field + ':')) {
-                $lines[$i] = "      ${field}: false"
-                Write-Host "✅ Set ${field} to false at line $($i + 1)"
-              }
-            }
-          }
-
-          # Pass 2: Build output with archived: true inserted after name line
-            for ($i = 0; $i -lt $lines.Count; $i++) {
-
-              # Case 1: archived field exists — replace the line entirely
-              if ($i -eq $archivedLineIndex) {
-                $newLines.Add('    archived: true')
-                Write-Host "✅ Updated 'archived: false' to 'archived: true' at line $($i + 1)"
-                continue    # skip adding the original archived: false line
-              }
-
-              $newLines.Add($lines[$i])
-
-              # Case 2: archived field missing — insert after name line
-              if ($i -eq $repoLineIndex -and $archivedLineIndex -eq -1) {
-                $newLines.Add('    archived: true')
-                Write-Host "✅ Inserted 'archived: true' after name line $($i + 1)"
-              }
-            }
-
-          # Write to temp file first
-          $tempFile = [System.IO.Path]::GetTempFileName()
-          $newLines | Set-Content $tempFile -Encoding UTF8
-
-          # Verify temp file not empty
-          if ((Get-Item $tempFile).Length -eq 0) {
-            Write-Error "Output file is empty — aborting"
-            Remove-Item $tempFile -Force
-            exit 1
-          }
-
-          # Verify the change
-          $tempContent = Get-Content $tempFile -Raw
-
-          # Verify archived: true is present after the repo name
-          $pattern = 'name:\s+' + [regex]::Escape($repoName) + '[\s\S]{0,100}archived:\s*true'
-          if ($tempContent -notmatch $pattern) {
-            Write-Error "Verification failed — 'archived: true' not found after 'name: $repoName'"
-            Remove-Item $tempFile -Force
-            exit 1
-          }
-          Write-Host "✅ Verified: 'archived: true' is present"
-
-          # Replace original file
-          Move-Item $tempFile $yamlFile -Force
-          Write-Host "✅ YAML updated successfully"
-
-          # Show updated section for confirmation
-          Write-Host "--- Updated section ---"
-          $finalLines = Get-Content $yamlFile
-          for ($i = 0; $i -lt $finalLines.Count; $i++) {
-            if ($finalLines[$i] -match ('name:\s+[''"]?' + [regex]::Escape($repoName) + '[''"]?')) {
-              $end = [Math]::Min($i + 8, $finalLines.Count - 1)
-              $finalLines[$i..$end] | ForEach-Object { Write-Host $_ }
-              break
-            }
-          }
-          PSEOF
-
-          # Execute the PowerShell script with clean parameters
-          pwsh /tmp/update_yaml.ps1 \
-            -yamlFile "${YAML_FILE}" \
-            -repoName "${REPO_NAME}"
-
-          # Check exit code
-          if [[ $? -ne 0 ]]; then
-            echo "::error::PowerShell YAML update failed"
-            exit 1
-          fi
-
-          # Check if there are changes
-          if ! git diff --quiet "$YAML_FILE"; then
-            echo "✅ Changes detected in $YAML_FILE"
-          else
-            echo "⚠️ No changes detected in $YAML_FILE"
-          fi
-
-          # Stage and commit the YAML change
           git add "$YAML_FILE"
 
-          COMMIT_MSG=$(cat <<EOF
-          feat: 🗃️ archive repository '${REPO_NAME}'
-
-          Set archived: true for ${ORG_NAME}/${REPO_NAME} in data/repositories.yaml
-
-          - Repository: ${ORG_NAME}/${REPO_NAME}
-          - Operation: Archive
-          - Requested by: @${{ github.event.client_payload.issue_user_login }}
-          - Issue: #${ISSUE_NUMBER}
-
-          Related to #${ISSUE_NUMBER}
-          EOF
-            )
-          PR_TITLE="feat: 🗃️ archive repository \`${REPO_NAME}\`"
-
-          # Check for actual staged changes before committing
           if git diff --cached --quiet; then
-            echo "::error::No changes detected in ${YAML_FILE} — repository may already be archived in YAML"
+            echo "::error::No changes staged — repository may already be archived in YAML"
             exit 1
           fi
 
-          git commit -m "$COMMIT_MSG" || {
-            echo "::error::Commit failed unexpectedly"
-            exit 1
-          }
+          COMMIT_MSG=$'feat: \xf0\x9f\x97\x83\xef\xb8\x8f archive repository \''${REPO_NAME}$'\''\n\nSet archived: true for '${ORG_NAME}/${REPO_NAME}$' in data/repositories.yaml\n\n- Repository: '${ORG_NAME}/${REPO_NAME}$'\n- Operation: Archive\n- Requested by: @'${REQUESTER}$'\n- Issue: #'${ISSUE_NUMBER}$'\n\nRelated to #'${ISSUE_NUMBER}
 
-          # Push the branch
-          git push origin "${BRANCH_NAME}" || {
-            echo "::error::Failed to push branch"
-            exit 1
-          }
-          echo "✅ Branch pushed to origin"
-
-          # --- CREATE PULL REQUEST ---
-          echo "🔄 Creating pull request..."
-
-          # Build PR body (using heredoc for proper formatting)
-          PR_BODY=$(cat <<EOF
-          ## 🗃️ Archive Repository: \`${REPO_NAME}\`
-
-          ### Summary
-          | Field | Value |
-          |-------|-------|
-          | **Repository** | \`${ORG_NAME}/${REPO_NAME}\` |
-          | **Operation** | Archive |
-          | **Requested by** | @${{ github.event.client_payload.issue_user_login }} |
-          | **Justification** | ${JUSTIFICATION:-Not provided} |
-
-          ### Changes
-          - Sets \`archived: true\` for \`${REPO_NAME}\` in \`data/repositories.yaml\`
-          - Disables all security alerts (vulnerability alerts, secret scanning, Dependabot) before archiving
-
-          ### ⚠️ Archive Impact
-          Archiving a repository will:
-          - Make the repository **read-only**
-          - Disable push access, issues, pull requests, labels, milestones, projects, wiki, releases, commits, tags, branches, reactions, and comments
-          - The repository will still be **visible** and **cloneable**
-          - This action **can be reversed** by unarchiving the repository
-
-          ### CI Checks
-          - **Terraform CI** will run \`terraform plan\` automatically on this PR
-          - Review the plan output in the PR comment before approving
-
-          ### ⚠️ What happens after merge
-          1. The **Terraform Apply** workflow triggers automatically (push to \`main\` on \`data/*.yaml\`)
-          2. Terraform runs \`init\` → \`plan\` → \`apply\` against the \`dev\` environment
-          3. The repository \`${ORG_NAME}/${REPO_NAME}\` becomes **read-only** on GitHub
-
-          ### Review Checklist
-          - [ ] Review the Terraform plan output (posted as PR comment by CI)
-          - [ ] Verify the correct repository is being archived
-          - [ ] Confirm business justification is valid
-          - [ ] Ensure no active development depends on this repository
-
-          ---
-          > 🤖 *Automated by Archive Repo workflow*
-
-          Closes #${ISSUE_NUMBER}
-          EOF
-            )
-
-          # Ensure required labels exist before creating PR
-          gh label create "archive" \
-            --color "0075ca" \
-            --description "Repository archive request" \
-            --force 2>/dev/null || true
-          gh label create "infrastructure" \
-            --color "e4e669" \
-            --description "Infrastructure changes" \
-            --force 2>/dev/null || true
-
-          # Create PR using gh CLI
-              PR_URL=$(gh pr create \
-                --base main \
-                --head "${BRANCH_NAME}" \
-                --title "${PR_TITLE}" \
-                --body "${PR_BODY}" \
-                --label "archive" \
-                --label "infrastructure" 2>/dev/null) || {
-
-                echo "⚠️ gh pr create failed — checking if PR already exists..."
-                PR_URL=$(gh pr view "${BRANCH_NAME}" --json url --jq '.url' 2>/dev/null || true)
-
-                if [[ -z "$PR_URL" ]]; then
-                  echo "::error::Failed to create PR and no existing PR found"
-                  exit 1
-                fi
-                echo "✅ Found existing PR: ${PR_URL}"
-              }
-
-
-
-          # Extract PR number from URL (portable - works on all systems)
-          PR_NUMBER=$(echo "$PR_URL" | sed 's|.*/pull/||' | tr -d '[:space:]')
-
-          # Fallback: use gh CLI if extraction failed
-          if [[ -z "$PR_NUMBER" || ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
-            PR_NUMBER=$(gh pr view "${BRANCH_NAME}" --json number --jq '.number')
-          fi
-
-          echo "pr-url=${PR_URL}" >> $GITHUB_OUTPUT
-          echo "pr-number=${PR_NUMBER}" >> $GITHUB_OUTPUT
-          echo "branch-name=${BRANCH_NAME}" >> $GITHUB_OUTPUT
-
-          echo "✅ PR created successfully"
-          echo "  URL: ${PR_URL}"
-          echo "  Number: ${PR_NUMBER}"
+          git commit -m "$COMMIT_MSG"
+          git push origin "${BRANCH_NAME}"
+          echo "✅ Pushed branch ${BRANCH_NAME}"
 
       # -----------------------------------------------------------------------
-      # Step 3: Comment on issue with PR link
+      # Step 5: Create pull request
       # -----------------------------------------------------------------------
-      - name: Notify issue with PR link
-        if: success()
+      - name: Create pull request
+        id: create-pr
         uses: actions/github-script@v7
         env:
-          PR_URL: ${{ steps.create-pr.outputs.pr-url }}
-          PR_NUMBER: ${{ steps.create-pr.outputs.pr-number }}
-          BRANCH_NAME: ${{ steps.create-pr.outputs.branch-name }}
-          ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
           REPO_NAME: ${{ needs.validate-request.outputs.repo-name }}
+          BRANCH_NAME: ${{ steps.branch.outputs.branch-name }}
+          ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
+          JUSTIFICATION: ${{ needs.validate-request.outputs.justification }}
+          REQUESTER: ${{ github.event.client_payload.issue_user_login }}
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
           script: |
-            try {
-              const prUrl       = process.env.PR_URL;
-              const prNumber    = process.env.PR_NUMBER;
-              const branch      = process.env.BRANCH_NAME;
-              const repoName    = process.env.REPO_NAME;
-              const org         = context.repo.owner;
-              const issueNumber = parseInt(process.env.ISSUE_NUMBER, 10);
+            const repoName    = process.env.REPO_NAME;
+            const branch      = process.env.BRANCH_NAME;
+            const issueNumber = parseInt(process.env.ISSUE_NUMBER, 10);
+            const justification = process.env.JUSTIFICATION || '_Not provided_';
+            const requester   = process.env.REQUESTER;
+            const org         = context.repo.owner;
 
-              if (!prUrl || !prNumber || !branch || !repoName) {
-                console.error('Missing PR information:', { prUrl, prNumber, branch, repoName });
-                core.setFailed(`Missing PR information for notification. Got: prUrl=${prUrl}, prNumber=${prNumber}, branch=${branch}, repoName=${repoName}`);
-                return;
-              }
+            const prTitle = `feat: \u{1F5C3}\uFE0F archive repository \`${repoName}\``;
 
-              const body = [
-                '## 🔄 Archive PR Created — Awaiting Review & Merge',
-                '',
-                '### 📋 Summary',
-                '',
-                '| Field | Value |',
-                '|-------|-------|',
-                `| **Operation** | 🗃️ Archive |`,
-                `| **Pull Request** | [#${prNumber}](${prUrl}) |`,
-                `| **Branch** | \`${branch}\` |`,
-                `| **Repository** | \`${org}/${repoName}\` |`,
-                `| **CI Status** | ✅ Terraform CI will run automatically on this PR |`,
-                '',
-                '### 📝 Next Steps',
-                '',
-                '1. **Terraform CI** will run `terraform plan` and post results as a PR comment',
-                '2. A reviewer must **review the plan**, then **approve and merge** the PR',
-                '3. Once merged, the **Terraform Apply** workflow runs automatically against `dev`',
-                `4. This issue will be **closed automatically** when the PR merges`,
-                '',
-                '---',
-                `*Archive request from issue #${issueNumber}*`,
-              ].join('\n');
+            const prBody = [
+              `## \u{1F5C3}\uFE0F Archive Repository: \`${repoName}\``,
+              '',
+              '### Summary',
+              '',
+              '| Field | Value |',
+              '|-------|-------|',
+              `| **Repository** | \`${org}/${repoName}\` |`,
+              `| **Operation** | Archive |`,
+              `| **Requested by** | @${requester} |`,
+              `| **Justification** | ${justification} |`,
+              '',
+              '### Changes',
+              `- Sets \`archived: true\` for \`${repoName}\` in \`data/repositories.yaml\``,
+              '- Disables all security alerts (vulnerability alerts, secret scanning, Dependabot) before archiving',
+              '',
+              '### \u26A0\uFE0F Archive Impact',
+              'Archiving a repository will:',
+              '- Make the repository **read-only**',
+              '- Disable push access, issues, pull requests, labels, milestones, projects, wiki, releases, commits, tags, branches, reactions, and comments',
+              '- The repository will still be **visible** and **cloneable**',
+              '- This action **can be reversed** by unarchiving the repository',
+              '',
+              '### CI Checks',
+              '- **Terraform CI** will run `terraform plan` automatically on this PR',
+              '- Review the plan output in the PR comment before approving',
+              '',
+              '### \u26A0\uFE0F What happens after merge',
+              '1. The **Terraform Apply** workflow triggers automatically (push to `main` on `data/*.yaml`)',
+              '2. Terraform runs `init` \u2192 `plan` \u2192 `apply` against the `dev` environment',
+              `3. The repository \`${org}/${repoName}\` becomes **read-only** on GitHub`,
+              '',
+              '### Review Checklist',
+              '- [ ] Review the Terraform plan output (posted as PR comment by CI)',
+              '- [ ] Verify the correct repository is being archived',
+              '- [ ] Confirm business justification is valid',
+              '- [ ] Ensure no active development depends on this repository',
+              '',
+              '---',
+              '> \u{1F916} *Automated by Archive Repo workflow*',
+              '',
+              `Closes #${issueNumber}`,
+            ].join('\n');
 
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issueNumber,
-                body,
-              });
-
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issueNumber,
-                labels: ['archive-pr-created'],
-              });
-
-              console.log(`✅ Posted archive PR notification for issue #${issueNumber}: ${prUrl}`);
-            } catch (error) {
-              console.error('Error posting PR notification:', error);
-              core.setFailed(`Failed to notify issue with PR link: ${error.message}`);
+            // Ensure labels exist
+            for (const [name, color, desc] of [
+              ['archive',   '0075ca', 'Repository archive request'],
+              ['automated', 'e4e669', 'Automated PR'],
+            ]) {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner, repo: context.repo.repo,
+                name, color, description: desc,
+              }).catch(() => {});  // ignore if already exists
             }
+
+            const { data: pr } = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              head:  branch,
+              base:  'main',
+              title: prTitle,
+              body:  prBody,
+            });
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: pr.number,
+              labels: ['archive', 'automated'],
+            });
+
+            core.setOutput('pr-number', String(pr.number));
+            core.setOutput('pr-url',    pr.html_url);
+            console.log(`✅ PR #${pr.number} created: ${pr.html_url}`);
+
+      # -----------------------------------------------------------------------
+      # Step 6: Post PR link back to the issue
+      # -----------------------------------------------------------------------
+      - name: Post PR link to issue
+        if: success()
+        uses: actions/github-script@v7
+        env:
+          PR_URL:       ${{ steps.create-pr.outputs.pr-url }}
+          PR_NUMBER:    ${{ steps.create-pr.outputs.pr-number }}
+          BRANCH_NAME:  ${{ steps.branch.outputs.branch-name }}
+          REPO_NAME:    ${{ needs.validate-request.outputs.repo-name }}
+          ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const prUrl       = process.env.PR_URL;
+            const prNumber    = process.env.PR_NUMBER;
+            const branch      = process.env.BRANCH_NAME;
+            const repoName    = process.env.REPO_NAME;
+            const org         = context.repo.owner;
+            const issueNumber = parseInt(process.env.ISSUE_NUMBER, 10);
+
+            const body = [
+              '## \u{1F504} Archive PR Created \u2014 Awaiting Review & Merge',
+              '',
+              '| Field | Value |',
+              '|-------|-------|',
+              `| **Pull Request** | [#${prNumber}](${prUrl}) |`,
+              `| **Repository** | \`${org}/${repoName}\` |`,
+              `| **Branch** | \`${branch}\` |`,
+              `| **CI Status** | \u2705 Terraform CI will run automatically on this PR |`,
+              '',
+              '### \u{1F4DD} Next Steps',
+              '',
+              '1. **Terraform CI** will run `terraform plan` and post results as a PR comment',
+              '2. A reviewer must **review the plan**, then **approve and merge** the PR',
+              '3. Once merged, **Terraform Apply** triggers automatically against the `dev` environment',
+              '4. This issue will be **closed automatically** when the PR merges',
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: issueNumber,
+              body,
+            });
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: issueNumber,
+              labels: ['archive-pr-created'],
+            });
+
+            console.log(`\u2705 Posted PR notification for issue #${issueNumber}: ${prUrl}`);
