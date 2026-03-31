@@ -275,20 +275,3 @@ repositories:
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
       enable_dependabot_security_updates: true
-  - name: mbb-repo-test-001
-    description: "Mbb Repo Test 001 using React"
-    visibility: private
-    features:
-      has_issues: true
-      has_projects: true
-      has_wiki: false
-    default_branch: develop
-    topics: ["maybank", "mbb", "react"]
-    security:
-      enable_vulnerability_alerts: false
-      enable_advanced_security: false
-      enable_secret_scanning: false
-      enable_secret_scanning_push_protection: false
-      enable_dependabot_alerts: false
-      enable_dependabot_security_updates: false
-    archived: true
