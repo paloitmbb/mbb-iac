@@ -21,12 +21,13 @@ resource "github_repository" "this" {
 
   topics = var.topics
 
-  vulnerability_alerts = var.vulnerability_alerts
+  # GitHub API rejects vulnerability_alerts updates on archived repos; force false when archived
+  vulnerability_alerts = var.archived ? false : var.vulnerability_alerts
 
-  # Only include security_and_analysis if advanced_security is enabled
-  # GitHub requires GHAS to be purchased to configure these settings
+  # Only include security_and_analysis if advanced_security is enabled AND repo is not archived
+  # GitHub requires GHAS to be purchased; archived repos reject security setting changes
   dynamic "security_and_analysis" {
-    for_each = var.enable_advanced_security ? [1] : []
+    for_each = (var.enable_advanced_security && !var.archived) ? [1] : []
     content {
       advanced_security {
         status = "enabled"
@@ -61,7 +62,8 @@ resource "github_repository" "this" {
 }
 
 resource "github_branch_default" "this" {
-  count = var.default_branch != null ? 1 : 0
+  # Skip when archived — GitHub API rejects default branch changes on archived repos
+  count = (!var.archived && var.default_branch != null) ? 1 : 0
 
   repository = github_repository.this.name
   branch     = var.default_branch
@@ -70,7 +72,8 @@ resource "github_branch_default" "this" {
 }
 
 resource "github_branch_protection" "this" {
-  for_each = var.branch_protection_rules != null ? { (var.branch_protection_rules.pattern) = var.branch_protection_rules } : {}
+  # Skip when archived — GitHub API rejects branch protection changes on archived repos
+  for_each = (!var.archived && var.branch_protection_rules != null) ? { (var.branch_protection_rules.pattern) = var.branch_protection_rules } : {}
 
   repository_id = github_repository.this.node_id
   pattern       = each.value.pattern
@@ -93,7 +96,8 @@ resource "github_branch_protection" "this" {
 }
 
 resource "github_repository_webhook" "this" {
-  for_each = var.webhooks != null ? { for idx, webhook in var.webhooks : idx => webhook } : {}
+  # Skip when archived — webhooks cannot be managed on archived repos
+  for_each = (!var.archived && var.webhooks != null) ? { for idx, webhook in var.webhooks : idx => webhook } : {}
 
   repository = github_repository.this.name
   active     = each.value.active
