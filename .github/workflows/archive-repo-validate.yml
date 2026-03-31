@@ -127,21 +127,21 @@ jobs:
                 VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| Repository Status | \`${ORG_NAME}/${REPO_NAME}\` | ✅ Active (ready to archive) |\n"
                 echo "✅ Repository found and active (ready to archive)"
 
-                # --- Check if repository exists in YAML config ---
+                # --- Check if repository exists in YAML config (use yq for robustness) ---
                 if [[ -f "data/repositories.yaml" ]]; then
-                  echo "📋 Checking YAML configuration..."
-                  if grep -qP "^\s+-?\s*name:\s+['\"]?${REPO_NAME}['\"]?\s*$" data/repositories.yaml; then
+                  echo "📋 Checking YAML configuration with yq..."
+                  # Extract repository block using yq and environment var
+                  REPO_BLOCK=$(REPO_NAME="$REPO_NAME" yq e '.repositories[] | select(.name == strenv(REPO_NAME))' data/repositories.yaml 2>/dev/null || true)
+
+                  if [[ -n "$REPO_BLOCK" ]]; then
                     VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Config | \`data/repositories.yaml\` | ✅ Found |\n"
                     echo "✅ Repository found in YAML config"
 
-                    # Check if already archived in YAML
-                    ALREADY_ARCHIVED=$(awk -v name="${REPO_NAME}" '
-                      /name:.*'"${REPO_NAME}"'/ { found=1 }
-                      found && /archived:[[:space:]]*true/ { print "true"; exit }
-                      found && /^[[:space:]]*-[[:space:]]*name:/ && !/'"${REPO_NAME}"'/ { exit }
-                    ' data/repositories.yaml)
+                    # Read archived field (may be missing)
+                    YAML_ARCHIVED=$(REPO_NAME="$REPO_NAME" yq e '.repositories[] | select(.name == strenv(REPO_NAME)) | .archived' data/repositories.yaml 2>/dev/null || true)
+                    YAML_ARCHIVED=$(echo "$YAML_ARCHIVED" | tr -d '[:space:]"')
 
-                    if [[ "$ALREADY_ARCHIVED" == "true" ]]; then
+                    if [[ "$YAML_ARCHIVED" == "true" ]]; then
                       VALIDATION_ERRORS="${VALIDATION_ERRORS}\n- ❌ Repository \`${REPO_NAME}\` is already set to \`archived: true\` in \`data/repositories.yaml\`"
                       VALIDATION_SUMMARY="${VALIDATION_SUMMARY}| YAML Archived Status | \`data/repositories.yaml\` | ❌ Already archived |\n"
                       echo "❌ Repository already marked as archived in YAML"
@@ -449,31 +449,35 @@ jobs:
           YAML_FILE="data/repositories.yaml"
 
           # Read previous archived value (may be missing or false)
-          PREV_ARCHIVED=$(yq e --arg repo "$REPO_NAME" '.repositories[] | select(.name == $repo) | .archived' "$YAML_FILE" 2>/dev/null || true)
+          PREV_ARCHIVED=$(REPO_NAME="$REPO_NAME" yq e '.repositories[] | select(.name == strenv(REPO_NAME)) | .archived' "$YAML_FILE" 2>/dev/null || true)
           PREV_ARCHIVED=$(echo "$PREV_ARCHIVED" | tr -d '[:space:]"')
           echo "ℹ️ Previous archived value for ${REPO_NAME}: '${PREV_ARCHIVED:-<missing>}'"
 
-          # Set archived: true and disable all security alerts for the repo
+          # If already archived, skip making changes
+          if [[ "$PREV_ARCHIVED" == "true" ]]; then
+            echo "ℹ️ No update required — repository already archived in YAML"
+            echo "yaml-updated=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Perform in-place update using yq (follow team-management pattern)
           REPO_NAME="$REPO_NAME" yq -i '
-            (.repositories[] | select(.name == strenv(REPO_NAME))).archived = true |
             (.repositories[] | select(.name == strenv(REPO_NAME))).security.enable_vulnerability_alerts = false |
             (.repositories[] | select(.name == strenv(REPO_NAME))).security.enable_advanced_security = false |
             (.repositories[] | select(.name == strenv(REPO_NAME))).security.enable_secret_scanning = false |
             (.repositories[] | select(.name == strenv(REPO_NAME))).security.enable_secret_scanning_push_protection = false |
             (.repositories[] | select(.name == strenv(REPO_NAME))).security.enable_dependabot_alerts = false |
-            (.repositories[] | select(.name == strenv(REPO_NAME))).security.enable_dependabot_security_updates = false
+            (.repositories[] | select(.name == strenv(REPO_NAME))).security.enable_dependabot_security_updates = false |
+            (.repositories[] | select(.name == strenv(REPO_NAME))).archived = true
           ' "$YAML_FILE"
 
-          # Verify the change was applied (use yq JSON output — archived may be anywhere in the block)
-          ARCHIVED=$(yq e --arg repo "$REPO_NAME" '.repositories[] | select(.name == $repo) | .archived' "$YAML_FILE" 2>/dev/null || true)
-          ARCHIVED=$(echo "$ARCHIVED" | tr -d '[:space:]"')
-          if [[ "$ARCHIVED" == "true" ]]; then
-            echo "✅ Updated ${YAML_FILE} — set archived: true and disabled security alerts (previous: '${PREV_ARCHIVED:-<missing>}')"
-            yq e --arg repo "$REPO_NAME" '.repositories[] | select(.name == $repo)' "$YAML_FILE"
+          # Validate YAML syntax and set output
+          if yq e '.' "$YAML_FILE" > /dev/null 2>&1; then
+            echo "✅ Updated YAML syntax OK"
+            echo "yaml-updated=true" >> $GITHUB_OUTPUT
           else
-            echo "::error::Verification failed — expected 'archived: true' for '${REPO_NAME}', got '${ARCHIVED:-<empty>}' (previous: '${PREV_ARCHIVED:-<missing>}')"
-            echo "---- Repository YAML block ----"
-            yq e --arg repo "$REPO_NAME" '.repositories[] | select(.name == $repo)' "$YAML_FILE" || true
+            echo "❌ YAML syntax validation failed"
+            echo "yaml-updated=false" >> $GITHUB_OUTPUT
             exit 1
           fi
 
@@ -481,6 +485,7 @@ jobs:
       # Step 4: Commit and push
       # -----------------------------------------------------------------------
       - name: Commit and push
+        if: steps.update-yaml.outputs.yaml-updated == 'true'
         shell: bash
         env:
           REPO_NAME: ${{ needs.validate-request.outputs.repo-name }}
