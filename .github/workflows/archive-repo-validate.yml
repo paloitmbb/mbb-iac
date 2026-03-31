@@ -506,7 +506,8 @@ jobs:
             exit 1
           fi
 
-          COMMIT_MSG=$'feat: \xf0\x9f\x97\x83\xef\xb8\x8f archive repository \''${REPO_NAME}$'\''\n\nSet archived: true for '${ORG_NAME}/${REPO_NAME}$' in data/repositories.yaml\n\n- Repository: '${ORG_NAME}/${REPO_NAME}$'\n- Operation: Archive\n- Requested by: @'${REQUESTER}$'\n- Issue: #'${ISSUE_NUMBER}$'\n\nRelated to #'${ISSUE_NUMBER}
+          COMMIT_MSG=$(printf "feat: \xf0\x9f\x97\x83\xef\xb8\x8f archive repository '%s'\n\nSet archived: true for %s/%s in data/repositories.yaml\n\n- Repository: %s/%s\n- Operation: Archive\n- Requested by: @%s\n- Issue: #%s\n\nRelated to #%s" \
+            "$REPO_NAME" "$ORG_NAME" "$REPO_NAME" "$ORG_NAME" "$REPO_NAME" "$REQUESTER" "$ISSUE_NUMBER" "$ISSUE_NUMBER")
 
           git commit -m "$COMMIT_MSG"
           git push origin "${BRANCH_NAME}"
