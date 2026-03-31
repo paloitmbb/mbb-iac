@@ -3,17 +3,28 @@ locals {
   repositories_file = "${path.module}/data/repositories.yaml"
   repositories_data = try(yamldecode(file(local.repositories_file)), { repositories = [] })
 
-  # Normalize YAML repositories to ensure all optional attributes exist
+  # Normalize YAML repositories into uniform objects matching var.repositories type.
+  # Using an explicit object (not merge) ensures every element has the same shape so
+  # tolist() succeeds and Terraform's ternary type-unification does not fail.
   yaml_repositories = [
-    for repo in local.repositories_data.repositories : merge(repo, {
+    for repo in local.repositories_data.repositories : {
+      name               = repo.name
+      description        = try(repo.description, "")
+      visibility         = try(repo.visibility, "private")
+      features           = repo.features
+      default_branch     = try(repo.default_branch, "main")
+      topics             = try(repo.topics, [])
       security           = try(repo.security, null)
       branch_protection  = try(repo.branch_protection, null)
+      archived           = try(repo.archived, false)
       archive_on_destroy = try(repo.archive_on_destroy, false)
-    })
+    }
   ]
 
-  # Merge repositories from YAML file and tfvars (tfvars takes precedence if both exist)
-  all_repositories = length(var.repositories) > 0 ? var.repositories : local.yaml_repositories
+  # Merge repositories from YAML file and tfvars (tfvars takes precedence if both exist).
+  # tolist() converts the tuple produced by the for-expression to a list so the
+  # ternary branches have consistent types (both list of object).
+  all_repositories = length(var.repositories) > 0 ? var.repositories : tolist(local.yaml_repositories)
 }
 
 # Load teams from YAML data file
