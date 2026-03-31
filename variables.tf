@@ -39,6 +39,8 @@ variable "repositories" {
       require_signed_commits          = bool
       enforce_admins                  = bool
     }))
+    archived           = optional(bool, false)
+    archive_on_destroy = optional(bool, false)
   }))
   default = []
 }
