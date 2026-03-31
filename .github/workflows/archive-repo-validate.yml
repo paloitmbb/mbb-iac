@@ -408,6 +408,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
+          IFS=$'\n\t'
+
           REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
           ISSUE_NUMBER="${{ github.event.client_payload.issue_number }}"
           BRANCH_NAME="archive/issue-${ISSUE_NUMBER}-${REPO_NAME}"
@@ -440,7 +443,15 @@ jobs:
         env:
           REPO_NAME: ${{ needs.validate-request.outputs.repo-name }}
         run: |
+          set -euo pipefail
+          IFS=$'\n\t'
+
           YAML_FILE="data/repositories.yaml"
+
+          # Read previous archived value (may be missing or false)
+          PREV_ARCHIVED=$(yq e --arg repo "$REPO_NAME" '.repositories[] | select(.name == $repo) | .archived' "$YAML_FILE" 2>/dev/null || true)
+          PREV_ARCHIVED=$(echo "$PREV_ARCHIVED" | tr -d '[:space:]"')
+          echo "ℹ️ Previous archived value for ${REPO_NAME}: '${PREV_ARCHIVED:-<missing>}'"
 
           # Set archived: true and disable all security alerts for the repo
           REPO_NAME="$REPO_NAME" yq -i '
@@ -454,15 +465,17 @@ jobs:
           ' "$YAML_FILE"
 
           # Verify the change was applied (use yq JSON output — archived may be anywhere in the block)
-          ARCHIVED=$(yq e -o=json --arg repo "$REPO_NAME" '.repositories[] | select(.name == $repo) | .archived' "$YAML_FILE" 2>/dev/null || true)
-          # Normalize output (remove whitespace and any surrounding quotes)
+          ARCHIVED=$(yq e --arg repo "$REPO_NAME" '.repositories[] | select(.name == $repo) | .archived' "$YAML_FILE" 2>/dev/null || true)
           ARCHIVED=$(echo "$ARCHIVED" | tr -d '[:space:]"')
-          if [[ "$ARCHIVED" != "true" ]]; then
-            echo "::error::Verification failed — 'archived: true' not found for '${REPO_NAME}' (got: '${ARCHIVED}')"
+          if [[ "$ARCHIVED" == "true" ]]; then
+            echo "✅ Updated ${YAML_FILE} — set archived: true and disabled security alerts (previous: '${PREV_ARCHIVED:-<missing>}')"
+            yq e --arg repo "$REPO_NAME" '.repositories[] | select(.name == $repo)' "$YAML_FILE"
+          else
+            echo "::error::Verification failed — expected 'archived: true' for '${REPO_NAME}', got '${ARCHIVED:-<empty>}' (previous: '${PREV_ARCHIVED:-<missing>}')"
+            echo "---- Repository YAML block ----"
+            yq e --arg repo "$REPO_NAME" '.repositories[] | select(.name == $repo)' "$YAML_FILE" || true
             exit 1
           fi
-          echo "✅ Updated ${YAML_FILE} — set archived: true and disabled security alerts"
-          yq e --arg repo "$REPO_NAME" '.repositories[] | select(.name == $repo)' "$YAML_FILE"
 
       # -----------------------------------------------------------------------
       # Step 4: Commit and push
@@ -476,6 +489,9 @@ jobs:
           ORG_NAME: ${{ github.repository_owner }}
           REQUESTER: ${{ github.event.client_payload.issue_user_login }}
         run: |
+          set -euo pipefail
+          IFS=$'\n\t'
+
           YAML_FILE="data/repositories.yaml"
 
           git add "$YAML_FILE"
