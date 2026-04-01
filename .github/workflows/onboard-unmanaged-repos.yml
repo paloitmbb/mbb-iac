@@ -269,6 +269,13 @@ jobs:
           PYEOF
 
       # ── Import into Terraform State ───────────────────────────────────────
+      # Each module instance creates up to 3 importable resources:
+      #   1. module.github_repositories["REPO"].github_repository.this
+      #      import ID: REPO_NAME
+      #   2. module.github_repositories["REPO"].github_branch_default.this[0]
+      #      import ID: REPO_NAME:DEFAULT_BRANCH  (skipped for archived repos)
+      #   3. module.github_security["REPO"].github_repository_dependabot_security_updates.this[0]
+      #      import ID: REPO_NAME  (only when enable_dependabot_security_updates=true)
       - name: Import repositories into Terraform state
         if: steps.discover.outputs.has-unmanaged == 'true' && inputs.dry_run == false
         id: import
@@ -280,29 +287,74 @@ jobs:
           FAILED=0
           FAILED_LIST=""
 
-          REPO_NAMES=$(python3 -c "
-          import json
-          data = json.load(open('/tmp/unmanaged_repos.json'))
-          for r in data:
-              print(r['name'])
-          ")
-
-          while IFS= read -r REPO_NAME; do
-            [[ -z "$REPO_NAME" ]] && continue
-            echo "📥 Importing: $REPO_NAME"
+          # Helper: import one resource, track success/failure
+          do_import() {
+            local address="$1"
+            local id="$2"
             if terraform import \
                 -var-file="environments/${{ inputs.environment }}/terraform.tfvars" \
-                "module.github_repositories[\"${REPO_NAME}\"].github_repository.this" \
-                "$REPO_NAME" 2>&1; then
-              echo "  ✅ Imported: $REPO_NAME"
+                "$address" "$id" 2>&1; then
+              echo "  ✅ $address"
               IMPORTED=$((IMPORTED + 1))
             else
-              echo "  ❌ Failed:   $REPO_NAME"
+              echo "  ❌ $address"
               FAILED=$((FAILED + 1))
-              FAILED_LIST="${FAILED_LIST}${REPO_NAME}, "
+              FAILED_LIST="${FAILED_LIST}${address}, "
             fi
-            echo ""
-          done <<< "$REPO_NAMES"
+          }
+
+          # Get resources already in Terraform state (idempotency guard)
+          STATE_LIST=$(terraform state list 2>/dev/null || echo "")
+
+          # Read repo metadata from the enriched JSON produced by the discover step
+          python3 - << PYEOF > /tmp/import_plan.sh
+          import json, os
+
+          state_list = """${STATE_LIST}"""
+          state_keys = set(state_list.splitlines())
+
+          def in_state(address):
+              return address in state_keys
+
+          with open('/tmp/unmanaged_repos.json') as fh:
+              repos = json.load(fh)
+
+          for r in repos:
+              name        = r['name']
+              branch      = r.get('default_branch', 'main')
+              archived    = r.get('archived', False)
+              dep_updates = r.get('security', {}).get('enable_dependabot_security_updates', False)
+
+              # 1. Main repository resource (always)
+              addr1 = f'module.github_repositories["{name}"].github_repository.this'
+              if not in_state(addr1):
+                  print(f"do_import '{addr1}' '{name}'")
+              else:
+                  print(f"echo '  ⏭️  Already in state: {addr1}'")
+
+              # 2. Default branch resource (skipped for archived repos)
+              if not archived:
+                  addr2 = f'module.github_repositories["{name}"].github_branch_default.this[0]'
+                  if not in_state(addr2):
+                      print(f"do_import '{addr2}' '{name}:{branch}'")
+                  else:
+                      print(f"echo '  ⏭️  Already in state: {addr2}'")
+
+              # 3. Dependabot security updates resource (only when enabled, non-archived)
+              if dep_updates and not archived:
+                  addr3 = f'module.github_security["{name}"].github_repository_dependabot_security_updates.this[0]'
+                  if not in_state(addr3):
+                      print(f"do_import '{addr3}' '{name}'")
+                  else:
+                      print(f"echo '  ⏭️  Already in state: {addr3}'")
+          PYEOF
+
+          echo "📋 Import plan:"
+          cat /tmp/import_plan.sh
+          echo ""
+
+          # Execute each import command
+          source /tmp/import_plan.sh
 
           echo "imported=$IMPORTED"    >> $GITHUB_OUTPUT
           echo "failed=$FAILED"        >> $GITHUB_OUTPUT
@@ -312,7 +364,7 @@ jobs:
           echo "────────────────────────────────────────"
           echo "Import summary: ✅ $IMPORTED succeeded  ❌ $FAILED failed"
           if [[ $FAILED -gt 0 ]]; then
-            echo "Failed repos: ${FAILED_LIST%, }"
+            echo "Failed: ${FAILED_LIST%, }"
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
