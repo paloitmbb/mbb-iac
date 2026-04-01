@@ -327,14 +327,16 @@ jobs:
         id: plan
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
           echo "📋 Running terraform plan to validate state after import…"
+          set +e
           terraform plan \
             -var-file="environments/${{ inputs.environment }}/terraform.tfvars" \
             -no-color \
             -detailed-exitcode 2>&1 | tee /tmp/plan_output.txt
           PLAN_EXIT=${PIPESTATUS[0]}
+          set -e
 
           echo "plan-exit-code=$PLAN_EXIT" >> $GITHUB_OUTPUT
 
