@@ -428,21 +428,13 @@ jobs:
           path: /tmp/plan_output.txt
           retention-days: 14
 
-      # ── Create PR ─────────────────────────────────────────────────────────
-      - name: Create Pull Request
+      # ── Create branch and commit ──────────────────────────────────────────
+      - name: Create branch and commit
         if: steps.discover.outputs.has-unmanaged == 'true' && inputs.dry_run == false
-        id: create-pr
+        id: create-branch
         shell: bash
         env:
-          GH_TOKEN:    ${{ secrets.ORG_GITHUB_TOKEN }}
-          COUNT:       ${{ steps.discover.outputs.count }}
-          NAMES_JSON:  ${{ steps.discover.outputs.names }}
-          IMPORTED:    ${{ steps.import.outputs.imported }}
-          FAILED:      ${{ steps.import.outputs.failed }}
-          FAILED_LIST: ${{ steps.import.outputs.failed-list }}
-          PLAN_EXIT:   ${{ steps.plan.outputs.plan-exit-code }}
-          ENVIRONMENT: ${{ inputs.environment }}
-          ORG:         ${{ github.repository_owner }}
+          COUNT: ${{ steps.discover.outputs.count }}
         run: |
           set -euo pipefail
 
@@ -450,102 +442,134 @@ jobs:
 
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Delete remote branch if it exists (ignore errors)
+          git push origin --delete "$BRANCH" 2>/dev/null || true
+
           git checkout -b "$BRANCH"
           git add data/repositories.yaml
           git commit -m "chore: 🧱 onboard ${COUNT} unmanaged repo(s) into Terraform management"
           git push origin "$BRANCH"
 
-          # ── Build PR body ────────────────────────────────────────────────
-          PLAN_CONTENT=$(cat /tmp/plan_summary.txt)
-
-          if [[ "$PLAN_EXIT" == "0" ]]; then
-            PLAN_STATUS="✅ No changes — repos are fully in sync after import"
-          elif [[ "$PLAN_EXIT" == "2" ]]; then
-            PLAN_STATUS="⚠️ Configuration drift detected — review plan below and merge to reconcile"
-          else
-            PLAN_STATUS="❌ Plan failed — check workflow logs"
-          fi
-
-          if [[ "$FAILED" -gt 0 ]]; then
-            IMPORT_STATUS="⚠️ ${IMPORTED} imported, ${FAILED} failed: \`${FAILED_LIST}\`"
-          else
-            IMPORT_STATUS="✅ All ${IMPORTED} repo(s) successfully imported into Terraform state"
-          fi
-
-          # Build repo table rows from JSON
-          REPO_ROWS=$(python3 -c "
-          import json, sys
-          names = json.loads('$NAMES_JSON')
-          data  = json.load(open('/tmp/unmanaged_repos.json'))
-          by_name = {r['name']: r for r in data}
-          for n in names:
-              r = by_name[n]
-              archived = '📦' if r.get('archived') else '🟢'
-              topics   = ', '.join(r.get('topics', [])) or '—'
-              print(f'| \`{n}\` | {archived} | {r[\"visibility\"]} | {topics} |')
-          ")
-
-          PR_BODY=$(cat << PREOF
-          ## 🧱 Onboard Unmanaged Repositories into Terraform
-
-          This PR adds **${COUNT}** manually-created repository/repositories to \`data/repositories.yaml\`
-          so they are managed by Terraform going forward.
-
-          > **Repos were already imported into Terraform state** before this PR was opened.
-          > Merging this PR will trigger \`terraform apply\` which will only reconcile setting
-          > differences — it will **not** attempt to create or delete any repository.
-
-          ---
-
-          ### 📋 Repositories Being Onboarded
-
-          | Repository | Status | Visibility | Topics |
-          |------------|--------|------------|--------|
-          ${REPO_ROWS}
-
-          ---
-
-          ### 📥 Terraform Import Result
-
-          ${IMPORT_STATUS}
-          $([ "$FAILED" -gt 0 ] && echo -e "\n> ⚠️ Repos that failed to import will need to be manually imported before this PR is merged, otherwise \`terraform apply\` may fail." || true)
-
-          ---
-
-          ### 📊 Terraform Plan — \`${ENVIRONMENT}\`
-
-          **Status:** ${PLAN_STATUS}
-
-          <details>
-          <summary>Show full plan output</summary>
-
-          \`\`\`hcl
-          ${PLAN_CONTENT}
-          \`\`\`
-
-          </details>
-
-          ---
-
-          ### ✅ Merge Checklist
-
-          - [ ] Review \`data/repositories.yaml\` diff — adjust any settings that differ from the actual repo
-          - [ ] Review the Terraform plan above for unexpected changes
-          $([ "$FAILED" -gt 0 ] && echo "- [ ] Manually import failed repos before merging" || true)
-          - [ ] Merge this PR to bring repos under Terraform management
-          PREOF
-          )
-
-          PR_URL=$(gh pr create \
-            --title "🧱 Onboard ${COUNT} unmanaged repo(s) into Terraform" \
-            --body  "$PR_BODY" \
-            --label "unmanaged-repo-onboarding,automated" \
-            --base  main \
-            --head  "$BRANCH")
-
-          echo "pr-url=$PR_URL" >> $GITHUB_OUTPUT
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
-          echo "✅ Pull request created: $PR_URL"
+          echo "✅ Pushed branch: $BRANCH"
+
+      # ── Create PR via GitHub API ───────────────────────────────────────────
+      - name: Create Pull Request
+        if: steps.discover.outputs.has-unmanaged == 'true' && inputs.dry_run == false
+        id: create-pr
+        uses: actions/github-script@v7
+        env:
+          COUNT:       ${{ steps.discover.outputs.count }}
+          NAMES_JSON:  ${{ steps.discover.outputs.names }}
+          IMPORTED:    ${{ steps.import.outputs.imported }}
+          FAILED:      ${{ steps.import.outputs.failed }}
+          FAILED_LIST: ${{ steps.import.outputs.failed-list }}
+          PLAN_EXIT:   ${{ steps.plan.outputs.plan-exit-code }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          BRANCH:      ${{ steps.create-branch.outputs.branch }}
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const count      = process.env.COUNT;
+            const namesJson  = process.env.NAMES_JSON;
+            const imported   = parseInt(process.env.IMPORTED || '0');
+            const failed     = parseInt(process.env.FAILED || '0');
+            const failedList = process.env.FAILED_LIST || '';
+            const planExit   = process.env.PLAN_EXIT;
+            const environment = process.env.ENVIRONMENT;
+            const branch     = process.env.BRANCH;
+
+            const names = JSON.parse(namesJson);
+
+            // Build repo table rows
+            const repoRows = names.map(n => {
+              return `| \`${n}\` |`;
+            }).join('\n');
+
+            // Plan status
+            let planStatus;
+            if (planExit === '0')      planStatus = '✅ No changes — repos are fully in sync after import';
+            else if (planExit === '2') planStatus = '⚠️ Configuration drift detected — review plan below and merge to reconcile';
+            else                       planStatus = '❌ Plan failed — check workflow logs';
+
+            // Import status
+            const importStatus = failed > 0
+              ? `⚠️ ${imported} imported, ${failed} failed: \`${failedList}\``
+              : `✅ All ${imported} repo(s) successfully imported into Terraform state`;
+
+            const failedWarning = failed > 0
+              ? '\n> ⚠️ Repos that failed to import will need to be manually imported before this PR is merged, otherwise `terraform apply` may fail.'
+              : '';
+
+            const failedCheckbox = failed > 0
+              ? '\n- [ ] Manually import failed repos before merging'
+              : '';
+
+            const prBody = `## 🧱 Onboard Unmanaged Repositories into Terraform
+
+            This PR adds **${count}** manually-created repository/repositories to \`data/repositories.yaml\`
+            so they are managed by Terraform going forward.
+
+            > **Repos were already imported into Terraform state** before this PR was opened.
+            > Merging this PR will trigger \`terraform apply\` which will only reconcile setting
+            > differences — it will **not** attempt to create or delete any repository.
+
+            ---
+
+            ### 📋 Repositories Being Onboarded
+
+            | Repository |
+            |------------|
+            ${repoRows}
+
+            ---
+
+            ### 📥 Terraform Import Result
+
+            ${importStatus}${failedWarning}
+
+            ---
+
+            ### 📊 Terraform Plan — \`${environment}\`
+
+            **Status:** ${planStatus}
+
+            > Full plan output is available in the [workflow run artifacts](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}).
+
+            ---
+
+            ### ✅ Merge Checklist
+
+            - [ ] Review \`data/repositories.yaml\` diff — adjust any settings that differ from the actual repo
+            - [ ] Review the Terraform plan in the workflow artifacts${failedCheckbox}
+            - [ ] Merge this PR to bring repos under Terraform management`;
+
+            const pr = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              title: `🧱 Onboard ${count} unmanaged repo(s) into Terraform`,
+              head:  branch,
+              base:  'main',
+              body:  prBody,
+            });
+
+            console.log(`✅ Pull request created: #${pr.data.number} — ${pr.data.html_url}`);
+
+            // Add labels — attempt gracefully, don't fail if labels are missing
+            try {
+              await github.rest.issues.addLabels({
+                owner:        context.repo.owner,
+                repo:         context.repo.repo,
+                issue_number: pr.data.number,
+                labels:       ['unmanaged-repo-onboarding', 'automated'],
+              });
+            } catch (e) {
+              console.log(`⚠️  Could not add labels (they may not exist yet): ${e.message}`);
+            }
+
+            core.setOutput('pr-number', pr.data.number.toString());
+            core.setOutput('pr-url', pr.data.html_url);
 
       # ── Dry-run Summary ───────────────────────────────────────────────────
       - name: Print dry-run report
