@@ -36,3 +36,7 @@ teams:
       - Shwelinhtet-PaloIT
     members: []
     repositories: []
+  - name: mbb-test-devsecops
+    description: 'Team created by @akshhayapaloit via issue #344'
+    privacy: closed
+    repositories: []
