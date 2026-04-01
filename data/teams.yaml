@@ -18,4 +18,21 @@
 #
 # Permission levels: pull, triage, push, maintain, admin
 
-teams: []
+teams:
+  - name: mbb-devsecops-dev
+    description: ""
+    privacy: closed
+    maintainers:
+      - a6i-palo
+      - techlunacy
+    members: []
+    repositories:
+      - repository: trg-mbb-tf-callr11
+        permission: admin
+  - name: test-team
+    description: ""
+    privacy: closed
+    maintainers:
+      - Shwelinhtet-PaloIT
+    members: []
+    repositories: []

@@ -44,8 +44,10 @@ locals {
     })
   ]
 
-  # Merge teams from YAML file and tfvars (tfvars takes precedence if both exist)
-  all_teams = length(var.teams) > 0 ? var.teams : local.yaml_teams
+  # Merge teams from YAML file and tfvars (tfvars takes precedence if both exist).
+  # tolist() converts the tuple produced by the for-expression to a list so the
+  # ternary branches have consistent types (both list of object).
+  all_teams = length(var.teams) > 0 ? var.teams : tolist(local.yaml_teams)
 }
 
 # Organization Management
