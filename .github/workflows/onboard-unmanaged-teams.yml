@@ -1,0 +1,615 @@
+name: Onboard Unmanaged Teams
+
+# Discovers GitHub org teams that are NOT in data/teams.yaml,
+# enriches them with live settings from the GitHub API (members, maintainers,
+# repo access), appends them to teams.yaml in the canonical project format,
+# imports each team and its sub-resources into Terraform state, runs a
+# Terraform plan for validation, then opens a PR for review.
+#
+# Run this workflow whenever you want to bring manually-created teams under
+# Terraform management.  Merge the resulting PR to reconcile any config drift.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target Terraform environment (state backend)"
+        required: true
+        type: choice
+        options:
+          - dev
+          - production
+        default: dev
+
+      dry_run:
+        description: "Dry run — report only, skip import and PR creation"
+        required: false
+        type: boolean
+        default: false
+
+      exclude_teams:
+        description: "Comma-separated team slugs to exclude (e.g. admins,owners)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write  # Required for OIDC authentication with Azure
+
+jobs:
+  # ============================================================================
+  # Single job: discover → enrich → update YAML → import → plan → open PR
+  # The import runs before the PR is merged so that when terraform-apply.yml
+  # triggers on the merge push it treats them as "manage existing".
+  # ============================================================================
+  onboard-teams:
+    name: 🧑‍🤝‍🧑 Onboard - Discover, Import & PR
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Terraform Infrastructure ──────────────────────────────────────────
+      - name: Azure Login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.5
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: |
+          terraform init -backend-config=environments/${{ inputs.environment }}/backend.tfvars
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true
+
+      # ── Discover Unmanaged Teams ──────────────────────────────────────────
+      - name: Discover unmanaged teams
+        id: discover
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ORG: ${{ github.repository_owner }}
+          EXCLUDE_TEAMS: ${{ inputs.exclude_teams }}
+        run: |
+          pip install pyyaml requests --quiet
+
+          python3 - << 'PYEOF'
+          import json, os, sys
+          import yaml
+          import requests
+
+          TOKEN   = os.environ["GH_TOKEN"]
+          ORG     = os.environ["ORG"]
+          EXCLUDE = {t.strip() for t in os.environ.get("EXCLUDE_TEAMS", "").split(",") if t.strip()}
+
+          HEADERS = {
+              "Authorization": f"Bearer {TOKEN}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+          }
+
+          # ── 1. Load teams already tracked in teams.yaml ──────────────────
+          with open("data/teams.yaml") as fh:
+              yaml_data = yaml.safe_load(fh) or {"teams": []}
+          yaml_teams = {t["name"] for t in (yaml_data.get("teams") or [])}
+          print(f"📄 {len(yaml_teams)} team(s) already in teams.yaml")
+
+          # ── 2. Page through all org teams ────────────────────────────────
+          org_teams, page = [], 1
+          while True:
+              resp = requests.get(
+                  f"https://api.github.com/orgs/{ORG}/teams",
+                  headers=HEADERS,
+                  params={"per_page": 100, "page": page},
+              )
+              resp.raise_for_status()
+              batch = resp.json()
+              if not batch:
+                  break
+              org_teams.extend(batch)
+              if len(batch) < 100:
+                  break
+              page += 1
+          print(f"🏢 {len(org_teams)} total team(s) in organization")
+
+          # ── 3. Find unmanaged (org but not in YAML, not excluded) ─────────
+          unmanaged = [
+              t for t in org_teams
+              if t["slug"] not in yaml_teams and t["slug"] not in EXCLUDE
+          ]
+          print(f"\n🔍 {len(unmanaged)} unmanaged team(s) found:")
+          for t in unmanaged:
+              print(f"  • {t['slug']} (id={t['id']})")
+
+          if not unmanaged:
+              print("\n✅ All organization teams are already tracked — nothing to do.")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+                  out.write("has-unmanaged=false\ncount=0\n")
+              sys.exit(0)
+
+          # ── 4. Enrich each unmanaged team ─────────────────────────────────
+          new_entries = []
+          for team in unmanaged:
+              slug    = team["slug"]
+              team_id = team["id"]
+              print(f"\n  → Fetching details: {slug} (id={team_id})")
+
+              # Members (with role)
+              members_resp = requests.get(
+                  f"https://api.github.com/orgs/{ORG}/teams/{slug}/members",
+                  headers=HEADERS,
+                  params={"per_page": 100, "role": "member"},
+              )
+              members = sorted(
+                  [m["login"] for m in members_resp.json()]
+              ) if members_resp.ok else []
+
+              maintainers_resp = requests.get(
+                  f"https://api.github.com/orgs/{ORG}/teams/{slug}/members",
+                  headers=HEADERS,
+                  params={"per_page": 100, "role": "maintainer"},
+              )
+              maintainers = sorted(
+                  [m["login"] for m in maintainers_resp.json()]
+              ) if maintainers_resp.ok else []
+
+              # Repository access
+              repos_resp = requests.get(
+                  f"https://api.github.com/orgs/{ORG}/teams/{slug}/repos",
+                  headers=HEADERS,
+                  params={"per_page": 100},
+              )
+              repositories = []
+              if repos_resp.ok:
+                  for r in repos_resp.json():
+                      # Determine explicit permission from the permissions map
+                      perms = r.get("permissions", {})
+                      if perms.get("admin"):
+                          perm = "admin"
+                      elif perms.get("maintain"):
+                          perm = "maintain"
+                      elif perms.get("push"):
+                          perm = "push"
+                      elif perms.get("triage"):
+                          perm = "triage"
+                      else:
+                          perm = "pull"
+                      repositories.append({
+                          "repository": r["name"],
+                          "permission": perm,
+                      })
+
+              entry = {
+                  "name":         slug,
+                  "description":  (team.get("description") or "").strip(),
+                  "privacy":      team.get("privacy", "closed"),
+                  "maintainers":  maintainers,
+                  "members":      members,
+                  "repositories": repositories,
+                  # Store numeric ID for import (not written to YAML)
+                  "_team_id":     team_id,
+              }
+              new_entries.append(entry)
+              print(f"    maintainers={maintainers}, members={members}, repos={[r['repository'] for r in repositories]}")
+
+          # ── 5. Persist for subsequent steps ──────────────────────────────
+          with open("/tmp/unmanaged_teams.json", "w") as fh:
+              json.dump(new_entries, fh, indent=2)
+
+          names_list = [t["name"] for t in new_entries]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write("has-unmanaged=true\n")
+              out.write(f"count={len(new_entries)}\n")
+              out.write(f"names={json.dumps(names_list)}\n")
+          PYEOF
+
+      # ── Update teams.yaml ─────────────────────────────────────────────────
+      - name: Append new teams to teams.yaml
+        if: steps.discover.outputs.has-unmanaged == 'true'
+        id: update-yaml
+        shell: bash
+        run: |
+          pip install pyyaml --quiet
+
+          python3 - << 'PYEOF'
+          import json, yaml
+
+          def repo_to_yaml_block(repo):
+              return f'      - repository: {repo["repository"]}\n        permission: {repo["permission"]}'
+
+          with open("/tmp/unmanaged_teams.json") as fh:
+              new_entries = json.load(fh)
+
+          lines = []
+          for team in new_entries:
+              lines.append(f'  - name: {team["name"]}')
+              desc = team["description"].replace('"', '\\"') if team["description"] else ""
+              lines.append(f'    description: "{desc}"')
+              lines.append(f'    privacy: {team["privacy"]}')
+
+              if team["maintainers"]:
+                  lines.append('    maintainers:')
+                  for u in team["maintainers"]:
+                      lines.append(f'      - {u}')
+              else:
+                  lines.append('    maintainers: []')
+
+              if team["members"]:
+                  lines.append('    members:')
+                  for u in team["members"]:
+                      lines.append(f'      - {u}')
+              else:
+                  lines.append('    members: []')
+
+              if team["repositories"]:
+                  lines.append('    repositories:')
+                  for r in team["repositories"]:
+                      lines.append(f'      - repository: {r["repository"]}')
+                      lines.append(f'        permission: {r["permission"]}')
+              else:
+                  lines.append('    repositories: []')
+
+          # Load current YAML, replace empty `teams: []` or append to list
+          with open("data/teams.yaml") as fh:
+              content = fh.read()
+
+          # Replace `teams: []` sentinel if present, otherwise append
+          new_block = "\n".join(lines)
+          if "teams: []" in content:
+              content = content.replace("teams: []", "teams:\n" + new_block)
+          else:
+              content = content.rstrip() + "\n" + new_block + "\n"
+
+          with open("data/teams.yaml", "w") as fh:
+              fh.write(content)
+
+          print(f"✅ Appended {len(new_entries)} team(s) to data/teams.yaml")
+          PYEOF
+
+      # ── Import into Terraform State ───────────────────────────────────────
+      # Each module instance creates up to 4 importable resource types:
+      #   1. module.github_teams["SLUG"].github_team.this[0]
+      #      import ID: team numeric ID
+      #   2. module.github_teams["SLUG"].github_team_membership.maintainers["USER"]
+      #      import ID: team_id:username
+      #   3. module.github_teams["SLUG"].github_team_membership.members["USER"]
+      #      import ID: team_id:username
+      #   4. module.github_teams["SLUG"].github_team_repository.this["REPO"]
+      #      import ID: team_id:repo_name
+      - name: Import teams into Terraform state
+        if: steps.discover.outputs.has-unmanaged == 'true' && inputs.dry_run == false
+        id: import
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMPORTED=0
+          FAILED=0
+          FAILED_LIST=""
+
+          do_import() {
+            local address="$1"
+            local id="$2"
+            if terraform import \
+                -var-file="environments/${{ inputs.environment }}/terraform.tfvars" \
+                "$address" "$id" 2>&1; then
+              echo "  ✅ $address"
+              IMPORTED=$((IMPORTED + 1))
+            else
+              echo "  ❌ $address"
+              FAILED=$((FAILED + 1))
+              FAILED_LIST="${FAILED_LIST}${address}, "
+            fi
+          }
+
+          # Get resources already in Terraform state (idempotency guard)
+          STATE_LIST=$(terraform state list 2>/dev/null || echo "")
+
+          # Build import plan from enriched JSON
+          python3 - << PYEOF > /tmp/import_plan.sh
+          import json, os
+
+          state_list = """${STATE_LIST}"""
+          state_keys = set(state_list.splitlines())
+
+          def in_state(address):
+              return address in state_keys
+
+          with open('/tmp/unmanaged_teams.json') as fh:
+              teams = json.load(fh)
+
+          for team in teams:
+              slug    = team['name']
+              team_id = team['_team_id']
+
+              # 1. Team resource
+              addr = f'module.github_teams["{slug}"].github_team.this[0]'
+              if not in_state(addr):
+                  print(f"do_import '{addr}' '{team_id}'")
+              else:
+                  print(f"echo '  ⏭️  Already in state: {addr}'")
+
+              # 2. Maintainer memberships
+              for user in team.get('maintainers', []):
+                  addr = f'module.github_teams["{slug}"].github_team_membership.maintainers["{user}"]'
+                  if not in_state(addr):
+                      print(f"do_import '{addr}' '{team_id}:{user}'")
+                  else:
+                      print(f"echo '  ⏭️  Already in state: {addr}'")
+
+              # 3. Member memberships
+              for user in team.get('members', []):
+                  addr = f'module.github_teams["{slug}"].github_team_membership.members["{user}"]'
+                  if not in_state(addr):
+                      print(f"do_import '{addr}' '{team_id}:{user}'")
+                  else:
+                      print(f"echo '  ⏭️  Already in state: {addr}'")
+
+              # 4. Repository access
+              for repo in team.get('repositories', []):
+                  repo_name = repo['repository']
+                  addr = f'module.github_teams["{slug}"].github_team_repository.this["{repo_name}"]'
+                  if not in_state(addr):
+                      print(f"do_import '{addr}' '{team_id}:{repo_name}'")
+                  else:
+                      print(f"echo '  ⏭️  Already in state: {addr}'")
+          PYEOF
+
+          echo "📋 Import plan:"
+          cat /tmp/import_plan.sh
+          echo ""
+
+          source /tmp/import_plan.sh
+
+          echo "imported=$IMPORTED"    >> $GITHUB_OUTPUT
+          echo "failed=$FAILED"        >> $GITHUB_OUTPUT
+          echo "failed-list=${FAILED_LIST%, }" >> $GITHUB_OUTPUT
+
+          echo ""
+          echo "────────────────────────────────────────"
+          echo "Import summary: ✅ $IMPORTED succeeded  ❌ $FAILED failed"
+          if [[ $FAILED -gt 0 ]]; then
+            echo "Failed: ${FAILED_LIST%, }"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true
+
+      # ── Terraform Plan (Validation) ───────────────────────────────────────
+      - name: Terraform Plan
+        if: steps.discover.outputs.has-unmanaged == 'true'
+        id: plan
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          echo "📋 Running terraform plan to validate state after import…"
+          set +e
+          terraform plan \
+            -var-file="environments/${{ inputs.environment }}/terraform.tfvars" \
+            -no-color \
+            -detailed-exitcode 2>&1 | tee /tmp/plan_output.txt
+          PLAN_EXIT=${PIPESTATUS[0]}
+          set -e
+
+          echo "plan-exit-code=$PLAN_EXIT" >> $GITHUB_OUTPUT
+
+          case $PLAN_EXIT in
+            0)  echo "✅ No changes — configuration and state are fully in sync."   ;;
+            2)  echo "⚠️  Drift detected — plan shows changes to reconcile settings." ;;
+            *)  echo "❌ Terraform plan failed — check logs above."; exit 1          ;;
+          esac
+
+          PLAN_LINES=$(wc -l < /tmp/plan_output.txt)
+          if [[ $PLAN_LINES -gt 200 ]]; then
+            {
+              head -150 /tmp/plan_output.txt
+              echo "..."
+              echo "(output truncated — $PLAN_LINES total lines; see workflow logs for full plan)"
+              echo "..."
+              tail -30 /tmp/plan_output.txt
+            } > /tmp/plan_summary.txt
+          else
+            cp /tmp/plan_output.txt /tmp/plan_summary.txt
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true
+
+      # ── Upload Plan as Artifact ───────────────────────────────────────────
+      - name: Upload plan output as artifact
+        if: steps.discover.outputs.has-unmanaged == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-onboard-teams-${{ inputs.environment }}
+          path: /tmp/plan_output.txt
+          retention-days: 14
+
+      # ── Create branch and commit ──────────────────────────────────────────
+      - name: Create branch and commit
+        if: steps.discover.outputs.has-unmanaged == 'true' && inputs.dry_run == false
+        id: create-branch
+        shell: bash
+        env:
+          COUNT: ${{ steps.discover.outputs.count }}
+        run: |
+          set -euo pipefail
+
+          BRANCH="onboard-unmanaged-teams/$(date +%Y%m%d-%H%M%S)"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Delete remote branch if it exists (ignore errors)
+          git push origin --delete "$BRANCH" 2>/dev/null || true
+
+          git checkout -b "$BRANCH"
+          git add data/teams.yaml
+          git commit -m "chore: 🧑‍🤝‍🧑 onboard ${COUNT} unmanaged team(s) into Terraform management"
+          git push origin "$BRANCH"
+
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          echo "✅ Pushed branch: $BRANCH"
+
+      # ── Create PR via GitHub API ──────────────────────────────────────────
+      - name: Create Pull Request
+        if: steps.discover.outputs.has-unmanaged == 'true' && inputs.dry_run == false
+        id: create-pr
+        uses: actions/github-script@v7
+        env:
+          COUNT:       ${{ steps.discover.outputs.count }}
+          NAMES_JSON:  ${{ steps.discover.outputs.names }}
+          IMPORTED:    ${{ steps.import.outputs.imported }}
+          FAILED:      ${{ steps.import.outputs.failed }}
+          FAILED_LIST: ${{ steps.import.outputs.failed-list }}
+          PLAN_EXIT:   ${{ steps.plan.outputs.plan-exit-code }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          BRANCH:      ${{ steps.create-branch.outputs.branch }}
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            const count       = process.env.COUNT;
+            const namesJson   = process.env.NAMES_JSON;
+            const imported    = parseInt(process.env.IMPORTED || '0');
+            const failed      = parseInt(process.env.FAILED || '0');
+            const failedList  = process.env.FAILED_LIST || '';
+            const planExit    = process.env.PLAN_EXIT;
+            const environment = process.env.ENVIRONMENT;
+            const branch      = process.env.BRANCH;
+
+            const names = JSON.parse(namesJson);
+
+            const teamRows = names.map(n => `| \`${n}\` |`).join('\n');
+
+            let planStatus;
+            if (planExit === '0')      planStatus = '✅ No changes — teams are fully in sync after import';
+            else if (planExit === '2') planStatus = '⚠️ Configuration drift detected — review plan and merge to reconcile';
+            else                       planStatus = '❌ Plan failed — check workflow logs';
+
+            const importStatus = failed > 0
+              ? `⚠️ ${imported} imported, ${failed} failed: \`${failedList}\``
+              : `✅ All ${imported} resource(s) successfully imported into Terraform state`;
+
+            const failedWarning = failed > 0
+              ? '\n> ⚠️ Resources that failed to import need manual import before merging, otherwise `terraform apply` may fail.'
+              : '';
+
+            const failedCheckbox = failed > 0
+              ? '\n- [ ] Manually import failed resources before merging'
+              : '';
+
+            const prBody = `## 🧑‍🤝‍🧑 Onboard Unmanaged Teams into Terraform
+
+            This PR adds **${count}** manually-created team(s) to \`data/teams.yaml\`
+            so they are managed by Terraform going forward.
+
+            > **Teams were already imported into Terraform state** before this PR was opened.
+            > Merging this PR will trigger \`terraform apply\` which will only reconcile setting
+            > differences — it will **not** attempt to create or delete any team.
+
+            ---
+
+            ### 📋 Teams Being Onboarded
+
+            | Team |
+            |------|
+            ${teamRows}
+
+            ---
+
+            ### 📥 Terraform Import Result
+
+            ${importStatus}${failedWarning}
+
+            ---
+
+            ### 📊 Terraform Plan — \`${environment}\`
+
+            **Status:** ${planStatus}
+
+            > Full plan output is available in the [workflow run artifacts](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}).
+
+            ---
+
+            ### ✅ Merge Checklist
+
+            - [ ] Review \`data/teams.yaml\` diff — verify members, maintainers and repo access are correct
+            - [ ] Review the Terraform plan in the workflow artifacts${failedCheckbox}
+            - [ ] Merge this PR to bring teams under Terraform management`;
+
+            const pr = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              title: `🧑‍🤝‍🧑 Onboard ${count} unmanaged team(s) into Terraform`,
+              head:  branch,
+              base:  'main',
+              body:  prBody,
+            });
+
+            console.log(`✅ Pull request created: #${pr.data.number} — ${pr.data.html_url}`);
+
+            // Add labels gracefully — don't fail if labels are missing
+            try {
+              await github.rest.issues.addLabels({
+                owner:        context.repo.owner,
+                repo:         context.repo.repo,
+                issue_number: pr.data.number,
+                labels:       ['unmanaged-team-onboarding', 'automated'],
+              });
+            } catch (e) {
+              console.log(`⚠️  Could not add labels (they may not exist yet): ${e.message}`);
+            }
+
+            core.setOutput('pr-number', pr.data.number.toString());
+            core.setOutput('pr-url', pr.data.html_url);
+
+      # ── Dry-run Summary ───────────────────────────────────────────────────
+      - name: Print dry-run report
+        if: steps.discover.outputs.has-unmanaged == 'true' && inputs.dry_run == true
+        shell: bash
+        env:
+          NAMES_JSON: ${{ steps.discover.outputs.names }}
+          COUNT:      ${{ steps.discover.outputs.count }}
+        run: |
+          echo "════════════════════════════════════════════════════"
+          echo "  DRY RUN — ${COUNT} unmanaged team(s) discovered"
+          echo "════════════════════════════════════════════════════"
+          python3 -c "
+          import json
+          data = json.load(open('/tmp/unmanaged_teams.json'))
+          for t in data:
+              repos = [r['repository'] for r in t.get('repositories', [])]
+              print(f'  {t[\"name\"]} — privacy={t[\"privacy\"]} — maintainers={t[\"maintainers\"]} — members={t[\"members\"]} — repos={repos}')
+          "
+          echo ""
+          echo "Re-run without dry_run=true to import and create a PR."
+
+      # ── No Unmanaged Teams ────────────────────────────────────────────────
+      - name: Nothing to onboard
+        if: steps.discover.outputs.has-unmanaged == 'false'
+        run: |
+          echo "✅ All organization teams are already tracked in teams.yaml"
+          echo "   No pull request created."
