@@ -1,0 +1,522 @@
+name: Onboard Unmanaged Repositories
+
+# Discovers GitHub org repositories that are NOT in data/repositories.yaml,
+# enriches them with live settings from the GitHub API, appends them to
+# repositories.yaml in the canonical project format, imports each repo into
+# Terraform state (so a subsequent apply won't try to re-create them), runs
+# a Terraform plan for validation, then opens a PR for review.
+#
+# Run this workflow whenever you want to bring manually-created repos under
+# Terraform management.  Merge the resulting PR to reconcile any config drift.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target Terraform environment (state backend)"
+        required: true
+        type: choice
+        options:
+          - dev
+          - production
+        default: dev
+
+      dry_run:
+        description: "Dry run — report only, skip import and PR creation"
+        required: false
+        type: boolean
+        default: false
+
+      exclude_repos:
+        description: "Comma-separated repo names to exclude (e.g. mbb-iac,mbb-repo-templates)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write  # Required for OIDC authentication with Azure
+
+jobs:
+  # ============================================================================
+  # Single job: discover → enrich → update YAML → import → plan → open PR
+  # The import runs inside this job (before the PR is merged) so that when
+  # terraform-apply.yml triggers on the merge push it sees the repos already
+  # in state and treats them as "manage existing" rather than "create new".
+  # ============================================================================
+  onboard-repos:
+    name: 🧱 Onboard - Discover, Import & PR
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Terraform Infrastructure ──────────────────────────────────────────
+      - name: Azure Login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.5
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: |
+          terraform init -backend-config=environments/${{ inputs.environment }}/backend.tfvars
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true
+
+      # ── Discover Unmanaged Repos ───────────────────────────────────────────
+      - name: Discover unmanaged repositories
+        id: discover
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ORG: ${{ github.repository_owner }}
+          EXCLUDE_REPOS: ${{ inputs.exclude_repos }}
+        run: |
+          pip install pyyaml requests --quiet
+
+          python3 - << 'PYEOF'
+          import json, os, sys
+          import yaml
+          import requests
+
+          TOKEN    = os.environ["GH_TOKEN"]
+          ORG      = os.environ["ORG"]
+          EXCLUDE  = {r.strip() for r in os.environ.get("EXCLUDE_REPOS", "").split(",") if r.strip()}
+
+          HEADERS = {
+              "Authorization": f"Bearer {TOKEN}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+          }
+
+          # ── 1. Load repos already tracked in repositories.yaml ───────────
+          with open("data/repositories.yaml") as fh:
+              yaml_data = yaml.safe_load(fh) or {"repositories": []}
+          yaml_names = {r["name"] for r in yaml_data.get("repositories", [])}
+          print(f"📄 {len(yaml_names)} repo(s) already in repositories.yaml")
+
+          # ── 2. Page through all org repos ────────────────────────────────
+          org_repos, page = [], 1
+          while True:
+              resp = requests.get(
+                  f"https://api.github.com/orgs/{ORG}/repos",
+                  headers=HEADERS,
+                  params={"per_page": 100, "page": page, "type": "all"},
+              )
+              resp.raise_for_status()
+              batch = resp.json()
+              if not batch:
+                  break
+              org_repos.extend(batch)
+              if len(batch) < 100:
+                  break
+              page += 1
+          print(f"🏢 {len(org_repos)} total repo(s) in organization")
+
+          # ── 3. Find unmanaged (org but not in YAML, not excluded) ─────────
+          unmanaged = [
+              r for r in org_repos
+              if r["name"] not in yaml_names and r["name"] not in EXCLUDE
+          ]
+          print(f"\n🔍 {len(unmanaged)} unmanaged repo(s) found:")
+          for r in unmanaged:
+              status = "📦 archived" if r.get("archived") else "🟢 active"
+              print(f"  • {r['name']} ({status})")
+
+          if not unmanaged:
+              print("\n✅ All organization repos are already tracked — nothing to do.")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+                  out.write("has-unmanaged=false\ncount=0\n")
+              sys.exit(0)
+
+          # ── 4. Enrich each unmanaged repo ─────────────────────────────────
+          new_entries = []
+          for repo in unmanaged:
+              name        = repo["name"]
+              is_archived = bool(repo.get("archived", False))
+              print(f"\n  → Fetching details: {name}")
+
+              # Topics
+              topics_resp = requests.get(
+                  f"https://api.github.com/repos/{ORG}/{name}/topics",
+                  headers={**HEADERS, "Accept": "application/vnd.github.mercy-preview+json"},
+              )
+              topics = sorted(topics_resp.json().get("names", [])) if topics_resp.ok else []
+
+              # Vulnerability / Dependabot alerts (204 = enabled)
+              vuln_resp   = requests.get(
+                  f"https://api.github.com/repos/{ORG}/{name}/vulnerability-alerts",
+                  headers=HEADERS,
+              )
+              vuln_enabled = not is_archived and vuln_resp.status_code == 204
+
+              # Dependabot security updates (automated security fixes)
+              auto_fix_resp = requests.get(
+                  f"https://api.github.com/repos/{ORG}/{name}/automated-security-fixes",
+                  headers=HEADERS,
+              )
+              auto_fix_enabled = not is_archived and auto_fix_resp.status_code == 204
+
+              entry = {
+                  "name":        name,
+                  "description": (repo.get("description") or "").strip() or f"{name} repository",
+                  "visibility":  repo.get("visibility", "private"),
+                  "features": {
+                      "has_issues":   bool(repo.get("has_issues", True)),
+                      "has_projects": bool(repo.get("has_projects", True)),
+                      "has_wiki":     bool(repo.get("has_wiki", False)),
+                  },
+                  "default_branch": repo.get("default_branch") or "main",
+                  "topics": topics,
+                  "security": {
+                      "enable_vulnerability_alerts":              vuln_enabled,
+                      "enable_advanced_security":                 False,
+                      "enable_secret_scanning":                   False,
+                      "enable_secret_scanning_push_protection":   False,
+                      "enable_dependabot_alerts":                 vuln_enabled,
+                      "enable_dependabot_security_updates":       auto_fix_enabled,
+                  },
+              }
+              if is_archived:
+                  entry["archived"] = True
+
+              new_entries.append(entry)
+              print(f"    topics={topics}, vuln={vuln_enabled}, auto_fix={auto_fix_enabled}")
+
+          # ── 5. Persist for subsequent steps ──────────────────────────────
+          with open("/tmp/unmanaged_repos.json", "w") as fh:
+              json.dump(new_entries, fh, indent=2)
+
+          names_list = [r["name"] for r in new_entries]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write("has-unmanaged=true\n")
+              out.write(f"count={len(new_entries)}\n")
+              out.write(f"names={json.dumps(names_list)}\n")
+          PYEOF
+
+      # ── Update repositories.yaml ──────────────────────────────────────────
+      - name: Append new repos to repositories.yaml
+        if: steps.discover.outputs.has-unmanaged == 'true'
+        id: update-yaml
+        shell: bash
+        run: |
+          pip install pyyaml --quiet
+
+          python3 - << 'PYEOF'
+          import json
+
+          def bool_str(v):
+              return "true" if v else "false"
+
+          def repo_to_yaml_block(repo):
+              """Render one repo entry in the canonical repositories.yaml style."""
+              lines = []
+              desc = repo["description"].replace('"', '\\"')
+              lines.append(f'  - name: {repo["name"]}')
+              lines.append(f'    description: "{desc}"')
+              lines.append(f'    visibility: {repo["visibility"]}')
+              lines.append( '    features:')
+              f = repo["features"]
+              lines.append(f'      has_issues: {bool_str(f["has_issues"])}')
+              lines.append(f'      has_projects: {bool_str(f["has_projects"])}')
+              lines.append(f'      has_wiki: {bool_str(f["has_wiki"])}')
+              lines.append(f'    default_branch: {repo["default_branch"]}')
+              topics = repo.get("topics", [])
+              if topics:
+                  lines.append( '    topics:')
+                  for t in topics:
+                      lines.append(f'      - {t}')
+              else:
+                  lines.append( '    topics: []')
+              lines.append( '    security:')
+              s = repo["security"]
+              lines.append(f'      enable_vulnerability_alerts: {bool_str(s["enable_vulnerability_alerts"])}')
+              lines.append(f'      enable_advanced_security: {bool_str(s["enable_advanced_security"])}')
+              lines.append(f'      enable_secret_scanning: {bool_str(s["enable_secret_scanning"])}')
+              lines.append(f'      enable_secret_scanning_push_protection: {bool_str(s["enable_secret_scanning_push_protection"])}')
+              lines.append(f'      enable_dependabot_alerts: {bool_str(s["enable_dependabot_alerts"])}')
+              lines.append(f'      enable_dependabot_security_updates: {bool_str(s["enable_dependabot_security_updates"])}')
+              if repo.get("archived"):
+                  lines.append( '    archived: true')
+              return "\n".join(lines)
+
+          with open("/tmp/unmanaged_repos.json") as fh:
+              new_entries = json.load(fh)
+
+          yaml_blocks = "\n".join(repo_to_yaml_block(r) for r in new_entries)
+
+          with open("data/repositories.yaml", "a") as fh:
+              fh.write(f"\n{yaml_blocks}\n")
+
+          print(f"✅ Appended {len(new_entries)} repo(s) to data/repositories.yaml")
+          PYEOF
+
+      # ── Import into Terraform State ───────────────────────────────────────
+      - name: Import repositories into Terraform state
+        if: steps.discover.outputs.has-unmanaged == 'true' && inputs.dry_run == false
+        id: import
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMPORTED=0
+          FAILED=0
+          FAILED_LIST=""
+
+          REPO_NAMES=$(python3 -c "
+          import json
+          data = json.load(open('/tmp/unmanaged_repos.json'))
+          for r in data:
+              print(r['name'])
+          ")
+
+          while IFS= read -r REPO_NAME; do
+            [[ -z "$REPO_NAME" ]] && continue
+            echo "📥 Importing: $REPO_NAME"
+            if terraform import \
+                -var-file="environments/${{ inputs.environment }}/terraform.tfvars" \
+                "module.github_repositories[\"${REPO_NAME}\"].github_repository.this" \
+                "$REPO_NAME" 2>&1; then
+              echo "  ✅ Imported: $REPO_NAME"
+              IMPORTED=$((IMPORTED + 1))
+            else
+              echo "  ❌ Failed:   $REPO_NAME"
+              FAILED=$((FAILED + 1))
+              FAILED_LIST="${FAILED_LIST}${REPO_NAME}, "
+            fi
+            echo ""
+          done <<< "$REPO_NAMES"
+
+          echo "imported=$IMPORTED"    >> $GITHUB_OUTPUT
+          echo "failed=$FAILED"        >> $GITHUB_OUTPUT
+          echo "failed-list=${FAILED_LIST%, }" >> $GITHUB_OUTPUT
+
+          echo ""
+          echo "────────────────────────────────────────"
+          echo "Import summary: ✅ $IMPORTED succeeded  ❌ $FAILED failed"
+          if [[ $FAILED -gt 0 ]]; then
+            echo "Failed repos: ${FAILED_LIST%, }"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true
+
+      # ── Terraform Plan (Validation) ───────────────────────────────────────
+      - name: Terraform Plan
+        if: steps.discover.outputs.has-unmanaged == 'true'
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "📋 Running terraform plan to validate state after import…"
+          terraform plan \
+            -var-file="environments/${{ inputs.environment }}/terraform.tfvars" \
+            -no-color \
+            -detailed-exitcode 2>&1 | tee /tmp/plan_output.txt
+          PLAN_EXIT=${PIPESTATUS[0]}
+
+          echo "plan-exit-code=$PLAN_EXIT" >> $GITHUB_OUTPUT
+
+          case $PLAN_EXIT in
+            0)  echo "✅ No changes — configuration and state are fully in sync."   ;;
+            2)  echo "⚠️  Drift detected — plan shows changes to reconcile settings." ;;
+            *)  echo "❌ Terraform plan failed — check logs above."; exit 1          ;;
+          esac
+
+          # Capture (truncated) plan output for the PR body
+          PLAN_LINES=$(wc -l < /tmp/plan_output.txt)
+          if [[ $PLAN_LINES -gt 200 ]]; then
+            # Keep first 150 and last 30 lines; flag truncation
+            {
+              head -150 /tmp/plan_output.txt
+              echo "..."
+              echo "(output truncated — $PLAN_LINES total lines; see workflow logs for full plan)"
+              echo "..."
+              tail -30 /tmp/plan_output.txt
+            } > /tmp/plan_summary.txt
+          else
+            cp /tmp/plan_output.txt /tmp/plan_summary.txt
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true
+
+      # ── Upload Plan as Artifact ───────────────────────────────────────────
+      - name: Upload plan output as artifact
+        if: steps.discover.outputs.has-unmanaged == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-onboard-${{ inputs.environment }}
+          path: /tmp/plan_output.txt
+          retention-days: 14
+
+      # ── Create PR ─────────────────────────────────────────────────────────
+      - name: Create Pull Request
+        if: steps.discover.outputs.has-unmanaged == 'true' && inputs.dry_run == false
+        id: create-pr
+        shell: bash
+        env:
+          GH_TOKEN:    ${{ secrets.ORG_GITHUB_TOKEN }}
+          COUNT:       ${{ steps.discover.outputs.count }}
+          NAMES_JSON:  ${{ steps.discover.outputs.names }}
+          IMPORTED:    ${{ steps.import.outputs.imported }}
+          FAILED:      ${{ steps.import.outputs.failed }}
+          FAILED_LIST: ${{ steps.import.outputs.failed-list }}
+          PLAN_EXIT:   ${{ steps.plan.outputs.plan-exit-code }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          ORG:         ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+
+          BRANCH="onboard-unmanaged-repos/$(date +%Y%m%d-%H%M%S)"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add data/repositories.yaml
+          git commit -m "chore: 🧱 onboard ${COUNT} unmanaged repo(s) into Terraform management"
+          git push origin "$BRANCH"
+
+          # ── Build PR body ────────────────────────────────────────────────
+          PLAN_CONTENT=$(cat /tmp/plan_summary.txt)
+
+          if [[ "$PLAN_EXIT" == "0" ]]; then
+            PLAN_STATUS="✅ No changes — repos are fully in sync after import"
+          elif [[ "$PLAN_EXIT" == "2" ]]; then
+            PLAN_STATUS="⚠️ Configuration drift detected — review plan below and merge to reconcile"
+          else
+            PLAN_STATUS="❌ Plan failed — check workflow logs"
+          fi
+
+          if [[ "$FAILED" -gt 0 ]]; then
+            IMPORT_STATUS="⚠️ ${IMPORTED} imported, ${FAILED} failed: \`${FAILED_LIST}\`"
+          else
+            IMPORT_STATUS="✅ All ${IMPORTED} repo(s) successfully imported into Terraform state"
+          fi
+
+          # Build repo table rows from JSON
+          REPO_ROWS=$(python3 -c "
+          import json, sys
+          names = json.loads('$NAMES_JSON')
+          data  = json.load(open('/tmp/unmanaged_repos.json'))
+          by_name = {r['name']: r for r in data}
+          for n in names:
+              r = by_name[n]
+              archived = '📦' if r.get('archived') else '🟢'
+              topics   = ', '.join(r.get('topics', [])) or '—'
+              print(f'| \`{n}\` | {archived} | {r[\"visibility\"]} | {topics} |')
+          ")
+
+          PR_BODY=$(cat << PREOF
+          ## 🧱 Onboard Unmanaged Repositories into Terraform
+
+          This PR adds **${COUNT}** manually-created repository/repositories to \`data/repositories.yaml\`
+          so they are managed by Terraform going forward.
+
+          > **Repos were already imported into Terraform state** before this PR was opened.
+          > Merging this PR will trigger \`terraform apply\` which will only reconcile setting
+          > differences — it will **not** attempt to create or delete any repository.
+
+          ---
+
+          ### 📋 Repositories Being Onboarded
+
+          | Repository | Status | Visibility | Topics |
+          |------------|--------|------------|--------|
+          ${REPO_ROWS}
+
+          ---
+
+          ### 📥 Terraform Import Result
+
+          ${IMPORT_STATUS}
+          $([ "$FAILED" -gt 0 ] && echo -e "\n> ⚠️ Repos that failed to import will need to be manually imported before this PR is merged, otherwise \`terraform apply\` may fail." || true)
+
+          ---
+
+          ### 📊 Terraform Plan — \`${ENVIRONMENT}\`
+
+          **Status:** ${PLAN_STATUS}
+
+          <details>
+          <summary>Show full plan output</summary>
+
+          \`\`\`hcl
+          ${PLAN_CONTENT}
+          \`\`\`
+
+          </details>
+
+          ---
+
+          ### ✅ Merge Checklist
+
+          - [ ] Review \`data/repositories.yaml\` diff — adjust any settings that differ from the actual repo
+          - [ ] Review the Terraform plan above for unexpected changes
+          $([ "$FAILED" -gt 0 ] && echo "- [ ] Manually import failed repos before merging" || true)
+          - [ ] Merge this PR to bring repos under Terraform management
+          PREOF
+          )
+
+          PR_URL=$(gh pr create \
+            --title "🧱 Onboard ${COUNT} unmanaged repo(s) into Terraform" \
+            --body  "$PR_BODY" \
+            --label "unmanaged-repo-onboarding,automated" \
+            --base  main \
+            --head  "$BRANCH")
+
+          echo "pr-url=$PR_URL" >> $GITHUB_OUTPUT
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          echo "✅ Pull request created: $PR_URL"
+
+      # ── Dry-run Summary ───────────────────────────────────────────────────
+      - name: Print dry-run report
+        if: steps.discover.outputs.has-unmanaged == 'true' && inputs.dry_run == true
+        shell: bash
+        env:
+          NAMES_JSON: ${{ steps.discover.outputs.names }}
+          COUNT:      ${{ steps.discover.outputs.count }}
+        run: |
+          echo "════════════════════════════════════════════════════"
+          echo "  DRY RUN — ${COUNT} unmanaged repo(s) discovered"
+          echo "════════════════════════════════════════════════════"
+          python3 -c "
+          import json
+          data  = json.load(open('/tmp/unmanaged_repos.json'))
+          for r in data:
+              tag = '[archived]' if r.get('archived') else '[active]  '
+              print(f'  {tag} {r[\"name\"]} — {r[\"visibility\"]} — topics: {r.get(\"topics\", [])}')
+          "
+          echo ""
+          echo "Re-run without dry_run=true to import and create a PR."
+
+      # ── No Unmanaged Repos ────────────────────────────────────────────────
+      - name: Nothing to onboard
+        if: steps.discover.outputs.has-unmanaged == 'false'
+        run: |
+          echo "✅ All organization repositories are already tracked in repositories.yaml"
+          echo "   No pull request created."
