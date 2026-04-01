@@ -292,7 +292,6 @@ repositories:
       enable_dependabot_alerts: false
       enable_dependabot_security_updates: false
     archived: true
-
   - name: mbb-iac
     description: "IaC Sandbox"
     visibility: public
@@ -768,20 +767,4 @@ repositories:
       enable_secret_scanning: false
       enable_secret_scanning_push_protection: false
       enable_dependabot_alerts: true
-      enable_dependabot_security_updates: false
-  - name: mbb-destination02
-    description: "mbb-destination02 repository"
-    visibility: private
-    features:
-      has_issues: true
-      has_projects: true
-      has_wiki: false
-    default_branch: main
-    topics: []
-    security:
-      enable_vulnerability_alerts: false
-      enable_advanced_security: false
-      enable_secret_scanning: false
-      enable_secret_scanning_push_protection: false
-      enable_dependabot_alerts: false
       enable_dependabot_security_updates: false
