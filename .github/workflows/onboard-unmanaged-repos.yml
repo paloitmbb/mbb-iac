@@ -333,10 +333,11 @@ jobs:
                   print(f"echo '  ⏭️  Already in state: {addr1}'")
 
               # 2. Default branch resource (skipped for archived repos)
+              # Import ID is the repository name only (GitHub provider v6)
               if not archived:
                   addr2 = f'module.github_repositories["{name}"].github_branch_default.this[0]'
                   if not in_state(addr2):
-                      print(f"do_import '{addr2}' '{name}:{branch}'")
+                      print(f"do_import '{addr2}' '{name}'")
                   else:
                       print(f"echo '  ⏭️  Already in state: {addr2}'")
 
