@@ -563,7 +563,7 @@ jobs:
             const pr = await github.rest.pulls.create({
               owner: context.repo.owner,
               repo:  context.repo.repo,
-              title: `🧑‍🤝‍🧑 Onboard ${count} unmanaged team(s) into Terraform`,
+              title: `chore: 🧑‍🤝‍🧑 onboard ${count} unmanaged team(s) into Terraform`,
               head:  branch,
               base:  'main',
               body:  prBody,
