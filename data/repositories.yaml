@@ -292,3 +292,496 @@ repositories:
       enable_dependabot_alerts: false
       enable_dependabot_security_updates: false
     archived: true
+
+  - name: mbb-iac
+    description: "IaC Sandbox"
+    visibility: public
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: mbb-tf-workflows
+    description: "Terraform Reusable Workflows"
+    visibility: public
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: true
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: mbb-tf-actions
+    description: "Terraform Reusable Actions"
+    visibility: public
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: true
+    default_branch: main
+    topics:
+      - tier-2
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: ghcp-datacollection
+    description: "ghcp-datacollection repository"
+    visibility: public
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: true
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: mbb-tf-caller1
+    description: "Terraform Repository for Azure Deployment - TEST"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: mbb-new-test2
+    description: "Mbb New Test2 using Python"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics:
+      - maybank
+      - mbb
+      - python
+    security:
+      enable_vulnerability_alerts: false
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: false
+      enable_dependabot_security_updates: false
+    archived: true
+  - name: mbb-new-test3
+    description: "Mbb New Test3 using React"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics:
+      - maybank
+      - mbb
+      - react
+    security:
+      enable_vulnerability_alerts: false
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: false
+      enable_dependabot_security_updates: false
+    archived: true
+  - name: mbb-migration-workflows
+    description: "This repository is used for testing migration workflows"
+    visibility: public
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics:
+      - tier-3
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: Test-Src-repo
+    description: "Repo Created for migration purpose"
+    visibility: public
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: true
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: mbb-sandbox-iac
+    description: "MBB Sandbox IaC"
+    visibility: public
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: TEST-TRG-REPO-DEST-007
+    description: "Repo Created for migration purpose"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: test-trg-repo-dest-11
+    description: "Repo Created for migration purpose"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: test-trg-repo-dest-02
+    description: "Repo Created for migration purpose"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: test-trg-repo-dest-03
+    description: "Repo Created for migration purpose"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: test-trg-repo-dest-04
+    description: "Repo Created for migration purpose"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: test-repo-trg-dest-20
+    description: "Repo Created for migration purpose"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: test-trg-repo-dest-21
+    description: "Repo Created for migration purpose"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: mss-devops-workflow
+    description: "The Repositories for Azure and Github Providers composite actions and workflows"
+    visibility: public
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: mbb-mobileapp-workflows
+    description: "Workflows for mobile apps"
+    visibility: public
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: mbb-repo-templates
+    description: "MBB Templates repository"
+    visibility: public
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics:
+      - tier-4
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: mbb-reusable-workflows
+    description: "Reusable workflows for java and .net"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: false
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: false
+      enable_dependabot_security_updates: false
+  - name: mbb-java-maven
+    description: "mbb-java-maven repository"
+    visibility: public
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: trg-mbb-tf-caller6
+    description: "Terraform Repository for Azure Deployment - TEST"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: trg-mbb-tf-caller7
+    description: "Terraform Repository for Azure Deployment - TEST"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: trg-mbb-tf-caller10
+    description: "Terraform Repository for Azure Deployment - TEST"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: trg-mbb-tf-callr11
+    description: "Terraform Repository for Azure Deployment - TEST"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: trg-dest-repo-dest-111
+    description: "Repo Created for migration purpose"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: mbb-resources
+    description: "mbb-resources repository"
+    visibility: public
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: mbb-backup-workflows
+    description: "Contains workflows for sceduled backing up the repos"
+    visibility: public
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics:
+      - tier-1
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: false
+  - name: mbb-destination02
+    description: "mbb-destination02 repository"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: []
+    security:
+      enable_vulnerability_alerts: false
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: false
+      enable_dependabot_security_updates: false
