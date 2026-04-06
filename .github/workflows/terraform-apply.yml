@@ -96,6 +96,59 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           ARM_USE_OIDC: true
 
+      - name: Clean up security state for archived repos
+        run: |
+          # When a repo transitions to archived: true, its github_security module instance
+          # is removed from for_each. Terraform would then plan a DESTROY → DELETE call
+          # on github_repository_dependabot_security_updates, which the GitHub API rejects
+          # with 422 when an org-enforced security configuration is active.
+          # Removing the module from state before plan prevents any API call being made.
+          echo "🔍 Checking for orphaned security module instances..."
+          STATE_LIST=$(terraform state list 2>/dev/null || echo "")
+          CLEANED=0
+          SEEN_KEYS=""
+
+          
+          for item in $STATE_LIST; do
+            repo_key=$(echo "$item" | sed -n 's/^module\.github_security\["\([^"]*\)"\].*/\1/p')
+            [ -z "$repo_key" ] && continue
+
+            # Deduplicate — multiple resources share the same module instance key
+            if echo "$SEEN_KEYS" | grep -qF "|${repo_key}|" 2>/dev/null; then
+              continue
+            fi
+            SEEN_KEYS="${SEEN_KEYS}|${repo_key}|"
+
+            is_archived=$(python3 -c "
+          import yaml, sys
+          with open('data/repositories.yaml') as f:
+              data = yaml.safe_load(f)
+          for repo in data.get('repositories', []):
+              if repo['name'] == sys.argv[1] and repo.get('archived', False):
+                  print('true')
+                  sys.exit(0)
+          print('false')
+          " "$repo_key" 2>/dev/null || echo "false")
+
+            if [ "$is_archived" = "true" ]; then
+              echo "🗑️  Removing security state for archived repo: $repo_key"
+              terraform state rm "module.github_security[\"$repo_key\"]" || true
+              CLEANED=$((CLEANED + 1))
+            fi
+          done
+
+          if [ "$CLEANED" -gt 0 ]; then
+            echo "✅ Cleaned $CLEANED orphaned security module instance(s)"
+          else
+            echo "✅ No orphaned security state found"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true
+
       - name: Terraform Plan
         run: |
           terraform plan -var-file=environments/${{ matrix.environment }}/terraform.tfvars -out=environments/${{ matrix.environment }}/tfplan
