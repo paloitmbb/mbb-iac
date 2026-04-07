@@ -1,0 +1,237 @@
+name: Repository Restore
+
+# Restore a repository from a backup stored in Azure Blob Storage.
+# Azure Blob versioning at the container level preserves every backup;
+# choose a specific blob name to restore a historical version, or leave
+# blank to restore the latest backup for that repository.
+#
+# SAFETY: target_repo is REQUIRED and must differ from repo_name.
+# Restoring directly into the source repository is intentionally blocked.
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo_name:
+        description: "Repository name to restore (e.g. my-repo)"
+        required: true
+        type: string
+      backup_date:
+        description: >
+          Date of the backup to restore in YYYYMMDD format
+          (e.g. 20260401 for 1 Apr 2026).
+          Leave empty to restore the latest backup.
+          If multiple backups exist on that date, the most recent one is used.
+        required: false
+        default: ""
+        type: string
+      target_repo:
+        description: >
+          Target repository name to restore into.
+          Must be different from repo_name — restoring into the source
+          repository is not allowed. The target repository must already
+          exist on GitHub.
+        required: true
+        type: string
+      environment:
+        description: "Environment (determines which Azure storage vars to use)"
+        required: true
+        type: choice
+        options:
+          - dev
+          - production
+
+env:
+  GITHUB_ORG: ${{ github.repository_owner }}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  # ---------- Validate inputs & resolve the backup blob to use ----------
+  resolve-backup:
+    name: 🔍 Resolve backup version
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    outputs:
+      selected-blob: ${{ steps.resolve.outputs.selected-blob }}
+      available-count: ${{ steps.list.outputs.available-count }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Safety check — target must differ from source
+        run: |
+          if [[ "${{ inputs.target_repo }}" == "${{ inputs.repo_name }}" ]]; then
+            echo "❌ target_repo must be different from repo_name."
+            echo "   Restoring directly into the source repository is not allowed."
+            echo "   Use a dedicated restore target (e.g. my-repo-restored)."
+            exit 1
+          fi
+          echo "✅ target_repo '${{ inputs.target_repo }}' differs from source '${{ inputs.repo_name }}'"
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  #v2.3.0
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - name: List available backups for repo
+        id: list
+        run: |
+          VERSIONS=$(az storage blob list \
+            --account-name "${{ vars.AZURE_STORAGE_ACCOUNT }}" \
+            --container-name "${{ vars.AZURE_CONTAINER_NAME }}" \
+            --prefix "backup-${{ inputs.repo_name }}-" \
+            --auth-mode login \
+            --query "sort_by([].{name:name, created:properties.creationTime, size:properties.contentLength}, &created) | reverse(@)" \
+            --output json)
+
+          COUNT=$(echo "$VERSIONS" | jq 'length')
+          echo "available-count=${COUNT}" >> "$GITHUB_OUTPUT"
+
+          if [[ "$COUNT" -eq 0 ]]; then
+            echo "❌ No backups found for repository '${{ inputs.repo_name }}' in container '${{ vars.AZURE_CONTAINER_NAME }}'."
+            exit 1
+          fi
+
+          echo "Found ${COUNT} backup(s) for '${{ inputs.repo_name }}':"
+          echo "$VERSIONS" | jq -r '.[] | "  \(.created)  \(.name)"'
+
+          # Store JSON for the step summary
+          echo "$VERSIONS" > /tmp/versions.json
+
+      - name: Resolve backup blob
+        id: resolve
+        run: |
+          INPUT_DATE="${{ inputs.backup_date }}"
+
+          if [[ -n "$INPUT_DATE" ]]; then
+            # ------ User specified a date — find the latest blob on that date ------
+            # Validate date format
+            if ! [[ "$INPUT_DATE" =~ ^[0-9]{8}$ ]]; then
+              echo "❌ Invalid backup_date format '${INPUT_DATE}'. Expected YYYYMMDD (e.g. 20260401)."
+              exit 1
+            fi
+
+            MATCHED=$(az storage blob list \
+              --account-name "${{ vars.AZURE_STORAGE_ACCOUNT }}" \
+              --container-name "${{ vars.AZURE_CONTAINER_NAME }}" \
+              --prefix "backup-${{ inputs.repo_name }}-${INPUT_DATE}-" \
+              --auth-mode login \
+              --query "sort_by([].name, &@) | reverse(@) | [0]" \
+              --output tsv)
+
+            if [[ -z "$MATCHED" || "$MATCHED" == "None" ]]; then
+              echo "❌ No backup found for '${{ inputs.repo_name }}' on date '${INPUT_DATE}'."
+              echo "   Check the discovery summary above for available backup dates."
+              exit 1
+            fi
+
+            echo "selected-blob=${MATCHED}" >> "$GITHUB_OUTPUT"
+            echo "✅ Using backup from ${INPUT_DATE}: ${MATCHED}"
+          else
+            # ------ No date specified — use the most recent backup ------
+            LATEST=$(az storage blob list \
+              --account-name "${{ vars.AZURE_STORAGE_ACCOUNT }}" \
+              --container-name "${{ vars.AZURE_CONTAINER_NAME }}" \
+              --prefix "backup-${{ inputs.repo_name }}-" \
+              --auth-mode login \
+              --query "sort_by([].name, &@) | reverse(@) | [0]" \
+              --output tsv)
+
+            if [[ -z "$LATEST" || "$LATEST" == "None" ]]; then
+              echo "❌ No backups found for '${{ inputs.repo_name }}'."
+              exit 1
+            fi
+
+            echo "selected-blob=${LATEST}" >> "$GITHUB_OUTPUT"
+            echo "✅ Using latest backup: ${LATEST}"
+          fi
+
+      - name: Write version discovery summary
+        if: always()
+        run: |
+          TARGET="${{ inputs.target_repo }}"
+          SELECTED="${{ steps.resolve.outputs.selected-blob }}"
+          COUNT="${{ steps.list.outputs.available-count }}"
+          {
+            echo "## 🔍 Backup Discovery"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Source Repository | \`${{ inputs.repo_name }}\` |"
+            echo "| Target Repository | \`${TARGET}\` |"
+            echo "| Backup Date Filter | ${{ inputs.backup_date || 'latest' }} |"
+            echo "| Selected Blob | \`${SELECTED}\` |"
+            echo ""
+            if [[ -f /tmp/versions.json ]]; then
+              echo "### All available backups (newest first)"
+              echo ""
+              echo "| Backup Blob | Created | Size (bytes) |"
+              echo "|-------------|---------|--------------|"
+              jq -r '.[] | "| `\(.name)` | \(.created) | \(.size) |"' /tmp/versions.json
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------- Restore the resolved backup ----------
+  restore:
+    name: "🔄 Restore ${{ inputs.repo_name }}"
+    needs: resolve-backup
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Install Azure CLI
+        run: |
+          if ! command -v az &> /dev/null; then
+            curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+          fi
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  #v2.3.0
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - name: Run restore
+        id: restore
+        run: bash scripts/restore-repo.sh
+        env:
+          GH_BACKUP_TOKEN: ${{ steps.app-token.outputs.token }}
+          BLOB_NAME: ${{ needs.resolve-backup.outputs.selected-blob }}
+          TARGET_REPO: ${{ inputs.target_repo }}
+          AZURE_STORAGE_ACCOUNT: ${{ vars.AZURE_STORAGE_ACCOUNT }}
+          AZURE_CONTAINER_NAME: ${{ vars.AZURE_CONTAINER_NAME }}
+
+      - name: Write restore summary
+        if: always()
+        run: |
+          STATUS="${{ steps.restore.outcome }}"
+          ICON=$( [[ "$STATUS" == "success" ]] && echo "✅" || echo "❌" )
+          TARGET="${{ inputs.target_repo }}"
+          {
+            echo "## ${ICON} Restore Summary"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Source Repository | \`${{ inputs.repo_name }}\` |"
+            echo "| Target Repository | \`${TARGET}\` |"
+            echo "| Backup Blob | \`${{ needs.resolve-backup.outputs.selected-blob }}\` |"
+            echo "| Environment | ${{ inputs.environment }} |"
+            echo "| Status | ${STATUS} |"
+            echo "| Triggered by | @${{ github.actor }} |"
+            echo "| Timestamp | $(date -u +"%Y-%m-%d %H:%M:%S UTC") |"
+          } >> "$GITHUB_STEP_SUMMARY"

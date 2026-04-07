@@ -36,6 +36,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Install dependencies
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq jq
@@ -43,7 +51,7 @@ jobs:
       - name: Run discovery
         run: bash scripts/discover-repos.sh
         env:
-          GH_BACKUP_TOKEN: ${{ secrets.GH_BACKUP_TOKEN }}
+          GH_BACKUP_TOKEN: ${{ steps.app-token.outputs.token }}
 
       - name: Determine which tiers are due
         id: tiers
@@ -149,6 +157,14 @@ jobs:
       - name: Checkout workflows repo
         uses: actions/checkout@v4
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Install Azure CLI
         run: |
           if ! command -v az &> /dev/null; then
@@ -156,7 +172,7 @@ jobs:
           fi
 
       - name: Azure Login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 #v2.3.0
         with:
           client-id: ${{ secrets.ARM_CLIENT_ID }}
           tenant-id: ${{ secrets.ARM_TENANT_ID }}
@@ -166,7 +182,7 @@ jobs:
         id: backup
         run: bash scripts/backup-repo.sh "${{ matrix.repo }}"
         env:
-          GH_BACKUP_TOKEN: ${{ secrets.GH_BACKUP_TOKEN }}
+          GH_BACKUP_TOKEN: ${{ steps.app-token.outputs.token }}
           AZURE_STORAGE_ACCOUNT: ${{ vars.AZURE_STORAGE_ACCOUNT }}
           AZURE_CONTAINER_NAME: ${{ vars.AZURE_CONTAINER_NAME }}
 
