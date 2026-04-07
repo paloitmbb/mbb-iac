@@ -75,16 +75,19 @@ fi
 
 echo "Target repository confirmed."
 
-# --- Push mirror to GitHub ---
+# --- Push backup refs to GitHub ---
+# --all --tags pushes all branches and tags from the backup.
+# --force allows non-fast-forward updates (restoring older history).
+# Unlike --mirror, this does NOT delete branches/tags that exist in
+# the target but are absent from the backup — existing content is preserved.
 echo "Pushing to https://github.com/${GITHUB_ORG}/${TARGET_REPO}..."
 cd "${BARE_REPO_DIR}"
 
 git remote set-url origin \
   "https://x-access-token:${GH_BACKUP_TOKEN}@github.com/${GITHUB_ORG}/${TARGET_REPO}.git"
 
-# --mirror pushes all refs (branches, tags, notes) and removes refs that no
-# longer exist in the backup.  Use --force to allow non-fast-forward updates.
-git push --mirror --force
+git push --all --force
+git push --tags --force
 
 echo "=== Restore of ${TARGET_REPO} completed successfully ==="
 
