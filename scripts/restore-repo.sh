@@ -76,18 +76,28 @@ fi
 echo "Target repository confirmed."
 
 # --- Push backup refs to GitHub ---
-# --all --tags pushes all branches and tags from the backup.
-# --force allows non-fast-forward updates (restoring older history).
+# --all pushes all branches from the backup with force (non-fast-forward ok).
 # Unlike --mirror, this does NOT delete branches/tags that exist in
 # the target but are absent from the backup — existing content is preserved.
-echo "Pushing to https://github.com/${GITHUB_ORG}/${TARGET_REPO}..."
+REMOTE_URL="https://x-access-token:${GH_BACKUP_TOKEN}@github.com/${GITHUB_ORG}/${TARGET_REPO}.git"
+
+echo "Pushing branches to ${GITHUB_ORG}/${TARGET_REPO}..."
 cd "${BARE_REPO_DIR}"
 
-git remote set-url origin \
-  "https://x-access-token:${GH_BACKUP_TOKEN}@github.com/${GITHUB_ORG}/${TARGET_REPO}.git"
+git remote set-url origin "${REMOTE_URL}"
 
 git push --all --force
-git push --tags --force
+echo "Branches pushed successfully."
+
+# Push tags separately — some repos have no tags, which is fine
+TAG_COUNT=$(git tag | wc -l | tr -d ' ')
+if [[ "$TAG_COUNT" -gt 0 ]]; then
+  echo "Pushing ${TAG_COUNT} tag(s)..."
+  git push --tags --force
+  echo "Tags pushed successfully."
+else
+  echo "No tags to push — skipping."
+fi
 
 echo "=== Restore of ${TARGET_REPO} completed successfully ==="
 
