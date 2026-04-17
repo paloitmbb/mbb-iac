@@ -222,12 +222,27 @@ jobs:
             git checkout "$QUEUE_BRANCH"
             git reset --hard "origin/$QUEUE_BRANCH"
 
-            # If the queue branch tip is already fully contained in main's history,
-            # the previous PR was merged (and possibly the branch was not deleted).
-            # Reset it to main HEAD so we start a clean new batch — not on stale history.
-            if git merge-base --is-ancestor "origin/$QUEUE_BRANCH" origin/main; then
-              echo "Queue branch already merged into main — resetting to main HEAD for new batch."
+            if git diff --quiet "origin/$QUEUE_BRANCH" origin/main -- data/repositories.yaml; then
+              # Content is identical — queue was already merged into main (any strategy).
+              # Start a fresh batch from main HEAD.
+              echo "Queue branch content already in main (merged) — resetting to main HEAD for new batch."
               git reset --hard origin/main
+            else
+              # Queue branch has changes not yet in main.
+              # Check if an open PR still exists for this branch.
+              # If there is no open PR, the PR was closed without merging (rejected).
+              # Reset to main to avoid resurrecting rejected repository entries.
+              OPEN_PR_COUNT=$(curl -sf \
+                -H "Authorization: Bearer ${{ secrets.ORG_GITHUB_TOKEN }}" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/pulls?head=${{ github.repository_owner }}:${QUEUE_BRANCH}&base=main&state=open" \
+                | jq 'length')
+              if [[ "$OPEN_PR_COUNT" == "0" ]]; then
+                echo "Queue branch has changes but no open PR (PR was closed without merging) — resetting to main HEAD."
+                git reset --hard origin/main
+              else
+                echo "Queue branch has an open PR — building on top of existing queue."
+              fi
             fi
           else
             # Branch does not exist remotely — create it fresh from main
@@ -266,7 +281,7 @@ jobs:
             echo "already-exists=true" >> $GITHUB_OUTPUT
             exit 0
           }
-          git push origin "${{ steps.queue-branch.outputs.branch }}"
+          git push --force-with-lease origin "${{ steps.queue-branch.outputs.branch }}"
           echo "already-exists=false" >> $GITHUB_OUTPUT
 
       - name: Create or update queue PR
