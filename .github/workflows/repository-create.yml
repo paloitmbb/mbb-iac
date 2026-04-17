@@ -4,6 +4,12 @@ on:
   issues:
     types: [opened]
 
+# Serialize all repo-request workflow runs so that each run builds on top of
+# the previous commit on the shared queue branch, eliminating merge conflicts.
+concurrency:
+  group: repo-requests-queue
+  cancel-in-progress: false
+
 # Note: This workflow uses ORG_GITHUB_TOKEN instead of GITHUB_TOKEN for:
 # - Team validation (requires read:org permission)
 # - PR creation (GITHUB_TOKEN is restricted from creating PRs in this repository)
@@ -197,10 +203,37 @@ jobs:
     environment: repo-creation-approval
 
     steps:
-      - name: Checkout repository
+      - name: Checkout queue branch (or create from main)
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with:
           token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          # Always fetch everything so we can reset to the remote queue branch
+          fetch-depth: 0
+
+      - name: Switch to shared queue branch
+        id: queue-branch
+        shell: bash
+        run: |
+          QUEUE_BRANCH="repo-requests/queue"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --heads origin "$QUEUE_BRANCH" > /dev/null 2>&1; then
+            git checkout "$QUEUE_BRANCH"
+            git reset --hard "origin/$QUEUE_BRANCH"
+
+            # If the queue branch tip is already fully contained in main's history,
+            # the previous PR was merged (and possibly the branch was not deleted).
+            # Reset it to main HEAD so we start a clean new batch — not on stale history.
+            if git merge-base --is-ancestor "origin/$QUEUE_BRANCH" origin/main; then
+              echo "Queue branch already merged into main — resetting to main HEAD for new batch."
+              git reset --hard origin/main
+            fi
+          else
+            # Branch does not exist remotely — create it fresh from main
+            git checkout -b "$QUEUE_BRANCH"
+          fi
+          echo "branch=$QUEUE_BRANCH" >> $GITHUB_OUTPUT
 
       - name: Update YAML configuration
         id: update-yaml
@@ -213,67 +246,86 @@ jobs:
           default-branch: ${{ needs.validate-request.outputs.default-branch }}
           teams: ${{ needs.validate-request.outputs.validated-teams }}
 
-      - name: Create pull request
+      - name: Commit and push to queue branch
+        id: push-commit
+        shell: bash
+        run: |
+          REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
+          ISSUE_NUM="${{ github.event.issue.number }}"
+
+          git add data/repositories.yaml
+          git commit -m "feat: ✨ add repository ${REPO_NAME}
+
+          Repository request from issue #${ISSUE_NUM}
+
+          - Repository: ${REPO_NAME}
+          - Tech Stack: ${{ needs.validate-request.outputs.tech-stack }}
+          - Default Branch: ${{ needs.validate-request.outputs.default-branch }}
+          - Configuration: Using organizational defaults" || {
+            echo "Nothing to commit (repository may already be in the YAML)"
+            echo "already-exists=true" >> $GITHUB_OUTPUT
+            exit 0
+          }
+          git push origin "${{ steps.queue-branch.outputs.branch }}"
+          echo "already-exists=false" >> $GITHUB_OUTPUT
+
+      - name: Create or update queue PR
         id: create-pr
-        uses: paloitmbb/mbb-tf-actions/actions/github-create-pullrequest@main
+        if: steps.push-commit.outputs.already-exists != 'true'
+        uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
-          branch-prefix: 'repo-request'
-          branch-suffix: ${{ needs.validate-request.outputs.repo-name }}
-          commit-title: "feat: ✨ add repository ${{ needs.validate-request.outputs.repo-name }}"
-          commit-body: |
-            Repository request from issue #${{ github.event.issue.number }}
+          script: |
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+            const head  = 'repo-requests/queue';
+            const base  = 'main';
+            const repoName = '${{ needs.validate-request.outputs.repo-name }}';
+            const issueNum = ${{ github.event.issue.number }};
+            const techStack = '${{ needs.validate-request.outputs.tech-stack }}';
+            const defaultBranch = '${{ needs.validate-request.outputs.default-branch }}';
+            const teamsDisplay = '${{ needs.validate-request.outputs.teams-display }}' || 'None';
+            const requester = '${{ github.event.issue.user.login }}';
 
-            - Repository: ${{ needs.validate-request.outputs.repo-name }}
-            - Tech Stack: ${{ needs.validate-request.outputs.tech-stack }}
-            - Default Branch: ${{ needs.validate-request.outputs.default-branch }}
-            - Configuration: Using organizational defaults
-            ${{ needs.validate-request.outputs.teams-display != 'None' && needs.validate-request.outputs.teams-display != '' && format('- Teams with Access: {0}', needs.validate-request.outputs.teams-display) || '' }}
+            // Look for an existing open PR from the queue branch
+            const { data: prs } = await github.rest.pulls.list({
+              owner, repo, head: `${owner}:${head}`, base, state: 'open'
+            });
 
-            Related to #${{ github.event.issue.number }}
-          pr-title: "🆕 Add repository: ${{ needs.validate-request.outputs.repo-name }}"
-          pr-body: |
-            ## 🎉 New Repository Request
+            let prNumber, prUrl;
+            if (prs.length > 0) {
+              // PR already open — just add a comment linking this issue
+              prNumber = prs[0].number;
+              prUrl    = prs[0].html_url;
+              await github.rest.issues.createComment({
+                owner, repo,
+                issue_number: prNumber,
+                body: `### ➕ Added repository \`${repoName}\`\n\nClose: #${issueNum}\n- **Tech Stack:** ${techStack}\n- **Default Branch:** \`${defaultBranch}\`\n- **Teams:** ${teamsDisplay}\n- **Requested By:** @${requester}`
+              });
+              core.notice(`Appended repo ${repoName} to existing PR #${prNumber}`);
+            } else {
+              // No open PR yet — create one
+              const { data: pr } = await github.rest.pulls.create({
+                owner, repo, head, base,
+                title: '🆕 Pending repository requests (queue)',
+                body: `## 🎉 Pending Repository Requests\n\nThis PR accumulates all pending repository requests. Each new request appends a commit here — no merge conflicts.\n\n### Repositories in this batch\n\n| Repository | Tech Stack | Branch | Requested By |\n|---|---|---|---|\n| \`${repoName}\` | ${techStack} | \`${defaultBranch}\` | @${requester} |\n\n---\nCloses #${issueNum}`
+              });
+              prNumber = pr.number;
+              prUrl    = pr.html_url;
+              // Add labels
+              await github.rest.issues.addLabels({
+                owner, repo,
+                issue_number: prNumber,
+                labels: ['repo-request', 'automated']
+              });
+              core.notice(`Created new queue PR #${prNumber}`);
+            }
 
-            ### Repository Details
-
-            | Field | Value |
-            |-------|-------|
-            | **Repository Name** | `${{ needs.validate-request.outputs.repo-name }}` |
-            | **Tech Stack** | ${{ needs.validate-request.outputs.tech-stack }} |
-            | **Default Branch** | `${{ needs.validate-request.outputs.default-branch }}` |
-            | **Teams with Access** | ${{ needs.validate-request.outputs.teams-display || 'None' }} |
-            | **Requested By** | @${{ github.event.issue.user.login }} |
-
-            ### Team Access
-
-            ${{ needs.validate-request.outputs.teams-display != 'None' && needs.validate-request.outputs.teams-display != '' && format('Teams with write access: `{0}`', needs.validate-request.outputs.teams-display) || 'No teams specified' }}
-
-            ### Configuration
-
-            This PR adds the repository definition to `data/repositories.yaml`.
-
-            **Default settings** from `data/defaults.yaml` will be applied:
-            - Visibility: private
-            - Features: Issues, Projects (Wiki disabled)
-            - Security: Vulnerability alerts, Dependabot enabled
-            - Topics: maybank, mbb, ${{ needs.validate-request.outputs.tech-stack }}
-
-            ### Next Steps
-
-            1. ✅ Review the YAML changes
-            2. ✅ Merge this PR to apply changes
-            3. 🚀 Run Terraform to create the repository and grant team access
-
-            ---
-
-            Closes #${{ github.event.issue.number }}
-          pr-labels: 'repo-request,automated'
-          file-paths: 'data/repositories.yaml'
-          linked-issue: ${{ github.event.issue.number }}
+            core.setOutput('pr-number', prNumber);
+            core.setOutput('pr-url', prUrl);
 
       - name: Build PR success notification
-        if: success()
+        if: success() && steps.push-commit.outputs.already-exists != 'true'
         id: build-pr-success
         shell: bash
         run: |
@@ -305,12 +357,12 @@ jobs:
           # Build next steps using heredoc
           echo "next-steps<<STEPSEOF" >> $GITHUB_OUTPUT
           echo "1. 📝 Review the pull request: [#${PR_NUMBER}](${PR_URL})" >> $GITHUB_OUTPUT
-          echo "2. ✅ Approve and merge the PR" >> $GITHUB_OUTPUT
-          echo "3. 🚀 Run \`terraform apply\` to create the repository and grant team access" >> $GITHUB_OUTPUT
+          echo "2. ✅ Approve and merge the PR (other pending requests may also be included in the same PR)" >> $GITHUB_OUTPUT
+          echo "3. 🚀 Terraform will automatically apply once the PR is merged, creating all repositories in the batch" >> $GITHUB_OUTPUT
           echo "STEPSEOF" >> $GITHUB_OUTPUT
 
       - name: Notify PR creation success
-        if: success()
+        if: success() && steps.push-commit.outputs.already-exists != 'true'
         uses: paloitmbb/mbb-tf-actions/actions/github-notify-issue@main
         with:
           github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
@@ -320,6 +372,19 @@ jobs:
           summary-table: ${{ steps.build-pr-success.outputs.summary-json }}
           next-steps: ${{ steps.build-pr-success.outputs.next-steps }}
           labels-add: 'pr-created'
+
+      - name: Notify repository already exists
+        if: success() && steps.push-commit.outputs.already-exists == 'true'
+        uses: paloitmbb/mbb-tf-actions/actions/github-notify-issue@main
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          issue-number: ${{ github.event.issue.number }}
+          status: 'failure'
+          title: 'Repository Already Exists'
+          error-details: 'Repository `${{ needs.validate-request.outputs.repo-name }}` is already defined in `data/repositories.yaml`. No changes were made.'
+          labels-add: 'duplicate'
+          close-issue: 'true'
+          close-reason: 'not_planned'
 
       - name: Build PR failure notification
         if: failure()
