@@ -2,7 +2,7 @@
 
 **Date:** 19 April 2026
 **Status:** ✅ Implementation Complete
-**Plan Reference:** [05-FILE_BASED_STATE_SHARDING_PLAN.md](./05-FILE_BASED_STATE_SHARDING_PLAN.md)
+**Plan Reference:** [04-FILE_BASED_STATE_SHARDING_PLAN.md](./04-FILE_BASED_STATE_SHARDING_PLAN.md)
 
 ---
 
