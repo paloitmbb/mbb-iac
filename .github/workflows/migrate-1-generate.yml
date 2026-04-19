@@ -1,0 +1,116 @@
+name: "State Migration: 1 - Generate Plan"
+
+# =============================================================================
+# Step 1 of 3: Generate the migration command script.
+#
+# Initialises the monolithic root config, runs migrate-to-shards.sh, and
+# uploads the generated script as a downloadable artifact so it can be
+# reviewed before proceeding to step 2.
+#
+# ⚠️  This workflow makes NO state changes.
+#
+# Workflow:
+#   1. Run this workflow → download and review the artifact
+#   2. Run migrate-2-execute.yml → split the monolithic state locally
+#   3. Run migrate-3-push-verify.yml → push to new backends and verify
+# =============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - dev
+          - production
+        default: dev
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: state-migration-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    name: "🗺️ Generate migration script"
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ vars.TERRAFORM_VERSION || '1.14.5' }}
+          terraform_wrapper: false
+
+      - name: Install Python dependencies
+        run: pip install pyyaml --quiet
+
+      - name: Terraform Init (monolithic root)
+        run: |
+          terraform init \
+            -backend-config="environments/${{ inputs.environment }}/backend.tfvars"
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+
+      - name: List monolithic state resources
+        run: |
+          echo "Resources in monolithic state:"
+          terraform state list 2>/dev/null || echo "(none — already migrated or state is empty)"
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Generate migration script
+        run: |
+          ./scripts/migrate-to-shards.sh "${{ inputs.environment }}"
+          echo ""
+          echo "=== Generated script preview ==="
+          cat /tmp/migration-commands-${{ inputs.environment }}.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Upload migration script artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-script-${{ inputs.environment }}-${{ github.run_id }}
+          path: /tmp/migration-commands-${{ inputs.environment }}.sh
+          retention-days: 7
+
+      - name: Summary
+        run: |
+          echo "## ✅ Migration script generated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** \`${{ inputs.environment }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Run ID:** \`${{ github.run_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Download and review the \`migration-script-${{ inputs.environment }}-${{ github.run_id }}\` artifact" >> $GITHUB_STEP_SUMMARY
+          echo "2. If the script looks correct, trigger **State Migration: 2 - Execute Split**" >> $GITHUB_STEP_SUMMARY
+          echo "   - Use this run ID as input: \`${{ github.run_id }}\`" >> $GITHUB_STEP_SUMMARY
