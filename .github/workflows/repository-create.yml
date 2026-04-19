@@ -269,7 +269,7 @@ jobs:
           ---
           # Repository configurations loaded dynamically by Terraform
           # Split file ${FILE_NUM} — created automatically by round-robin balancing.
-          # YAML file splitting is independent of state-group shard assignments.
+          # Each YAML file maps to its own Terraform state.
 
           repositories:
           HEADER
