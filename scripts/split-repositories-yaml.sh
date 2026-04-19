@@ -10,6 +10,12 @@ set -euo pipefail
 # this script redistributes repos across files so each file has at most
 # <max-repos-per-file> entries.
 #
+# NOTE: For new repos, prefer using the round-robin balancer instead:
+#   scripts/round-robin-repo-file.sh
+# The round-robin script distributes new repos one-at-a-time to the file with
+# the lowest count, and is used by the repo creation and onboarding workflows.
+# This split script is for retroactively rebalancing existing large files.
+#
 # File naming convention:
 #   data/repositories.yaml       — primary file (always exists)
 #   data/repositories-002.yaml   — second file
