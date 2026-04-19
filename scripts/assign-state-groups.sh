@@ -6,9 +6,12 @@ set -euo pipefail
 # =============================================================================
 # Usage: ./scripts/assign-state-groups.sh [max-per-shard]
 #
-# Parses data/repositories.yaml, finds repos lacking a state-group-* topic,
-# and assigns them to the first group with fewer than <max-per-shard> members
-# (default: 50), or creates a new group.
+# Parses ALL data/repositories*.yaml files, finds repos lacking a
+# state-group-* topic, and assigns them to the first group with fewer than
+# <max-per-shard> members (default: 50), or creates a new group.
+#
+# Supports split YAML files: data/repositories.yaml, data/repositories-002.yaml, etc.
+# Each file is updated in-place so only the files containing unassigned repos change.
 #
 # Rules:
 #   - Only ADDS topics; never moves repos between groups.
@@ -19,19 +22,49 @@ set -euo pipefail
 MAX_PER_SHARD=${1:-50}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-REPOS_FILE="$PROJECT_ROOT/data/repositories.yaml"
+DATA_DIR="$PROJECT_ROOT/data"
 
-if [ ! -f "$REPOS_FILE" ]; then
-    echo "Error: $REPOS_FILE not found"
+# Find all repository YAML files
+REPO_FILES=$(find "$DATA_DIR" -maxdepth 1 -name 'repositories*.yaml' | sort)
+
+if [ -z "$REPO_FILES" ]; then
+    echo "Error: No repositories*.yaml files found in $DATA_DIR"
     exit 1
 fi
 
-python3 - "$REPOS_FILE" "$MAX_PER_SHARD" << 'PYEOF'
-import sys
-import re
+echo "Scanning repository YAML files for state-group assignment:"
+echo "$REPO_FILES" | while read -r f; do echo "  $(basename "$f")"; done
+echo ""
+
+# First pass: count existing group assignments across ALL files using PyYAML
+GLOBAL_GROUP_COUNTS=$(python3 -c "
+import yaml, re, json, glob, os
+
+data_dir = '$DATA_DIR'
+files = sorted(glob.glob(os.path.join(data_dir, 'repositories*.yaml')))
+STATE_GROUP_RE = re.compile(r'^state-group-(\d{3})$')
+group_counts = {}
+
+for fpath in files:
+    with open(fpath) as f:
+        data = yaml.safe_load(f) or {}
+    for repo in data.get('repositories', []):
+        for t in repo.get('topics', []):
+            m = STATE_GROUP_RE.match(t)
+            if m:
+                g = int(m.group(1))
+                group_counts[g] = group_counts.get(g, 0) + 1
+print(json.dumps(group_counts))
+")
+
+# Process each file independently (in-place edits)
+for REPOS_FILE in $REPO_FILES; do
+    python3 - "$REPOS_FILE" "$MAX_PER_SHARD" "$GLOBAL_GROUP_COUNTS" << 'PYEOF'
+import sys, re, json
 
 repos_file = sys.argv[1]
 max_per_shard = int(sys.argv[2])
+group_counts = {int(k): v for k, v in json.loads(sys.argv[3]).items()}
 
 with open(repos_file, 'r') as f:
     content = f.read()
@@ -106,21 +139,16 @@ def extract_repo_blocks(text):
 
 repos, lines = extract_repo_blocks(content)
 
-# ── compute group fill levels ────────────────────────────────────────
-group_counts = {}  # group_num -> count
-for r in repos:
-    if r['has_state_group']:
-        g = r['group_num']
-        group_counts[g] = group_counts.get(g, 0) + 1
-
 unassigned = [r for r in repos if not r['has_state_group']]
 if not unassigned:
-    print("✅ All repositories already have a state-group topic")
+    import os
+    print(f"  {os.path.basename(repos_file)}: ✅ all repos assigned")
     sys.exit(0)
 
-print(f"Found {len(unassigned)} repo(s) without a state-group topic")
+import os
+print(f"  {os.path.basename(repos_file)}: {len(unassigned)} repo(s) to assign")
 
-# ── assign groups ────────────────────────────────────────────────────
+# ── assign groups (using global counts shared across all files) ──────
 def next_available_group():
     """Return the first group number with room, or create a new one."""
     for g in sorted(group_counts.keys()):
@@ -129,18 +157,16 @@ def next_available_group():
     # All full or none exist — create next
     return max(group_counts.keys(), default=0) + 1
 
-# Build insertions: list of (line_index, topic_text) to inject
-# We process in reverse order so line indices remain stable.
+# Build insertions: list of (line_index, topic_text, mode) to inject
 insertions = []
 for r in unassigned:
     g = next_available_group()
     group_counts[g] = group_counts.get(g, 0) + 1
     topic_value = f"state-group-{g:03d}"
-    print(f"  → {r['name']} assigned to {topic_value}")
+    print(f"    → {r['name']} assigned to {topic_value}")
 
     if r['topics_start'] is None:
-        # No topics key at all — should not happen per schema, but handle it
-        # Insert before the repo's end
+        # No topics key at all — insert before the repo's end
         insert_line = r['end']
         insertions.append((insert_line, f"    topics:\n      - {topic_value}", 'insert'))
     else:
@@ -159,7 +185,6 @@ for r in unassigned:
             # Block format — append after last topic item
             if r['topics_end'] is not None and r['topics_end'] >= r['topics_start']:
                 insert_after = r['topics_end']
-                # Detect indentation from existing topic items
                 indent = "      "
                 if r['topics_end'] > r['topics_start']:
                     m2 = re.match(r'^(\s+)- ', lines[r['topics_end']])
@@ -172,7 +197,6 @@ for r in unassigned:
                 insertions.append((r['topics_start'] + 1, f"{indent}- {topic_value}", 'insert'))
 
 # ── apply changes (reverse order to preserve indices) ────────────────
-# Sort by line number descending
 insertions.sort(key=lambda x: x[0], reverse=True)
 for item in insertions:
     idx, text, mode = item
@@ -184,5 +208,9 @@ for item in insertions:
 with open(repos_file, 'w') as f:
     f.write('\n'.join(lines))
 
-print(f"✅ Assigned state-group topics to {len(unassigned)} repositories")
+print(f"    ✅ Updated {os.path.basename(repos_file)}")
 PYEOF
+done
+
+echo ""
+echo "✅ State-group assignment complete across all repository YAML files"
