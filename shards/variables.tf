@@ -1,10 +1,10 @@
-variable "shard_id" {
-  description = "The shard identifier (e.g., '001', '002'). Repos with topic 'state-group-<shard_id>' belong to this shard."
+variable "repositories_file" {
+  description = "The repository YAML filename (e.g., 'repositories.yaml', 'repositories-002.yaml'). This shard manages only the repos defined in this file."
   type        = string
 
   validation {
-    condition     = can(regex("^[0-9]{3}$", var.shard_id))
-    error_message = "shard_id must be a zero-padded 3-digit number (e.g., '001', '042')."
+    condition     = can(regex("^repositories(-\\d{3})?\\.yaml$", var.repositories_file))
+    error_message = "repositories_file must match the pattern 'repositories.yaml' or 'repositories-NNN.yaml' (e.g., 'repositories-002.yaml')."
   }
 }
 
