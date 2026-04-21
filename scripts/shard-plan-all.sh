@@ -12,25 +12,21 @@ ENVIRONMENT=${1:-dev}
 MAX_PARALLEL=${2:-5}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-DATA_DIR="$PROJECT_ROOT/data"
+REPOS_FILE="$PROJECT_ROOT/data/repositories.yaml"
 
-echo "Discovering shards from $DATA_DIR/repositories*.yaml..."
+echo "Discovering shards from $REPOS_FILE..."
 
-# Extract unique shard IDs from ALL repository YAML files
+# Extract unique shard IDs
 SHARD_IDS=$(python3 -c "
-import yaml, re, glob, os
-
-data_dir = '$DATA_DIR'
-files = sorted(glob.glob(os.path.join(data_dir, 'repositories*.yaml')))
+import yaml, re
+with open('$REPOS_FILE') as f:
+    data = yaml.safe_load(f)
 shards = set()
-for fpath in files:
-    with open(fpath) as f:
-        data = yaml.safe_load(f) or {}
-    for repo in data.get('repositories', []):
-        for t in repo.get('topics', []):
-            m = re.match(r'^state-group-(\d{3})$', t)
-            if m:
-                shards.add(m.group(1))
+for repo in data.get('repositories', []):
+    for t in repo.get('topics', []):
+        m = re.match(r'^state-group-(\d{3})$', t)
+        if m:
+            shards.add(m.group(1))
 for s in sorted(shards):
     print(s)
 ")
