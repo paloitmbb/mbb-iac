@@ -1,9 +1,8 @@
 name: Terraform Sharded Apply - Infrastructure
 
 # Runs on push to main when shard/global configs or data files change.
-# Detects which repository YAML files are affected and applies them in parallel.
-# Each data/repositories*.yaml file maps to its own Terraform state.
-# A new YAML file automatically generates a new state on first apply.
+# Detects affected shards and applies them in parallel.
+# Does NOT modify existing terraform-apply.yml — this is an additive workflow.
 
 on:
   push:
@@ -26,8 +25,8 @@ on:
         options:
           - dev
           - production
-      repo-files:
-        description: "Comma-separated YAML filenames to apply (e.g., repositories.yaml,repositories-002.yaml). Leave empty for auto-detect."
+      shard-ids:
+        description: "Comma-separated shard IDs to apply (e.g., 001,002). Leave empty for auto-detect."
         required: false
         type: string
       apply-global:
@@ -44,13 +43,13 @@ permissions:
 
 jobs:
   # =========================================================================
-  # Job 1: Discover affected YAML files (shards)
+  # Job 1: Discover affected shards
   # =========================================================================
   discover:
     name: 🔍 Discover - Affected Shards
     runs-on: ubuntu-latest
     outputs:
-      repo-files: ${{ steps.detect.outputs.repo-files }}
+      shard-ids: ${{ steps.detect.outputs.shard-ids }}
       global-changed: ${{ steps.detect.outputs.global-changed }}
       any-shards: ${{ steps.detect.outputs.any-shards }}
     steps:
@@ -58,27 +57,28 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: Detect affected YAML files
+      - name: Detect affected shards
         id: detect
         shell: bash
         run: |
           pip install pyyaml --quiet
 
-          # Handle manual dispatch with explicit file list
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.repo-files }}" ]]; then
-            FILES_JSON=$(echo '${{ inputs.repo-files }}' | python3 -c "
+          # Handle manual dispatch with explicit shard IDs
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.shard-ids }}" ]]; then
+            # Parse comma-separated shard IDs into JSON array
+            SHARD_JSON=$(echo '${{ inputs.shard-ids }}' | python3 -c "
           import sys, json
           ids = [s.strip() for s in sys.stdin.read().split(',') if s.strip()]
           print(json.dumps(ids))
           ")
-            echo "repo-files=$FILES_JSON" >> $GITHUB_OUTPUT
+            echo "shard-ids=$SHARD_JSON" >> $GITHUB_OUTPUT
             echo "global-changed=${{ inputs.apply-global }}" >> $GITHUB_OUTPUT
             echo "any-shards=true" >> $GITHUB_OUTPUT
             exit 0
           fi
 
           python3 - << 'PYEOF'
-          import json, subprocess, os, glob
+          import yaml, re, json, subprocess, os, glob
 
           # Get changed files
           try:
@@ -97,39 +97,55 @@ jobs:
               for f in changed
           )
           modules_changed = any(f.startswith('modules/') for f in changed)
-          shards_changed = any(f.startswith('shards/') for f in changed)
 
-          # Discover all repository YAML files
-          all_repo_files = sorted([
-              os.path.basename(f)
-              for f in glob.glob('data/repositories*.yaml')
-          ])
+          # Build shard mapping from ALL YAML files
+          data_dir = 'data'
+          files = sorted(glob.glob(os.path.join(data_dir, 'repositories*.yaml')))
+          all_shards = set()
+          for fpath in files:
+              with open(fpath) as f:
+                  data = yaml.safe_load(f) or {}
+              for repo in data.get('repositories', []):
+                  for t in repo.get('topics', []):
+                      m = re.match(r'^state-group-(\d{3})$', t)
+                      if m:
+                          all_shards.add(m.group(1))
 
-          # If modules or shard config changed → all files
-          if modules_changed or shards_changed:
-              affected = all_repo_files
+          # If modules or shard config changed → all shards
+          if modules_changed or any(f.startswith('shards/') for f in changed):
+              affected = sorted(all_shards)
           else:
-              # Only the directly changed YAML files
-              affected = sorted([
-                  os.path.basename(f) for f in changed
-                  if f.startswith('data/repositories') and f.endswith('.yaml')
-              ])
-              # If teams.yaml changed → all files (team-repo bindings)
-              if any(f == 'data/teams.yaml' for f in changed):
-                  affected = all_repo_files
+              # Data changed → all shards with repos (conservative approach)
+              data_changed = any(f.startswith('data/') for f in changed)
+              affected = sorted(all_shards) if data_changed else []
 
           with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
-              out.write(f'repo-files={json.dumps(affected)}\n')
+              out.write(f'shard-ids={json.dumps(affected)}\n')
               out.write(f'global-changed={"true" if global_changed else "false"}\n')
               out.write(f'any-shards={"true" if affected else "false"}\n')
           PYEOF
 
   # =========================================================================
-  # Job 2: Apply global state
+  # Job 2: Validate state-group topics
+  # =========================================================================
+  validate:
+    name: ✅ Validate - State Groups
+    runs-on: ubuntu-latest
+    needs: discover
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate state-group topics
+        run: |
+          pip install pyyaml --quiet
+          bash scripts/validate-state-groups.sh
+
+  # =========================================================================
+  # Job 3: Apply global state
   # =========================================================================
   apply-global:
     name: 🚀 Apply - Global State
-    needs: discover
+    needs: [discover, validate]
     if: needs.discover.outputs.global-changed == 'true'
     runs-on: ubuntu-latest
 
@@ -191,25 +207,26 @@ jobs:
           ARM_USE_OIDC: true
 
   # =========================================================================
-  # Job 3: Apply each affected shard (YAML file) in parallel
+  # Job 4: Apply each affected shard in parallel
   # =========================================================================
   apply-shard:
-    name: 🚀 Apply - ${{ matrix.repo_file }}
-    needs: [discover, apply-global]
+    name: 🚀 Apply - Shard ${{ matrix.shard_id }}
+    needs: [discover, validate, apply-global]
     # Run even if apply-global was skipped (not needed), but not if it failed
     if: |
       always() &&
+      needs.validate.result == 'success' &&
       (needs.apply-global.result == 'success' || needs.apply-global.result == 'skipped') &&
       needs.discover.outputs.any-shards == 'true'
     runs-on: ubuntu-latest
 
     concurrency:
-      group: terraform-shard-${{ matrix.repo_file }}-apply
+      group: terraform-shard-${{ matrix.shard_id }}-apply
       cancel-in-progress: false
 
     strategy:
       matrix:
-        repo_file: ${{ fromJSON(needs.discover.outputs.repo-files) }}
+        shard_id: ${{ fromJSON(needs.discover.outputs.shard-ids) }}
       max-parallel: 10
       fail-fast: false
 
@@ -236,18 +253,12 @@ jobs:
           ORG_NAME=$(grep -oP 'name\s*=\s*"\K[^"]+' "environments/${{ inputs.environment || 'dev' }}/terraform.tfvars" | head -1)
           echo "name=$ORG_NAME" >> $GITHUB_OUTPUT
 
-      - name: Derive state key
-        id: state
-        run: |
-          STATE_KEY_BASE=$(echo "${{ matrix.repo_file }}" | sed 's/\.yaml$//')
-          echo "key=github-repos-${STATE_KEY_BASE}.terraform.tfstate" >> $GITHUB_OUTPUT
-
-      - name: Terraform Init (${{ matrix.repo_file }})
+      - name: Terraform Init (shard ${{ matrix.shard_id }})
         working-directory: shards
         run: |
           terraform init \
             -backend-config="../environments/${{ inputs.environment || 'dev' }}/backend.tfvars" \
-            -backend-config="key=${{ steps.state.outputs.key }}"
+            -backend-config="key=github-shard-${{ matrix.shard_id }}.terraform.tfstate"
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
@@ -255,13 +266,13 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           ARM_USE_OIDC: true
 
-      - name: Terraform Plan (${{ matrix.repo_file }})
+      - name: Terraform Plan (shard ${{ matrix.shard_id }})
         working-directory: shards
         run: |
           terraform plan \
-            -var="repositories_file=${{ matrix.repo_file }}" \
+            -var="shard_id=${{ matrix.shard_id }}" \
             -var="organization_name=${{ steps.org.outputs.name }}" \
-            -out=shard-tfplan
+            -out=shard-${{ matrix.shard_id }}-tfplan
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
@@ -269,9 +280,9 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           ARM_USE_OIDC: true
 
-      - name: Terraform Apply (${{ matrix.repo_file }})
+      - name: Terraform Apply (shard ${{ matrix.shard_id }})
         working-directory: shards
-        run: terraform apply -auto-approve shard-tfplan
+        run: terraform apply -auto-approve shard-${{ matrix.shard_id }}-tfplan
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
