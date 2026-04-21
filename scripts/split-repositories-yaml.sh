@@ -46,8 +46,8 @@ max_per_file = int(sys.argv[2])
 
 HEADER_TEMPLATE = """---
 # Repository configurations loaded dynamically by Terraform
-# Split file {file_num} — created automatically by round-robin balancing.
-# Each YAML file maps to its own Terraform state.
+# Split file {file_num} — created automatically to reduce merge conflicts.
+# YAML file splitting is independent of state-group shard assignments.
 
 repositories:
 """
