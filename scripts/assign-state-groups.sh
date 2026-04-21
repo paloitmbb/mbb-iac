@@ -73,7 +73,7 @@ with open(repos_file, 'r') as f:
 STATE_GROUP_RE = re.compile(r'state-group-(\d{3})')
 
 def extract_repo_blocks(text):
-    """Return (repos, lines) where repos is a list of dicts with start, end, name, topics info."""
+    """Yield (start, end, name, topics_line_indices, has_state_group, group_num) for each repo."""
     lines = text.split('\n')
     repos = []
     i = 0
