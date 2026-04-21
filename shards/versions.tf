@@ -13,10 +13,8 @@ terraform {
     # Uses Azure Blob Storage for state storage
     # and Azure Blob Lease for state locking
     #
-    # State key derived from YAML filename:
-    #   github-repos-repositories.terraform.tfstate
-    #   github-repos-repositories-002.terraform.tfstate
-    # Override via: -backend-config="key=github-repos-<filename>.terraform.tfstate"
+    # State key: github-shard-<NNN>.terraform.tfstate
+    # Override via: -backend-config="key=github-shard-001.terraform.tfstate"
   }
 }
 
