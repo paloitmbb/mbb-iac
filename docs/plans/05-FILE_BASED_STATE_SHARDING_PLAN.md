@@ -3,12 +3,13 @@
 **Date:** 19 April 2026
 **Status:** ✅ Implementation Complete
 **Summary Reference:** [05-IMPLEMENTATION_SUMMARY.md](./05-IMPLEMENTATION_SUMMARY.md)
+**Supersedes:** [04-STATE_SHARDING_PLAN.md](./04-STATE_SHARDING_PLAN.md)
 
 ---
 
-## Problem
+## Problem (Revisited)
 
-An earlier approach introduced state sharding via `state-group-NNN` repository topics. While functional, this added unnecessary indirection:
+The previous approach (plan 04) introduced state sharding via `state-group-NNN` repository topics. While functional, this added unnecessary indirection:
 
 - Each repo needed a `state-group-NNN` topic added to its YAML config.
 - A separate script (`assign-state-groups.sh`) was required to assign topics.
@@ -121,7 +122,7 @@ Teams are defined in the global state. Team-repo bindings for repos in a given Y
 
 ## Comparison: Topic-Based vs File-Based
 
-| Aspect | Topic-Based (old) | File-Based (current) |
+| Aspect | Topic-Based (Plan 04) | File-Based (Plan 05) |
 |---|---|---|
 | State binding mechanism | `state-group-NNN` repo topic | YAML filename |
 | Extra repo metadata | Required (topic per repo) | None |
