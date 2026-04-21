@@ -13,25 +13,14 @@
 #     -var-file="environments/<env>/terraform.tfvars"
 # =============================================================================
 
-# Load repositories from YAML data files
-# Supports split YAML files for merge-conflict reduction: data/repositories.yaml,
-# data/repositories-002.yaml, data/repositories-003.yaml, etc.
-# All files are loaded and merged; the split is independent of state-group shards.
+# Load repositories from YAML data file
 locals {
-  repositories_dir = "${path.module}/../data"
-
-  # Discover all repository YAML files (primary + splits)
-  repositories_files = fileset(local.repositories_dir, "repositories*.yaml")
-
-  # Load and flatten repositories from all discovered YAML files
-  yaml_repositories_raw = flatten([
-    for f in local.repositories_files :
-    try(yamldecode(file("${local.repositories_dir}/${f}")).repositories, [])
-  ])
+  repositories_file = "${path.module}/../data/repositories.yaml"
+  repositories_data = try(yamldecode(file(local.repositories_file)), { repositories = [] })
 
   # Normalize YAML repositories into uniform objects
   yaml_repositories = [
-    for repo in local.yaml_repositories_raw : {
+    for repo in local.repositories_data.repositories : {
       name               = repo.name
       description        = try(repo.description, "")
       visibility         = try(repo.visibility, "private")
