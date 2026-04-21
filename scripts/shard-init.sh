@@ -2,41 +2,29 @@
 set -e
 
 # =============================================================================
-# Initialize Terraform for a specific shard (YAML file-based)
+# Initialize Terraform for a specific shard
 # =============================================================================
-# Usage: ./scripts/shard-init.sh <repositories_file> [environment]
-# Example: ./scripts/shard-init.sh repositories.yaml dev
-#          ./scripts/shard-init.sh repositories-002.yaml production
+# Usage: ./scripts/shard-init.sh <shard_id> [environment]
+# Example: ./scripts/shard-init.sh 001 dev
 # =============================================================================
 
 if [ -z "$1" ]; then
-    echo "Usage: ./scripts/shard-init.sh <repositories_file> [environment]"
-    echo "Example: ./scripts/shard-init.sh repositories.yaml dev"
+    echo "Usage: ./scripts/shard-init.sh <shard_id> [environment]"
+    echo "Example: ./scripts/shard-init.sh 001 dev"
     exit 1
 fi
 
-REPOS_FILE=$1
+SHARD_ID=$1
 ENVIRONMENT=${2:-dev}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Derive state key from filename: repositories.yaml → github-repos-repositories
-# repositories-002.yaml → github-repos-repositories-002
-STATE_KEY_BASE=$(echo "$REPOS_FILE" | sed 's/\.yaml$//')
-STATE_KEY="github-repos-${STATE_KEY_BASE}.terraform.tfstate"
-
-echo "Initializing shard for $REPOS_FILE (environment: $ENVIRONMENT)"
-echo "  State key: $STATE_KEY"
+echo "Initializing shard $SHARD_ID for environment: $ENVIRONMENT"
 
 cd "$PROJECT_ROOT/shards"
 
 if [ ! -f "$PROJECT_ROOT/environments/$ENVIRONMENT/backend.tfvars" ]; then
     echo "Error: backend.tfvars not found in environments/$ENVIRONMENT"
-    exit 1
-fi
-
-if [ ! -f "$PROJECT_ROOT/data/$REPOS_FILE" ]; then
-    echo "Error: $REPOS_FILE not found in data/"
     exit 1
 fi
 
@@ -49,6 +37,6 @@ fi
 
 terraform init \
     -backend-config="$PROJECT_ROOT/environments/$ENVIRONMENT/backend.tfvars" \
-    -backend-config="key=$STATE_KEY"
+    -backend-config="key=github-shard-${SHARD_ID}.terraform.tfstate"
 
-echo "✅ Shard for $REPOS_FILE initialized successfully for $ENVIRONMENT environment"
+echo "✅ Shard $SHARD_ID initialized successfully for $ENVIRONMENT environment"

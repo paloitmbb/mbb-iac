@@ -1,30 +1,33 @@
 # =============================================================================
-# Shard State — Repositories from a single YAML data file
+# Shard State — Repositories filtered by state-group-<shard_id> topic
 # =============================================================================
-# Each shard manages the repositories defined in one data/repositories*.yaml
-# file. The YAML filename directly determines the state file — no topic-based
-# binding is needed. Team-repo bindings for repos in this shard are also
-# managed here. Team definitions (shells) live in the global state.
+# Each shard manages a subset of repositories (up to 50) identified by the
+# 'state-group-NNN' topic. Team-repo bindings for repos in this shard are
+# also managed here. Team definitions (shells) live in the global state.
 #
 # Usage:
 #   terraform init \
 #     -backend-config="environments/<env>/backend.tfvars" \
-#     -backend-config="key=github-repos-<filename>.terraform.tfstate"
-#   terraform plan -var="repositories_file=<filename>" \
+#     -backend-config="key=github-shard-<NNN>.terraform.tfstate"
+#   terraform plan -var="shard_id=<NNN>" \
 #     -var-file="environments/<env>/terraform.tfvars"
-#
-# Examples:
-#   key=github-repos-repositories.terraform.tfstate
-#   key=github-repos-repositories-002.terraform.tfstate
 # =============================================================================
 
-# Load repositories from the single YAML file assigned to this shard
+# Load repositories from YAML data files
+# Supports split YAML files for merge-conflict reduction: data/repositories.yaml,
+# data/repositories-002.yaml, data/repositories-003.yaml, etc.
+# All files are loaded and merged; the split is independent of state-group shards.
 locals {
-  repositories_dir  = "${path.module}/../data"
-  repositories_path = "${local.repositories_dir}/${var.repositories_file}"
+  repositories_dir = "${path.module}/../data"
 
-  # Load repos from this shard's YAML file only
-  yaml_repositories_raw = try(yamldecode(file(local.repositories_path)).repositories, [])
+  # Discover all repository YAML files (primary + splits)
+  repositories_files = fileset(local.repositories_dir, "repositories*.yaml")
+
+  # Load and flatten repositories from all discovered YAML files
+  yaml_repositories_raw = flatten([
+    for f in local.repositories_files :
+    try(yamldecode(file("${local.repositories_dir}/${f}")).repositories, [])
+  ])
 
   # Normalize YAML repositories into uniform objects
   yaml_repositories = [
@@ -65,10 +68,16 @@ locals {
 }
 
 # ---------------------------------------------------------------------------
-# Shard filtering — all repos from this file (no topic-based filter needed)
+# Shard filtering — only repos with topic "state-group-<shard_id>"
 # ---------------------------------------------------------------------------
 locals {
-  shard_repositories = local.all_repositories
+  shard_topic = "state-group-${var.shard_id}"
+
+  # Filter repos belonging to this shard
+  shard_repositories = [
+    for repo in local.all_repositories : repo
+    if contains(repo.topics, local.shard_topic)
+  ]
 
   # Set of repo names in this shard (for team-repo binding filtering)
   shard_repo_names = toset([for r in local.shard_repositories : r.name])

@@ -28,10 +28,8 @@ set -euo pipefail
 #   data/repositories-002.yaml   — second file
 #   data/repositories-003.yaml   — third file, etc.
 #
-# IMPORTANT: Each YAML file maps directly to its own Terraform state.
-# Adding a new file also means a new Terraform state will be created
-# automatically on the next plan/apply. The round-robin strategy both
-# distributes repos and implicitly controls state boundaries.
+# NOTE: YAML file splitting is INDEPENDENT of state-group shard assignments.
+# A repo's file location has no bearing on which Terraform state manages it.
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
