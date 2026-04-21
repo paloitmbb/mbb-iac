@@ -1,0 +1,242 @@
+name: Terraform Sharded CI - PR Validation
+
+# Runs on PRs that touch data files, modules, or shard/global configs.
+# Detects which repository YAML files are affected and plans them in parallel.
+# Each data/repositories*.yaml file maps to its own Terraform state.
+
+on:
+  pull_request:
+    paths:
+      - "global/**"
+      - "shards/**"
+      - "data/repositories*.yaml"
+      - "data/teams.yaml"
+      - "modules/**/*.tf"
+      - "environments/**/*.tfvars"
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - dev
+          - production
+        default: 'dev'
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+# Prevent concurrent CI runs on the same PR
+concurrency:
+  group: terraform-sharded-ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # =========================================================================
+  # Job 1: Discover which YAML files (shards) are affected
+  # =========================================================================
+  discover:
+    name: 🔍 Discover - Affected Shards
+    runs-on: ubuntu-latest
+    outputs:
+      repo-files: ${{ steps.detect.outputs.repo-files }}
+      global-changed: ${{ steps.detect.outputs.global-changed }}
+      any-shards: ${{ steps.detect.outputs.any-shards }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect affected YAML files
+        id: detect
+        shell: bash
+        run: |
+          pip install pyyaml --quiet
+
+          python3 - << 'PYEOF'
+          import json, subprocess, os, glob
+
+          # Get changed files in this PR
+          base_ref = os.environ.get('GITHUB_BASE_REF', 'main')
+          try:
+              changed = subprocess.check_output(
+                  ['git', 'diff', '--name-only', f'origin/{base_ref}...HEAD'],
+                  text=True
+              ).strip().split('\n')
+          except subprocess.CalledProcessError:
+              changed = []
+
+          print(f"Changed files: {changed}")
+
+          # Determine if global config or modules changed
+          global_patterns = ['global/', 'modules/', 'environments/']
+          global_changed = any(
+              any(f.startswith(p) for p in global_patterns)
+              for f in changed
+          )
+          modules_changed = any(f.startswith('modules/') for f in changed)
+          shards_changed = any(f.startswith('shards/') for f in changed)
+
+          # Discover all repository YAML files
+          all_repo_files = sorted([
+              os.path.basename(f)
+              for f in glob.glob('data/repositories*.yaml')
+          ])
+
+          # If modules or shard config changed → ALL files affected
+          if modules_changed or shards_changed:
+              affected_files = all_repo_files
+              print(f"Modules/shards config changed → all {len(affected_files)} files affected")
+          else:
+              # Only files that were directly changed
+              affected_files = sorted([
+                  os.path.basename(f) for f in changed
+                  if f.startswith('data/repositories') and f.endswith('.yaml')
+              ])
+              # If teams.yaml changed, all repo files need re-planning (team-repo bindings)
+              if any(f == 'data/teams.yaml' for f in changed):
+                  affected_files = all_repo_files
+                  print(f"teams.yaml changed → all files affected")
+              else:
+                  print(f"Affected YAML files: {affected_files}")
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'repo-files={json.dumps(affected_files)}\n')
+              out.write(f'global-changed={"true" if global_changed else "false"}\n')
+              out.write(f'any-shards={"true" if affected_files else "false"}\n')
+          PYEOF
+
+  # =========================================================================
+  # Job 2: Plan the global state (org + teams)
+  # =========================================================================
+  plan-global:
+    name: 📋 Plan - Global State
+    needs: discover
+    if: needs.discover.outputs.global-changed == 'true'
+    runs-on: ubuntu-latest
+
+    concurrency:
+      group: terraform-global-${{ github.ref }}
+      cancel-in-progress: false
+
+    environment:
+      name: ${{ inputs.environment || 'dev' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ vars.TERRAFORM_VERSION || '1.14.5' }}
+
+      - name: Terraform Init (global)
+        working-directory: global
+        run: |
+          terraform init \
+            -backend-config="../environments/${{ inputs.environment || 'dev' }}/backend.tfvars" \
+            -backend-config="key=github-global.terraform.tfstate"
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Terraform Plan (global)
+        working-directory: global
+        run: |
+          terraform plan \
+            -var-file="../environments/${{ inputs.environment || 'dev' }}/terraform.tfvars" \
+            -no-color
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true
+
+  # =========================================================================
+  # Job 3: Plan each affected shard (YAML file) in parallel
+  # =========================================================================
+  plan-shard:
+    name: 📋 Plan - ${{ matrix.repo_file }}
+    needs: discover
+    if: needs.discover.outputs.any-shards == 'true'
+    runs-on: ubuntu-latest
+
+    concurrency:
+      group: terraform-shard-${{ matrix.repo_file }}-${{ github.ref }}
+      cancel-in-progress: false
+
+    strategy:
+      matrix:
+        repo_file: ${{ fromJSON(needs.discover.outputs.repo-files) }}
+      max-parallel: 10
+      fail-fast: false
+
+    environment:
+      name: ${{ inputs.environment || 'dev' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ vars.TERRAFORM_VERSION || '1.14.5' }}
+
+      - name: Extract org name
+        id: org
+        run: |
+          ORG_NAME=$(grep -oP 'name\s*=\s*"\K[^"]+' "environments/${{ inputs.environment || 'dev' }}/terraform.tfvars" | head -1)
+          echo "name=$ORG_NAME" >> $GITHUB_OUTPUT
+
+      - name: Derive state key
+        id: state
+        run: |
+          # repositories.yaml → github-repos-repositories
+          # repositories-002.yaml → github-repos-repositories-002
+          STATE_KEY_BASE=$(echo "${{ matrix.repo_file }}" | sed 's/\.yaml$//')
+          echo "key=github-repos-${STATE_KEY_BASE}.terraform.tfstate" >> $GITHUB_OUTPUT
+
+      - name: Terraform Init (${{ matrix.repo_file }})
+        working-directory: shards
+        run: |
+          terraform init \
+            -backend-config="../environments/${{ inputs.environment || 'dev' }}/backend.tfvars" \
+            -backend-config="key=${{ steps.state.outputs.key }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Terraform Plan (${{ matrix.repo_file }})
+        working-directory: shards
+        run: |
+          terraform plan \
+            -var="repositories_file=${{ matrix.repo_file }}" \
+            -var="organization_name=${{ steps.org.outputs.name }}" \
+            -no-color
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_USE_OIDC: true

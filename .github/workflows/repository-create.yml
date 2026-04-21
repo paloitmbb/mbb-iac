@@ -222,7 +222,7 @@ jobs:
             git checkout "$QUEUE_BRANCH"
             git reset --hard "origin/$QUEUE_BRANCH"
 
-            if git diff --quiet "origin/$QUEUE_BRANCH" origin/main -- data/repositories.yaml; then
+            if git diff --quiet "origin/$QUEUE_BRANCH" origin/main -- data/repositories*.yaml; then
               # Content is identical — queue was already merged into main (any strategy).
               # Start a fresh batch from main HEAD.
               echo "Queue branch content already in main (merged) — resetting to main HEAD for new batch."
@@ -250,11 +250,39 @@ jobs:
           fi
           echo "branch=$QUEUE_BRANCH" >> $GITHUB_OUTPUT
 
+      - name: Select target YAML file (round-robin)
+        id: select-file
+        shell: bash
+        run: |
+          # Use round-robin to pick the file with the lowest repo count,
+          # or create a new file if under the target file count.
+          # REPO_DATA_FILE_COUNT env var controls the target number of files (default: 50).
+          TARGET_FILE=$(bash scripts/round-robin-repo-file.sh)
+          TARGET_BASENAME=$(basename "$TARGET_FILE")
+          echo "target-file=$TARGET_BASENAME" >> $GITHUB_OUTPUT
+          echo "📂 Selected target file: $TARGET_BASENAME"
+
+          # If the file doesn't exist yet, create it with a proper YAML header
+          if [ ! -f "$TARGET_FILE" ]; then
+            FILE_NUM=$(echo "$TARGET_BASENAME" | grep -oP '\d{3}' || echo "001")
+            cat > "$TARGET_FILE" << HEADER
+          ---
+          # Repository configurations loaded dynamically by Terraform
+          # Split file ${FILE_NUM} — created automatically by round-robin balancing.
+          # Each YAML file maps to its own Terraform state.
+
+          repositories:
+          HEADER
+            echo "📄 Created new file: $TARGET_BASENAME"
+          fi
+        env:
+          REPO_DATA_FILE_COUNT: ${{ vars.REPO_DATA_FILE_COUNT || '50' }}
+
       - name: Update YAML configuration
         id: update-yaml
         uses: paloitmbb/mbb-tf-actions/actions/github-update-yamlconfig@main
         with:
-          config-file: 'data/repositories.yaml'
+          config-file: 'data/${{ steps.select-file.outputs.target-file }}'
           defaults-file: 'data/defaults.yaml'
           repository-name: ${{ needs.validate-request.outputs.repo-name }}
           tech-stack: ${{ needs.validate-request.outputs.tech-stack }}
@@ -267,8 +295,9 @@ jobs:
         run: |
           REPO_NAME="${{ needs.validate-request.outputs.repo-name }}"
           ISSUE_NUM="${{ github.event.issue.number }}"
+          TARGET_FILE="${{ steps.select-file.outputs.target-file }}"
 
-          git add data/repositories.yaml
+          git add data/repositories*.yaml
           git commit -m "feat: ✨ add repository ${REPO_NAME}
 
           Repository request from issue #${ISSUE_NUM}
@@ -276,6 +305,7 @@ jobs:
           - Repository: ${REPO_NAME}
           - Tech Stack: ${{ needs.validate-request.outputs.tech-stack }}
           - Default Branch: ${{ needs.validate-request.outputs.default-branch }}
+          - Target file: ${TARGET_FILE}
           - Configuration: Using organizational defaults" || {
             echo "Nothing to commit (repository may already be in the YAML)"
             echo "already-exists=true" >> $GITHUB_OUTPUT
@@ -396,7 +426,7 @@ jobs:
           issue-number: ${{ github.event.issue.number }}
           status: 'failure'
           title: 'Repository Already Exists'
-          error-details: 'Repository `${{ needs.validate-request.outputs.repo-name }}` is already defined in `data/repositories.yaml`. No changes were made.'
+          error-details: 'Repository `${{ needs.validate-request.outputs.repo-name }}` is already defined in `data/repositories*.yaml`. No changes were made.'
           labels-add: 'duplicate'
           close-issue: 'true'
           close-reason: 'not_planned'
