@@ -24,17 +24,6 @@ migrate-1-generate.yml   →  (review artifact)  →  migrate-2-execute.yml   �
 | `migrate-2-execute.yml`     | No                     | Yes                                      |
 | `migrate-3-push-verify.yml` | **Yes**                | Only if step 2 artifacts are still valid |
 
-After migration, `terraform-sharded-apply.yml` is the primary day-to-day workflow.
-It runs five jobs automatically on push:
-
-| Job                         | Purpose                                                                         |
-| --------------------------- | ------------------------------------------------------------------------------- |
-| `discover`                  | Detects which `data/repositories*.yaml` files changed                           |
-| `apply-global`              | Applies org/team state when `global/**` changes                                 |
-| `apply-shard`               | Applies each affected shard in parallel (max 10 concurrent)                     |
-| `check-repos-yaml`          | Detects new `- name:` entries added across any shard YAML file                  |
-| `seed-repository-template`  | Bootstraps new repos with the matching tech-stack template from `mbb-repo-templates` |
-
 ---
 
 ## Before you start
@@ -164,10 +153,9 @@ The job summary also lists the post-migration steps.
 
 After step 3 succeeds:
 
-1. **Update your CI** — `terraform-apply.yml` now only triggers on `.tf` / `.tfvars`
-   changes (YAML path triggers were removed). All `data/repositories*.yaml` changes
-   are handled exclusively by `terraform-sharded-apply.yml`. Stop using
-   `terraform-apply.yml` for repository YAML changes.
+1. **Update your CI** — the monolithic `terraform-ci.yml` and `terraform-apply.yml`
+   triggers on root `*.tf` files. The sharded equivalent is `terraform-sharded-ci.yml`.
+   Stop using the old workflows for day-to-day changes.
 
 2. **Remove the stale plan file** (if present):
    Open a PR to delete `environments/dev/tfplan` from the repository.
@@ -176,20 +164,13 @@ After step 3 succeeds:
    `github.terraform.tfstate` from the storage container for at least 5 business days
    after the migration is confirmed stable.
 
-4. **Set the `REPO_DATA_FILE_COUNT` repository variable** — go to repository
-   **Settings → Actions → Variables** and set `REPO_DATA_FILE_COUNT = 50`.
-   This controls how many shard files the round-robin balancer will create before
-   it starts filling existing files.
+4. **Day-to-day workflow going forward:**
 
-5. **Day-to-day workflow going forward:**
-
-   | Task                        | Trigger                                                                  |
-   | --------------------------- | ------------------------------------------------------------------------ |
-   | Org / team changes          | Push to `global/**` → `terraform-sharded-apply.yml` runs global job      |
-   | Repository YAML changes     | Push to `data/repositories*.yaml` → `terraform-sharded-apply.yml` auto-applies affected shards |
-   | Module / shard config change | Push to `modules/**` or `shards/**` → all shards apply in parallel      |
-   | New repo seeding             | Automatic — `seed-repository-template` job runs after apply if a `- name:` line was added |
-   | Plan all shards locally      | `./scripts/shard-plan-all.sh dev`                                        |
+   | Task               | Command                                                              |
+   | ------------------ | -------------------------------------------------------------------- |
+   | Org / team changes | Trigger `global/` workflows                                          |
+   | Repository changes | Trigger `shards/` workflows via `terraform-sharded-ci.yml`           |
+   | Plan all shards    | Run `./scripts/shard-plan-all.sh dev` locally, or trigger sharded CI |
 
 ---
 
