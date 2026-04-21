@@ -254,9 +254,9 @@ jobs:
         id: select-file
         shell: bash
         run: |
-          # Use round-robin to pick the YAML file with the lowest repo count,
-          # or create a new file when all existing files are at capacity.
-          # REPO_DATA_FILE_COUNT controls the max number of shard files (default: 50).
+          # Use round-robin to pick the file with the lowest repo count,
+          # or create a new file if under the target file count.
+          # REPO_DATA_FILE_COUNT env var controls the target number of files (default: 50).
           TARGET_FILE=$(bash scripts/round-robin-repo-file.sh)
           TARGET_BASENAME=$(basename "$TARGET_FILE")
           echo "target-file=$TARGET_BASENAME" >> $GITHUB_OUTPUT
