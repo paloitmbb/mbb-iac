@@ -29,11 +29,11 @@ permissions:
   id-token: write  # Required for OIDC authentication with Azure
 
 jobs:
-  # Detect whether any data/repositories*.yaml was changed in this push.
+  # Detect whether data/repositories.yaml was changed in this push.
   # git diff HEAD~1 HEAD is reliable even for merge commits (unlike
   # github.event.head_commit.modified which is empty for merge commits).
   check-repos-yaml:
-    name: 🔍 Check - repositories YAML changed
+    name: 🔍 Check - repositories.yaml changed
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
     outputs:
@@ -45,10 +45,10 @@ jobs:
           fetch-depth: 2
       - id: check
         run: |
-          if git diff --name-only HEAD~1 HEAD | grep -q 'data/repositories.*\.yaml'; then
+          if git diff --name-only HEAD~1 HEAD | grep -q 'data/repositories.yaml'; then
             echo "changed=true" >> $GITHUB_OUTPUT
             # Only true when lines with '- name:' were ADDED (not deleted/archived)
-            if git diff HEAD~1 HEAD -- data/repositories*.yaml | grep -q '^+.*- name:'; then
+            if git diff HEAD~1 HEAD -- data/repositories.yaml | grep -q '^+.*- name:'; then
               echo "repos-added=true" >> $GITHUB_OUTPUT
             else
               echo "repos-added=false" >> $GITHUB_OUTPUT
@@ -120,14 +120,13 @@ jobs:
             SEEN_KEYS="${SEEN_KEYS}|${repo_key}|"
 
             is_archived=$(python3 -c "
-          import yaml, sys, glob
-          for fpath in sorted(glob.glob('data/repositories*.yaml')):
-              with open(fpath) as f:
-                  data = yaml.safe_load(f) or {}
-              for repo in data.get('repositories', []):
-                  if repo['name'] == sys.argv[1] and repo.get('archived', False):
-                      print('true')
-                      sys.exit(0)
+          import yaml, sys
+          with open('data/repositories.yaml') as f:
+              data = yaml.safe_load(f)
+          for repo in data.get('repositories', []):
+              if repo['name'] == sys.argv[1] and repo.get('archived', False):
+                  print('true')
+                  sys.exit(0)
           print('false')
           " "$repo_key" 2>/dev/null || echo "false")
 
@@ -202,12 +201,11 @@ jobs:
           pip install pyyaml --quiet
 
           python3 - << 'PYEOF'
-          import subprocess, yaml, json, os, glob
+          import subprocess, yaml, json, os
 
-          # Find repo names that were added in this commit (across all YAML files)
+          # Find repo names that were added in this commit
           diff = subprocess.check_output(
-              ['git', 'diff', 'HEAD~1', 'HEAD', '--'] +
-              sorted(glob.glob('data/repositories*.yaml')),
+              ['git', 'diff', 'HEAD~1', 'HEAD', '--', 'data/repositories.yaml'],
               text=True
           )
 
@@ -226,18 +224,14 @@ jobs:
 
           print(f'Newly added repos: {sorted(added_names)}')
 
-          # Load repos from all YAML files
-          all_repos = []
-          for fpath in sorted(glob.glob('data/repositories*.yaml')):
-              with open(fpath) as f:
-                  data = yaml.safe_load(f) or {}
-              all_repos.extend(data.get('repositories', []))
+          with open('data/repositories.yaml') as f:
+              data = yaml.safe_load(f)
 
           # Supported stack folder names in mbb-repo-templates/stacks/
           KNOWN_STACKS = ['python', 'react', 'nodejs', 'java-springboot']
 
           result = []
-          for repo in all_repos:
+          for repo in data.get('repositories', []):
               if repo['name'] not in added_names:
                   continue
               topics = repo.get('topics', [])
