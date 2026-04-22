@@ -4,8 +4,7 @@ on:
   pull_request:
     paths:
       - "environments/**/*.tfvars"
-      - "data/**/*.yaml"
-      - "data/**/*.yml"
+      # data/repositories*.yaml and data/teams.yaml are now handled by terraform-sharded-ci.yml
       - "modules/**/*.tf"
       - "*.tf"
 

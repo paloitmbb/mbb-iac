@@ -9,7 +9,7 @@ repositories:
     features:
       has_issues: true
       has_projects: true
-      has_wiki: false
+      has_wiki: true
     default_branch: main
     topics:
       - frontend
