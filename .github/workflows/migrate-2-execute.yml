@@ -110,6 +110,16 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: true
 
+      - name: Switch to local backend (required for state mv with local files)
+        run: |
+          # Disable the remote backend so that `terraform state mv -state=A -state-out=B`
+          # operates purely on local files. With a remote backend configured, Terraform
+          # initializes the -state-out file from the remote backend, causing every
+          # resource to appear in both output files (count doubles instead of splitting).
+          terraform init -backend=false -reconfigure
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+
       - name: Execute migration (local state mv only)
         run: bash /tmp/migration-commands-${{ inputs.environment }}.sh
 
