@@ -106,11 +106,15 @@ jobs:
               "X-GitHub-Api-Version": "2022-11-28",
           }
 
-          # ── 1. Load repos already tracked in repositories.yaml ───────────
-          with open("data/repositories.yaml") as fh:
-              yaml_data = yaml.safe_load(fh) or {"repositories": []}
-          yaml_names = {r["name"] for r in yaml_data.get("repositories", [])}
-          print(f"📄 {len(yaml_names)} repo(s) already in repositories.yaml")
+          # ── 1. Load repos already tracked in repositories*.yaml ──────────
+          import glob
+          all_yaml_files = sorted(glob.glob("data/repositories*.yaml"))
+          yaml_names = set()
+          for ypath in all_yaml_files:
+              with open(ypath) as fh:
+                  ydata = yaml.safe_load(fh) or {"repositories": []}
+              yaml_names.update(r["name"] for r in ydata.get("repositories", []))
+          print(f"📄 {len(yaml_names)} repo(s) already in {len(all_yaml_files)} YAML file(s)")
 
           # ── 2. Page through all org repos ────────────────────────────────
           org_repos, page = [], 1
@@ -211,8 +215,8 @@ jobs:
               out.write(f"names={json.dumps(names_list)}\n")
           PYEOF
 
-      # ── Update repositories.yaml ──────────────────────────────────────────
-      - name: Append new repos to repositories.yaml
+      # ── Update repositories YAML files (round-robin) ──────────────────────
+      - name: Append new repos to repositories YAML files
         if: steps.discover.outputs.has-unmanaged == 'true'
         id: update-yaml
         shell: bash
@@ -220,7 +224,9 @@ jobs:
           pip install pyyaml --quiet
 
           python3 - << 'PYEOF'
-          import json
+          import json, os, re, glob, subprocess
+
+          import yaml
 
           def bool_str(v):
               return "true" if v else "false"
@@ -257,16 +263,63 @@ jobs:
                   lines.append( '    archived: true')
               return "\n".join(lines)
 
+          HEADER_TEMPLATE = """---
+          # Repository configurations loaded dynamically by Terraform
+          # Split file {file_num} — created automatically by round-robin balancing.
+          # YAML file splitting is independent of state-group shard assignments.
+
+          repositories:
+          """
+
+          def file_number(fpath):
+              """Extract NNN from repositories-NNN.yaml, or 1 for the primary file."""
+              basename = os.path.basename(fpath)
+              m = re.match(r'repositories-(\d{3})\.yaml$', basename)
+              return int(m.group(1)) if m else 1
+
+          def get_target_file(data_dir, target_file_count):
+              """Round-robin: pick the file with the fewest repos, or create a new one."""
+              pattern = os.path.join(data_dir, 'repositories*.yaml')
+              files = sorted(glob.glob(pattern))
+              if not files:
+                  return os.path.join(data_dir, 'repositories.yaml')
+
+              file_counts = {}
+              for fpath in files:
+                  with open(fpath) as f:
+                      data = yaml.safe_load(f) or {}
+                  file_counts[fpath] = len(data.get('repositories', []))
+
+              if len(files) < target_file_count:
+                  existing_nums = sorted(set(file_number(f) for f in files))
+                  next_num = max(existing_nums) + 1
+                  new_name = f"repositories-{next_num:03d}.yaml"
+                  new_path = os.path.join(data_dir, new_name)
+                  # Create the file with a proper header
+                  with open(new_path, 'w') as f:
+                      f.write(HEADER_TEMPLATE.format(file_num=f"{next_num:03d}").lstrip('\n'))
+                  return new_path
+              else:
+                  return min(file_counts, key=file_counts.get)
+
           with open("/tmp/unmanaged_repos.json") as fh:
               new_entries = json.load(fh)
 
-          yaml_blocks = "\n".join(repo_to_yaml_block(r) for r in new_entries)
+          data_dir = "data"
+          target_file_count = int(os.environ.get("REPO_DATA_FILE_COUNT", "50"))
 
-          with open("data/repositories.yaml", "a") as fh:
-              fh.write(f"\n{yaml_blocks}\n")
+          # Distribute repos across files using round-robin
+          for repo in new_entries:
+              target_file = get_target_file(data_dir, target_file_count)
+              yaml_block = repo_to_yaml_block(repo)
+              with open(target_file, "a") as fh:
+                  fh.write(f"\n{yaml_block}\n")
+              print(f"  📂 {repo['name']} → {os.path.basename(target_file)}")
 
-          print(f"✅ Appended {len(new_entries)} repo(s) to data/repositories.yaml")
+          print(f"✅ Distributed {len(new_entries)} repo(s) across YAML files")
           PYEOF
+        env:
+          REPO_DATA_FILE_COUNT: ${{ vars.REPO_DATA_FILE_COUNT || '50' }}
 
       # ── Import into Terraform State ───────────────────────────────────────
       # Each module instance creates up to 3 importable resources:
@@ -448,7 +501,7 @@ jobs:
           git push origin --delete "$BRANCH" 2>/dev/null || true
 
           git checkout -b "$BRANCH"
-          git add data/repositories.yaml
+          git add data/repositories*.yaml
           git commit -m "chore: 🧱 onboard ${COUNT} unmanaged repo(s) into Terraform management"
           git push origin "$BRANCH"
 
@@ -509,8 +562,9 @@ jobs:
 
             const prBody = `## 🧱 Onboard Unmanaged Repositories into Terraform
 
-            This PR adds **${count}** manually-created repository/repositories to \`data/repositories.yaml\`
-            so they are managed by Terraform going forward.
+            This PR adds **${count}** manually-created repository/repositories to \`data/repositories*.yaml\`
+            so they are managed by Terraform going forward. Repos are distributed across YAML files
+            using round-robin balancing to minimise merge conflicts.
 
             > **Repos were already imported into Terraform state** before this PR was opened.
             > Merging this PR will trigger \`terraform apply\` which will only reconcile setting
@@ -542,7 +596,7 @@ jobs:
 
             ### ✅ Merge Checklist
 
-            - [ ] Review \`data/repositories.yaml\` diff — adjust any settings that differ from the actual repo
+            - [ ] Review \`data/repositories*.yaml\` diffs — adjust any settings that differ from the actual repo
             - [ ] Review the Terraform plan in the workflow artifacts${failedCheckbox}
             - [ ] Merge this PR to bring repos under Terraform management`;
 
@@ -597,5 +651,5 @@ jobs:
       - name: Nothing to onboard
         if: steps.discover.outputs.has-unmanaged == 'false'
         run: |
-          echo "✅ All organization repositories are already tracked in repositories.yaml"
+          echo "✅ All organization repositories are already tracked in repositories*.yaml"
           echo "   No pull request created."
