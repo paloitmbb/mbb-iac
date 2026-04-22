@@ -1,0 +1,23 @@
+---
+# Repository configurations loaded dynamically by Terraform
+# Split file 002 — created automatically by round-robin balancing.
+# Each YAML file maps to its own Terraform state.
+
+repositories:
+
+  - name: mbb-new-shard-repo
+    description: "Mbb New Shard Repo using React"
+    visibility: private
+    features:
+      has_issues: true
+      has_projects: true
+      has_wiki: false
+    default_branch: main
+    topics: ["maybank", "mbb", "react"]
+    security:
+      enable_vulnerability_alerts: true
+      enable_advanced_security: false
+      enable_secret_scanning: false
+      enable_secret_scanning_push_protection: false
+      enable_dependabot_alerts: true
+      enable_dependabot_security_updates: true
