@@ -1,7 +1,7 @@
 # State Sharding via Repository Topics — Implementation Plan
 
 **Date:** 19 April 2026
-**Status:** ✅ Implementation Complete
+**Status:** ⚠️ Superseded by [05-FILE_BASED_STATE_SHARDING_PLAN.md](./05-FILE_BASED_STATE_SHARDING_PLAN.md)
 **Summary Reference:** [04-IMPLEMENTATION_SUMMARY.md](./04-IMPLEMENTATION_SUMMARY.md)
 
 ---
