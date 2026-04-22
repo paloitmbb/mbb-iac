@@ -120,11 +120,21 @@ jobs:
             echo "❌ terraform plan errored — see above"
             exit 1
           elif [ "$EXIT" -eq 2 ]; then
-            echo "❌ Global plan shows unexpected changes — state push may be incomplete"
-            echo "   Review /tmp/global-plan.txt and compare against the monolithic backup"
-            exit 1
+            # exit code 2 means changes detected — check if they are output-only
+            # Output-only changes are safe: they just populate outputs into the new state
+            # and do not modify any real GitHub infrastructure.
+            if grep -q "^Changes to Outputs:" /tmp/global-plan.txt && \
+               ! grep -qE "^  # .* (will be|must be) (created|updated|destroyed|replaced)" /tmp/global-plan.txt; then
+              echo "ℹ️  Global plan has output-only changes (no resource changes) — this is expected for a fresh state"
+              echo "   Outputs will be populated on the next apply. Infrastructure is correct."
+            else
+              echo "❌ Global plan shows unexpected resource changes — state push may be incomplete"
+              echo "   Review /tmp/global-plan.txt and compare against the monolithic backup"
+              cat /tmp/global-plan.txt
+              exit 1
+            fi
           fi
-          echo "✅ Global plan: no changes"
+          echo "✅ Global plan: no resource changes"
           echo "GLOBAL_PLAN=clean" >> "$GITHUB_ENV"
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
@@ -192,8 +202,14 @@ jobs:
               echo "❌ terraform plan errored for $REPOS_FILE"
               ALL_CLEAN=false
             elif [ "$EXIT" -eq 2 ]; then
-              echo "❌ Shard plan for $REPOS_FILE shows unexpected changes"
-              ALL_CLEAN=false
+              # Output-only changes are safe — check for actual resource changes
+              if grep -q "^Changes to Outputs:" "/tmp/shard-${REPOS_YAML_BASE}-plan.txt" && \
+                 ! grep -qE "^  # .* (will be|must be) (created|updated|destroyed|replaced)" "/tmp/shard-${REPOS_YAML_BASE}-plan.txt"; then
+                echo "ℹ️  Shard plan for $REPOS_FILE has output-only changes — no resource changes, this is expected"
+              else
+                echo "❌ Shard plan for $REPOS_FILE shows unexpected resource changes"
+                ALL_CLEAN=false
+              fi
             else
               echo "✅ Shard plan for $REPOS_FILE: no changes"
             fi
