@@ -39,9 +39,9 @@ cat /tmp/migration-commands-dev.sh
 
 Expected output files after execution (in Phase 3):
 
-| Local file | Contains |
-|---|---|
-| `global.tfstate` | `module.github_organization.*` + `module.github_teams.*` (shells only) |
+| Local file                   | Contains                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------ |
+| `global.tfstate`             | `module.github_organization.*` + `module.github_teams.*` (shells only)         |
 | `shard-repositories.tfstate` | `module.github_repositories.*`, `module.github_security.*`, team-repo bindings |
 
 ---
@@ -141,12 +141,12 @@ Once both plans are clean:
 
 ## Day-to-day workflow after migration
 
-| Task | Old command | New command |
-|---|---|---|
-| Initialise | `./scripts/init.sh dev` | `./scripts/global-init.sh dev`<br>`./scripts/shard-init.sh repositories.yaml dev` |
-| Plan | `./scripts/plan.sh dev` | `./scripts/global-plan.sh dev`<br>`./scripts/shard-plan.sh repositories.yaml dev` |
-| Plan all shards | — | `./scripts/shard-plan-all.sh dev` |
-| Apply | `./scripts/apply.sh dev` | `./scripts/global-apply.sh dev`<br>`./scripts/shard-apply.sh repositories.yaml dev` |
+| Task            | Old command              | New command                                                                         |
+| --------------- | ------------------------ | ----------------------------------------------------------------------------------- |
+| Initialise      | `./scripts/init.sh dev`  | `./scripts/global-init.sh dev`<br>`./scripts/shard-init.sh repositories.yaml dev`   |
+| Plan            | `./scripts/plan.sh dev`  | `./scripts/global-plan.sh dev`<br>`./scripts/shard-plan.sh repositories.yaml dev`   |
+| Plan all shards | —                        | `./scripts/shard-plan-all.sh dev`                                                   |
+| Apply           | `./scripts/apply.sh dev` | `./scripts/global-apply.sh dev`<br>`./scripts/shard-apply.sh repositories.yaml dev` |
 
 Org/team changes → operate in `global/`  
 Repository/security changes → operate in `shards/`
@@ -170,9 +170,9 @@ until the issue is resolved.
 
 ## State key reference
 
-| Config | Azure blob key |
-|---|---|
-| Root (monolithic, retiring) | `github.terraform.tfstate` |
-| `global/` | `github-global.terraform.tfstate` |
-| `shards/` — `repositories.yaml` | `github-repos-repositories.terraform.tfstate` |
+| Config                              | Azure blob key                                    |
+| ----------------------------------- | ------------------------------------------------- |
+| Root (monolithic, retiring)         | `github.terraform.tfstate`                        |
+| `global/`                           | `github-global.terraform.tfstate`                 |
+| `shards/` — `repositories.yaml`     | `github-repos-repositories.terraform.tfstate`     |
 | `shards/` — `repositories-002.yaml` | `github-repos-repositories-002.terraform.tfstate` |
