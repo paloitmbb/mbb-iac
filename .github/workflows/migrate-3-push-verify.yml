@@ -164,27 +164,18 @@ jobs:
           echo "Found shard files: $FILES"
           echo "files=$FILES" >> "$GITHUB_OUTPUT"
 
-      - name: Push and verify each shard
+      - name: Push each shard state
         run: |
           set -euo pipefail
-          ORG_NAME=$(python3 -c "
-          import re
-          with open('environments/${{ inputs.environment }}/terraform.tfvars') as f:
-              m = re.search(r'name\s*=\s*\"([^\"]+)\"', f.read())
-              print(m.group(1) if m else 'unknown')
-          ")
-
-          ALL_CLEAN=true
 
           for REPOS_YAML_BASE in $(ls shard-repositories*.tfstate 2>/dev/null | sed 's/^shard-//' | sed 's/\.tfstate$//'); do
-            REPOS_FILE="${REPOS_YAML_BASE}.yaml"
             STATE_KEY="github-repos-${REPOS_YAML_BASE}.terraform.tfstate"
             STATE_FILE="shard-${REPOS_YAML_BASE}.tfstate"
 
             echo ""
             echo "══════════════════════════════════════════════════"
-            echo "  Shard: $REPOS_FILE"
-            echo "  State key: $STATE_KEY"
+            echo "  Shard state file : $STATE_FILE"
+            echo "  Backend state key: $STATE_KEY"
             echo "══════════════════════════════════════════════════"
 
             cd shards/
@@ -206,6 +197,43 @@ jobs:
               echo "✅ Pushed ${STATE_FILE} → ${STATE_KEY}"
             fi
 
+            cd ..
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Verify shards — expect no changes
+        run: |
+          set -euo pipefail
+          ORG_NAME=$(python3 -c "
+          import re
+          with open('environments/${{ inputs.environment }}/terraform.tfvars') as f:
+              m = re.search(r'name\s*=\s*\"([^\"]+)\"', f.read())
+              print(m.group(1) if m else 'unknown')
+          ")
+
+          ALL_CLEAN=true
+
+          for REPOS_YAML_BASE in $(ls shard-repositories*.tfstate 2>/dev/null | sed 's/^shard-//' | sed 's/\.tfstate$//'); do
+            REPOS_FILE="${REPOS_YAML_BASE}.yaml"
+            STATE_KEY="github-repos-${REPOS_YAML_BASE}.terraform.tfstate"
+
+            echo ""
+            echo "══════════════════════════════════════════════════"
+            echo "  Verifying shard: $REPOS_FILE"
+            echo "══════════════════════════════════════════════════"
+
+            cd shards/
+
+            terraform init \
+              -reconfigure \
+              -backend-config="../environments/${{ inputs.environment }}/backend.tfvars" \
+              -backend-config="key=${STATE_KEY}"
+
             set +e
             terraform plan \
               -var="repositories_file=${REPOS_FILE}" \
@@ -222,12 +250,17 @@ jobs:
               echo "❌ terraform plan errored for $REPOS_FILE"
               ALL_CLEAN=false
             elif [ "$EXIT" -eq 2 ]; then
-              # Output-only changes are safe — check for actual resource changes
+              # exit code 2 means changes detected — check if they are output-only
+              # Output-only changes are safe: they just populate outputs into the new state
+              # and do not modify any real GitHub infrastructure.
               if grep -q "^Changes to Outputs:" "/tmp/shard-${REPOS_YAML_BASE}-plan.txt" && \
                  ! grep -qE "^  # .* (will be|must be) (created|updated|destroyed|replaced)" "/tmp/shard-${REPOS_YAML_BASE}-plan.txt"; then
-                echo "ℹ️  Shard plan for $REPOS_FILE has output-only changes — no resource changes, this is expected"
+                echo "ℹ️  Shard plan for $REPOS_FILE has output-only changes (no resource changes) — this is expected for a fresh state"
+                echo "   Outputs will be populated on the next apply. Infrastructure is correct."
               else
-                echo "❌ Shard plan for $REPOS_FILE shows unexpected resource changes"
+                echo "❌ Shard plan for $REPOS_FILE shows unexpected resource changes — state push may be incomplete"
+                echo "   Review /tmp/shard-${REPOS_YAML_BASE}-plan.txt and compare against the monolithic backup"
+                cat "/tmp/shard-${REPOS_YAML_BASE}-plan.txt"
                 ALL_CLEAN=false
               fi
             else
