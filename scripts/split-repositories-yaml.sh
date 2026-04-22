@@ -22,10 +22,11 @@ set -euo pipefail
 #   data/repositories-003.yaml   — third file, etc.
 #
 # Rules:
-#   - YAML file splitting is INDEPENDENT of state-group shard assignments.
-#     A repo's file location has no bearing on which Terraform state manages it.
+#   - Each YAML file maps directly to its own Terraform state.
+#     Moving repos between files changes which state manages them.
 #   - Repos are NOT moved between existing files unless a file exceeds the threshold.
-#   - When a file overflows, the excess repos are moved to a new file.
+#   - When a file overflows, the excess repos are moved to a new file
+#     (a new Terraform state will be created automatically on next apply).
 #   - New repos (added by the creation workflow) go to the file with the most room.
 #   - The script preserves the YAML structure (header comments, formatting).
 # =============================================================================
