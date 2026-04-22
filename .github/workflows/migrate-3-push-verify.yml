@@ -97,7 +97,18 @@ jobs:
 
       - name: Push global state
         working-directory: global/
-        run: terraform state push ../global.tfstate
+        run: |
+          ARTIFACT_SERIAL=$(python3 -c "import json; print(json.load(open('../global.tfstate'))['serial'])")
+          REMOTE_SERIAL=$(terraform state pull 2>/dev/null \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('serial',-1))" 2>/dev/null \
+            || echo "-1")
+          echo "Artifact serial: $ARTIFACT_SERIAL  |  Remote serial: $REMOTE_SERIAL"
+          if [ "$REMOTE_SERIAL" -ge "$ARTIFACT_SERIAL" ]; then
+            echo "ℹ️  Remote state already at serial $REMOTE_SERIAL (>= artifact serial $ARTIFACT_SERIAL) — skipping push (idempotent)"
+          else
+            terraform state push ../global.tfstate
+            echo "✅ Pushed global state (serial $ARTIFACT_SERIAL)"
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
@@ -183,8 +194,17 @@ jobs:
               -backend-config="../environments/${{ inputs.environment }}/backend.tfvars" \
               -backend-config="key=${STATE_KEY}"
 
-            terraform state push "../${STATE_FILE}"
-            echo "✅ Pushed ${STATE_FILE} → ${STATE_KEY}"
+            ARTIFACT_SERIAL=$(python3 -c "import json; print(json.load(open('../${STATE_FILE}'))['serial'])")
+            REMOTE_SERIAL=$(terraform state pull 2>/dev/null \
+              | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('serial',-1))" 2>/dev/null \
+              || echo "-1")
+            echo "Artifact serial: $ARTIFACT_SERIAL  |  Remote serial: $REMOTE_SERIAL"
+            if [ "$REMOTE_SERIAL" -ge "$ARTIFACT_SERIAL" ]; then
+              echo "ℹ️  Remote shard $REPOS_YAML_BASE already at serial $REMOTE_SERIAL — skipping push (idempotent)"
+            else
+              terraform state push "../${STATE_FILE}"
+              echo "✅ Pushed ${STATE_FILE} → ${STATE_KEY}"
+            fi
 
             set +e
             terraform plan \
