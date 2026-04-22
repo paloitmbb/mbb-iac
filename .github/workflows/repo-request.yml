@@ -195,17 +195,20 @@ jobs:
             chmod +x /usr/local/bin/yq
           fi
 
-          # Check if repository exists in data/repositories.yaml
-          if [ -f "data/repositories.yaml" ]; then
-            # Search for the repository name in the YAML file
-            REPO_FOUND=$(yq eval ".repositories[] | select(.name == \"$REPO_NAME\") | .name" data/repositories.yaml)
-
+          # Check all shard files for an existing entry (data/repositories*.yaml)
+          FOUND_IN=""
+          for YAML_FILE in data/repositories*.yaml; do
+            [ -f "$YAML_FILE" ] || continue
+            REPO_FOUND=$(yq eval ".repositories[] | select(.name == \"$REPO_NAME\") | .name" "$YAML_FILE")
             if [ -n "$REPO_FOUND" ]; then
-              echo "exists=true" >> $GITHUB_OUTPUT
-              echo "error=Repository entry for '$REPO_NAME' already exists in data/repositories.yaml" >> $GITHUB_OUTPUT
-            else
-              echo "exists=false" >> $GITHUB_OUTPUT
+              FOUND_IN="$YAML_FILE"
+              break
             fi
+          done
+
+          if [ -n "$FOUND_IN" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "error=Repository entry for '$REPO_NAME' already exists in $FOUND_IN" >> $GITHUB_OUTPUT
           else
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
@@ -394,6 +397,34 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Select target YAML file (round-robin)
+        id: select-file
+        shell: bash
+        run: |
+          # Use round-robin to pick the YAML file with the lowest repo count,
+          # or create a new file when all existing files are at capacity.
+          # REPO_DATA_FILE_COUNT controls the max number of shard files (default: 50).
+          TARGET_FILE=$(bash scripts/round-robin-repo-file.sh)
+          TARGET_BASENAME=$(basename "$TARGET_FILE")
+          echo "target-file=$TARGET_BASENAME" >> $GITHUB_OUTPUT
+          echo "📂 Selected target file: $TARGET_BASENAME"
+
+          # If the file doesn't exist yet, create it with a proper YAML header
+          if [ ! -f "$TARGET_FILE" ]; then
+            FILE_NUM=$(echo "$TARGET_BASENAME" | grep -oP '\d{3}' || echo "001")
+            cat > "$TARGET_FILE" << HEADER
+          ---
+          # Repository configurations loaded dynamically by Terraform
+          # Split file ${FILE_NUM} — created automatically by round-robin balancing.
+          # Each YAML file maps to its own Terraform state.
+
+          repositories:
+          HEADER
+            echo "📄 Created new file: $TARGET_BASENAME"
+          fi
+        env:
+          REPO_DATA_FILE_COUNT: ${{ vars.REPO_DATA_FILE_COUNT || '50' }}
+
       - name: Update repositories.yaml
         id: update-repos
         run: |
@@ -489,9 +520,9 @@ jobs:
               echo "    teams:"
               echo -e "$TEAMS_YAML" | sed 's/^/    /'
             fi
-          } >> data/repositories.yaml
+          } >> "data/${{ steps.select-file.outputs.target-file }}"
 
-          echo "Successfully updated repositories.yaml with team access configuration"
+          echo "Successfully updated ${{ steps.select-file.outputs.target-file }} with team access configuration"
 
       - name: Create branch and commit changes
         id: create-branch
@@ -504,7 +535,7 @@ jobs:
           git push origin --delete "${BRANCH_NAME}" 2>/dev/null || true
 
           git checkout -b "${BRANCH_NAME}"
-          git add data/repositories.yaml
+          git add data/repositories*.yaml
 
           # Build commit message with team access info
           COMMIT_MSG="feat: ✨ add repository ${REPO_NAME} with team access
@@ -514,6 +545,7 @@ jobs:
           - Repository: ${REPO_NAME}
           - Tech Stack: ${{ needs.validate-request.outputs.tech-stack }}
           - Default Branch: ${{ needs.validate-request.outputs.default-branch }}
+          - Target file: ${{ steps.select-file.outputs.target-file }}
           - Configuration: Using organizational defaults"
 
           if [ -n "$TEAMS" ]; then
