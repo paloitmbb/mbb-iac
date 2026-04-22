@@ -72,6 +72,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: split-states-${{ inputs.environment }}-${{ inputs.execute-run-id }}
+          run-id: ${{ inputs.execute-run-id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify artifact contents
