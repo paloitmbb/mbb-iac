@@ -6,12 +6,14 @@ on:
       - main
     paths:
       - "environments/**/*.tfvars"
-      - "data/*.yaml"
-      - "data/*.yml"
-      - "data/**/*.yaml"
-      - "data/**/*.yml"
       - "modules/**/*.tf"
       - "*.tf"
+      # data/repositories*.yaml is now handled by terraform-sharded-apply.yml
+      # Removing these triggers prevents double-apply after shard migration:
+      # - "data/*.yaml"
+      # - "data/*.yml"
+      # - "data/**/*.yaml"
+      # - "data/**/*.yml"
   workflow_dispatch:
     inputs:
       environment:
@@ -29,9 +31,9 @@ permissions:
   id-token: write  # Required for OIDC authentication with Azure
 
 jobs:
-  # Detect whether any data/repositories*.yaml was changed in this push.
-  # git diff HEAD~1 HEAD is reliable even for merge commits (unlike
-  # github.event.head_commit.modified which is empty for merge commits).
+  # NOTE: This job is kept for parity but terraform-apply.yml no longer triggers
+  # on data/repositories*.yaml changes (those are handled by terraform-sharded-apply.yml).
+  # It remains relevant for workflow_dispatch runs that may add repos.
   check-repos-yaml:
     name: 🔍 Check - repositories YAML changed
     runs-on: ubuntu-latest
@@ -108,7 +110,20 @@ jobs:
           CLEANED=0
           SEEN_KEYS=""
 
-          
+          # Write archive-check helper to a temp file so the Python code
+          # is properly indented within the YAML block scalar.
+          cat > /tmp/check_archived.py << 'PYEOF'
+          import yaml, sys, glob
+          for fpath in sorted(glob.glob('data/repositories*.yaml')):
+              with open(fpath) as f:
+                  data = yaml.safe_load(f) or {}
+              for repo in data.get('repositories', []):
+                  if repo['name'] == sys.argv[1] and repo.get('archived', False):
+                      print('true')
+                      sys.exit(0)
+          print('false')
+          PYEOF
+
           for item in $STATE_LIST; do
             repo_key=$(echo "$item" | sed -n 's/^module\.github_security\["\([^"]*\)"\].*/\1/p')
             [ -z "$repo_key" ] && continue
@@ -119,17 +134,7 @@ jobs:
             fi
             SEEN_KEYS="${SEEN_KEYS}|${repo_key}|"
 
-            is_archived=$(python3 -c "
-          import yaml, sys, glob
-          for fpath in sorted(glob.glob('data/repositories*.yaml')):
-              with open(fpath) as f:
-                  data = yaml.safe_load(f) or {}
-              for repo in data.get('repositories', []):
-                  if repo['name'] == sys.argv[1] and repo.get('archived', False):
-                      print('true')
-                      sys.exit(0)
-          print('false')
-          " "$repo_key" 2>/dev/null || echo "false")
+            is_archived=$(python3 /tmp/check_archived.py "$repo_key" 2>/dev/null || echo "false")
 
             if [ "$is_archived" = "true" ]; then
               echo "🗑️  Removing security state for archived repo: $repo_key"
@@ -186,8 +191,7 @@ jobs:
     needs: [terraform-apply, check-repos-yaml]
     if: >-
       needs.terraform-apply.result == 'success' &&
-      (github.event_name == 'workflow_dispatch' ||
-      needs.check-repos-yaml.outputs.repos-added == 'true')
+      needs.check-repos-yaml.outputs.repos-added == 'true'
 
     steps:
       - name: Checkout

@@ -151,6 +151,19 @@ Once both plans are clean:
 Org/team changes → operate in `global/`  
 Repository/security changes → operate in `shards/`
 
+### CI behaviour after migration
+
+- `terraform-apply.yml` triggers only on `.tf` / `.tfvars` changes — **not** on
+  `data/repositories*.yaml`. Use it for module or variable updates.
+- `terraform-sharded-apply.yml` triggers on `data/repositories*.yaml` changes and
+  handles all repository day-to-day work automatically, including:
+  - Parallel shard applies (up to 10 concurrent)
+  - Archived-repo security state cleanup before each plan
+  - New-repo detection and template seeding after apply
+- Set the repository variable `REPO_DATA_FILE_COUNT = 50` in
+  **Settings → Actions → Variables** before the first `repository-create.yml` run
+  post-migration.
+
 ---
 
 ## Recovery
