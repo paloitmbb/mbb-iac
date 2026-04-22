@@ -1,0 +1,177 @@
+name: "State Migration: 2 - Execute Split"
+
+# =============================================================================
+# Step 2 of 3: Pull the monolithic state and split it into shard state files.
+#
+# This workflow:
+#   1. Inits the monolithic root config
+#   2. Pulls the remote state to a local terraform.tfstate
+#   3. Re-runs migrate-to-shards.sh to regenerate the migration script
+#   4. Executes the migration script (terraform state mv — local files only)
+#   5. Prints a resource count summary per output state file
+#   6. Uploads the output .tfstate files as artifacts for step 3
+#
+# ⚠️  This workflow does NOT push anything to any backend.
+#     All changes are local to the runner and discarded after upload.
+#
+# Prerequisites:
+#   - Run migrate-1-generate.yml first and review the generated script
+#   - Provide the run ID from step 1 to use its artifact
+#
+# After this workflow:
+#   - Download artifacts and inspect the state lists in the job logs
+#   - Trigger migrate-3-push-verify.yml with this workflow's run ID
+# =============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - dev
+          - production
+        default: dev
+      generate-run-id:
+        description: "Run ID from 'State Migration: 1 - Generate Plan' (for audit trail)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: state-migration-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  execute:
+    name: "✂️ Split monolithic state into shards"
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ vars.TERRAFORM_VERSION || '1.14.5' }}
+          terraform_wrapper: false
+
+      - name: Install Python dependencies
+        run: pip install pyyaml --quiet
+
+      - name: Terraform Init (monolithic root)
+        run: |
+          terraform init \
+            -backend-config="environments/${{ inputs.environment }}/backend.tfvars"
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Pull monolithic state
+        run: |
+          terraform state pull > terraform.tfstate
+          RESOURCE_COUNT=$(terraform state list -state=terraform.tfstate 2>/dev/null | wc -l | tr -d ' ')
+          echo "Pulled $RESOURCE_COUNT resources from monolithic state"
+          if [ "$RESOURCE_COUNT" -eq 0 ]; then
+            echo "❌ Monolithic state is empty — nothing to migrate"
+            exit 1
+          fi
+          echo "MONOLITH_COUNT=$RESOURCE_COUNT" >> "$GITHUB_ENV"
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Generate migration script
+        run: ./scripts/migrate-to-shards.sh "${{ inputs.environment }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Execute migration (local state mv only)
+        run: bash /tmp/migration-commands-${{ inputs.environment }}.sh
+
+      - name: Verify output state files
+        run: |
+          echo "=== global.tfstate ==="
+          terraform state list -state=global.tfstate 2>/dev/null || echo "(empty)"
+          GLOBAL_COUNT=$(terraform state list -state=global.tfstate 2>/dev/null | wc -l | tr -d ' ')
+
+          echo ""
+          echo "=== shard-repositories.tfstate ==="
+          terraform state list -state=shard-repositories.tfstate 2>/dev/null || echo "(empty)"
+          SHARD_COUNT=$(terraform state list -state=shard-repositories.tfstate 2>/dev/null | wc -l | tr -d ' ')
+
+          # Check for any additional shard files (repositories-002.yaml etc.)
+          for f in shard-repositories-*.tfstate; do
+            [ -f "$f" ] || continue
+            echo ""
+            echo "=== $f ==="
+            terraform state list -state="$f" 2>/dev/null || echo "(empty)"
+            EXTRA=$(terraform state list -state="$f" 2>/dev/null | wc -l | tr -d ' ')
+            SHARD_COUNT=$((SHARD_COUNT + EXTRA))
+          done
+
+          TOTAL=$((GLOBAL_COUNT + SHARD_COUNT))
+          echo ""
+          echo "─────────────────────────────────"
+          echo "Monolith:  ${{ env.MONOLITH_COUNT }} resources"
+          echo "Global:    $GLOBAL_COUNT resources"
+          echo "Shards:    $SHARD_COUNT resources"
+          echo "Total out: $TOTAL resources"
+
+          if [ "$TOTAL" -ne "${{ env.MONOLITH_COUNT }}" ]; then
+            echo ""
+            echo "❌ Resource count mismatch — some resources may not have been mapped."
+            echo "   Review the WARNING comments in /tmp/migration-commands-${{ inputs.environment }}.sh"
+            exit 1
+          fi
+
+          echo "✅ All resources accounted for"
+
+      - name: Upload output state files
+        uses: actions/upload-artifact@v4
+        with:
+          name: split-states-${{ inputs.environment }}-${{ github.run_id }}
+          path: |
+            global.tfstate
+            shard-*.tfstate
+          retention-days: 3
+
+      - name: Summary
+        run: |
+          echo "## ✅ State split complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** \`${{ inputs.environment }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**This run ID:** \`${{ github.run_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Monolith resource count:** \`${{ env.MONOLITH_COUNT }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> ⚠️ No backend was modified. Output state files are in the artifact only." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Review the resource counts in the **Verify output state files** step above" >> $GITHUB_STEP_SUMMARY
+          echo "2. Trigger **State Migration: 3 - Push & Verify** with:" >> $GITHUB_STEP_SUMMARY
+          echo "   - Environment: \`${{ inputs.environment }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "   - Artifact run ID: \`${{ github.run_id }}\`" >> $GITHUB_STEP_SUMMARY
