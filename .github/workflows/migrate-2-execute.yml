@@ -120,46 +120,104 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
 
+      - name: Pre-create empty output state files
+        run: |
+          # When terraform state mv -state-out=X is used and X does not exist, Terraform
+          # initialises X as a full copy of the source state before moving the resource.
+          # This causes every resource to appear in the output file even if it was not
+          # explicitly moved there. Pre-creating empty (but valid) state files prevents
+          # the copy-on-create behaviour.
+          python3 - << 'PYEOF'
+          import json, uuid
+
+          # Discover all shard output filenames from the migration script
+          import re, subprocess
+          script_path = f"/tmp/migration-commands-${{ inputs.environment }}.sh"
+          with open(script_path) as f:
+              content = f.read()
+
+          # Collect all -state-out filenames
+          output_files = set(re.findall(r'-state-out=(\S+\.tfstate)', content))
+          output_files.discard('terraform.tfstate')  # never pre-create source
+
+          for fname in sorted(output_files):
+              empty = {
+                  "version": 4,
+                  "terraform_version": "1.14.5",
+                  "serial": 0,
+                  "lineage": str(uuid.uuid4()),
+                  "outputs": {},
+                  "resources": [],
+                  "check_results": None
+              }
+              with open(fname, 'w') as f:
+                  json.dump(empty, f)
+              print(f"Created empty state: {fname}")
+          PYEOF
+
       - name: Execute migration (local state mv only)
         run: bash /tmp/migration-commands-${{ inputs.environment }}.sh
 
       - name: Verify output state files
         run: |
-          echo "=== global.tfstate ==="
-          terraform state list -state=global.tfstate 2>/dev/null || echo "(empty)"
-          GLOBAL_COUNT=$(terraform state list -state=global.tfstate 2>/dev/null | wc -l | tr -d ' ')
+          # Use Python to count resource instances directly from the JSON state files.
+          # This bypasses `terraform state list -state=X` which ignores the -state flag
+          # when a backend (even local) is configured and falls back to the backend state.
+          python3 - << 'PYEOF'
+          import json, glob, sys, os
 
-          echo ""
-          echo "=== shard-repositories.tfstate ==="
-          terraform state list -state=shard-repositories.tfstate 2>/dev/null || echo "(empty)"
-          SHARD_COUNT=$(terraform state list -state=shard-repositories.tfstate 2>/dev/null | wc -l | tr -d ' ')
+          def count_instances(path):
+              """Count managed resource instances in a Terraform state JSON file."""
+              try:
+                  with open(path) as f:
+                      d = json.load(f)
+              except (FileNotFoundError, json.JSONDecodeError):
+                  return 0, []
+              addresses = []
+              for res in d.get('resources', []):
+                  if res.get('mode', 'managed') != 'managed':
+                      continue
+                  mod  = res.get('module', '')
+                  rtype = res['type']
+                  rname = res['name']
+                  for inst in res.get('instances', []):
+                      key = inst.get('index_key')
+                      base = f"{mod}.{rtype}.{rname}" if mod else f"{rtype}.{rname}"
+                      addr = f"{base}[{json.dumps(key)}]" if key is not None else base
+                      addresses.append(addr)
+              return len(addresses), addresses
 
-          # Check for any additional shard files (repositories-002.yaml etc.)
-          for f in shard-repositories-*.tfstate; do
-            [ -f "$f" ] || continue
-            echo ""
-            echo "=== $f ==="
-            terraform state list -state="$f" 2>/dev/null || echo "(empty)"
-            EXTRA=$(terraform state list -state="$f" 2>/dev/null | wc -l | tr -d ' ')
-            SHARD_COUNT=$((SHARD_COUNT + EXTRA))
-          done
+          monolith_count = int(os.environ['MONOLITH_COUNT'])
 
-          TOTAL=$((GLOBAL_COUNT + SHARD_COUNT))
-          echo ""
-          echo "─────────────────────────────────"
-          echo "Monolith:  ${{ env.MONOLITH_COUNT }} resources"
-          echo "Global:    $GLOBAL_COUNT resources"
-          echo "Shards:    $SHARD_COUNT resources"
-          echo "Total out: $TOTAL resources"
+          # global.tfstate
+          g_count, g_addrs = count_instances('global.tfstate')
+          print('=== global.tfstate ===')
+          for a in sorted(g_addrs): print(' ', a)
+          print(f'  → {g_count} resources')
 
-          if [ "$TOTAL" -ne "${{ env.MONOLITH_COUNT }}" ]; then
-            echo ""
-            echo "❌ Resource count mismatch — some resources may not have been mapped."
-            echo "   Review the WARNING comments in /tmp/migration-commands-${{ inputs.environment }}.sh"
-            exit 1
-          fi
+          # shard output files (primary + any -002, -003, etc.)
+          shard_count = 0
+          for path in sorted(glob.glob('shard-*.tfstate')):
+              s_count, s_addrs = count_instances(path)
+              print(f'\n=== {path} ===')
+              for a in sorted(s_addrs): print(' ', a)
+              print(f'  → {s_count} resources')
+              shard_count += s_count
 
-          echo "✅ All resources accounted for"
+          total = g_count + shard_count
+          print('\n─────────────────────────────────')
+          print(f'Monolith:  {monolith_count} resources')
+          print(f'Global:    {g_count} resources')
+          print(f'Shards:    {shard_count} resources')
+          print(f'Total out: {total} resources')
+
+          if total != monolith_count:
+              print('\n❌ Resource count mismatch — some resources may not have been mapped.')
+              print('   Review the WARNING comments in /tmp/migration-commands-${{ inputs.environment }}.sh')
+              sys.exit(1)
+
+          print('✅ All resources accounted for')
+          PYEOF
 
       - name: Upload output state files
         uses: actions/upload-artifact@v4
