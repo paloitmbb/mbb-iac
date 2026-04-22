@@ -1,11 +1,6 @@
-output "shard_id" {
-  description = "The shard identifier"
-  value       = var.shard_id
-}
-
-output "shard_topic" {
-  description = "The topic used to filter repositories for this shard"
-  value       = local.shard_topic
+output "repositories_file" {
+  description = "The YAML filename this shard manages"
+  value       = var.repositories_file
 }
 
 output "repository_count" {
