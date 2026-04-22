@@ -3,7 +3,6 @@
 **Date:** 19 April 2026
 **Status:** ✅ Implementation Complete
 **Plan Reference:** [05-FILE_BASED_STATE_SHARDING_PLAN.md](./05-FILE_BASED_STATE_SHARDING_PLAN.md)
-**Supersedes:** [04-IMPLEMENTATION_SUMMARY.md](./04-IMPLEMENTATION_SUMMARY.md)
 
 ---
 
@@ -15,7 +14,7 @@ This eliminates the need for state-group topic assignment/validation scripts, an
 
 ---
 
-## What Changed (from Plan 04)
+## What Changed
 
 ### Terraform Config (`shards/`)
 
@@ -180,7 +179,7 @@ apply-shard × N (matrix, max-parallel: 10)
 
 ## Migration Path
 
-Same approach as plan 04, but the mapping is repo→YAML-file instead of repo→shard-topic:
+The migration maps each repo to its YAML file (not a shard topic):
 
 1. **Generate commands:** `./scripts/migrate-to-shards.sh dev`
 2. **Pull state:** `terraform state pull > terraform.tfstate`
