@@ -1,0 +1,25 @@
+terraform {
+  required_version = ">= 1.14.5"
+
+  required_providers {
+    github = {
+      source  = "integrations/github"
+      version = "~> 6.0"
+    }
+  }
+
+  backend "azurerm" {
+    # Configuration loaded from backend.tfvars
+    # Uses Azure Blob Storage for state storage
+    # and Azure Blob Lease for state locking
+    #
+    # State key: github-global.terraform.tfstate
+    # Override via: -backend-config="key=github-global.terraform.tfstate"
+  }
+}
+
+provider "github" {
+  owner = var.organization.name
+  # Authentication via GITHUB_TOKEN environment variable
+  # or GitHub App installation
+}
